@@ -30,6 +30,7 @@ func (r Receipt) MarshalJSON() ([]byte, error) {
 		BlobGasPrice          *hexutil.Big    `json:"blobGasPrice,omitempty"`
 		DepositNonce          *hexutil.Uint64 `json:"depositNonce,omitempty"`
 		DepositReceiptVersion *hexutil.Uint64 `json:"depositReceiptVersion,omitempty"`
+		PoPPayoutNonce        *hexutil.Uint64 `json:"popPayoutNonce,omitempty"`
 		BlockHash             common.Hash     `json:"blockHash,omitempty"`
 		BlockNumber           *hexutil.Big    `json:"blockNumber,omitempty"`
 		TransactionIndex      hexutil.Uint    `json:"transactionIndex"`
@@ -53,6 +54,7 @@ func (r Receipt) MarshalJSON() ([]byte, error) {
 	enc.BlobGasPrice = (*hexutil.Big)(r.BlobGasPrice)
 	enc.DepositNonce = (*hexutil.Uint64)(r.DepositNonce)
 	enc.DepositReceiptVersion = (*hexutil.Uint64)(r.DepositReceiptVersion)
+	enc.PoPPayoutNonce = (*hexutil.Uint64)(r.PoPPayoutNonce)
 	enc.BlockHash = r.BlockHash
 	enc.BlockNumber = (*hexutil.Big)(r.BlockNumber)
 	enc.TransactionIndex = hexutil.Uint(r.TransactionIndex)
@@ -80,6 +82,7 @@ func (r *Receipt) UnmarshalJSON(input []byte) error {
 		BlobGasPrice          *hexutil.Big    `json:"blobGasPrice,omitempty"`
 		DepositNonce          *hexutil.Uint64 `json:"depositNonce,omitempty"`
 		DepositReceiptVersion *hexutil.Uint64 `json:"depositReceiptVersion,omitempty"`
+		PoPPayoutNonce        *hexutil.Uint64 `json:"popPayoutNonce,omitempty"`
 		BlockHash             *common.Hash    `json:"blockHash,omitempty"`
 		BlockNumber           *hexutil.Big    `json:"blockNumber,omitempty"`
 		TransactionIndex      *hexutil.Uint   `json:"transactionIndex"`
@@ -138,6 +141,9 @@ func (r *Receipt) UnmarshalJSON(input []byte) error {
 	}
 	if dec.DepositReceiptVersion != nil {
 		r.DepositReceiptVersion = (*uint64)(dec.DepositReceiptVersion)
+	}
+	if dec.PoPPayoutNonce != nil {
+		r.PoPPayoutNonce = (*uint64)(dec.PoPPayoutNonce)
 	}
 	if dec.BlockHash != nil {
 		r.BlockHash = *dec.BlockHash

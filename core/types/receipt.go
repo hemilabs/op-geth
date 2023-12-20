@@ -49,6 +49,10 @@ const (
 
 	// The version number for post-canyon deposit receipts.
 	CanyonDepositReceiptVersion = uint64(1)
+
+	// NilDepositDataPlaceholder is a special value placed in DepositNonce and DepositReceiptVersion to indicate
+	// that the fields should be treated as nil but need to be filled to populate later fields
+	NilDepositDataPlaceholder = 0xFFFFFFFFFFFFFFFF
 )
 
 // Receipt represents the results of a transaction.
@@ -77,6 +81,9 @@ type Receipt struct {
 	// should be computed when set. The state transition process ensures this is only set for
 	// post-Canyon deposit transactions.
 	DepositReceiptVersion *uint64 `json:"depositReceiptVersion,omitempty"`
+
+	// Similar to DepositNonce, PoPPayoutNonce is used to store the actual nonce used by PoP Payout transactions.
+	PoPPayoutNonce *uint64 `json:"popPayoutNonce,omitempty"`
 
 	// Inclusion information: These fields provide information about the inclusion of the
 	// transaction corresponding to this receipt.
@@ -110,6 +117,7 @@ type receiptMarshaling struct {
 	FeeScalar             *big.Float
 	DepositNonce          *hexutil.Uint64
 	DepositReceiptVersion *hexutil.Uint64
+	PoPPayoutNonce        *hexutil.Uint64
 }
 
 // receiptRLP is the consensus encoding of a receipt.
@@ -134,6 +142,15 @@ type depositReceiptRLP struct {
 	DepositReceiptVersion *uint64 `rlp:"optional"`
 }
 
+type popPayoutReceiptRLP struct {
+	PostStateOrStatus []byte
+	CumulativeGasUsed uint64
+	Bloom             Bloom
+	Logs              []*Log
+	// Similar to DepositNonce, PoPPayoutNonce is used to store the actual nonce used by PoP Payout transactions.
+	PoPPayoutNonce *uint64 `rlp:"optional"`
+}
+
 // storedReceiptRLP is the storage encoding of a receipt.
 type storedReceiptRLP struct {
 	PostStateOrStatus []byte
@@ -146,6 +163,9 @@ type storedReceiptRLP struct {
 	// DepositNonce. Post Canyon, receipts will have a non-empty DepositReceiptVersion indicating
 	// which post-Canyon receipt hash function to invoke.
 	DepositReceiptVersion *uint64 `rlp:"optional"`
+
+	// Similar to DepositNonce, PoPPayoutNonce is used to store the actual nonce used by PoP Payout transactions.
+	PoPPayoutNonce *uint64 `rlp:"optional"`
 }
 
 // LegacyOptimismStoredReceiptRLP is the pre bedrock storage encoding of a
@@ -253,6 +273,9 @@ func (r *Receipt) encodeTyped(data *receiptRLP, w *bytes.Buffer) error {
 	case DepositTxType:
 		withNonce := &depositReceiptRLP{data.PostStateOrStatus, data.CumulativeGasUsed, data.Bloom, data.Logs, r.DepositNonce, r.DepositReceiptVersion}
 		return rlp.Encode(w, withNonce)
+	case PopPayoutTxType:
+		withNonce := &popPayoutReceiptRLP{data.PostStateOrStatus, data.CumulativeGasUsed, data.Bloom, data.Logs, r.PoPPayoutNonce}
+		return rlp.Encode(w, withNonce)
 	default:
 		return rlp.Encode(w, data)
 	}
@@ -341,6 +364,15 @@ func (r *Receipt) decodeTyped(b []byte) error {
 		r.DepositNonce = data.DepositNonce
 		r.DepositReceiptVersion = data.DepositReceiptVersion
 		return r.setFromRLP(receiptRLP{data.PostStateOrStatus, data.CumulativeGasUsed, data.Bloom, data.Logs})
+	case PopPayoutTxType:
+		var data popPayoutReceiptRLP
+		err := rlp.DecodeBytes(b[1:], &data)
+		if err != nil {
+			return err
+		}
+		r.Type = b[0]
+		r.PoPPayoutNonce = data.PoPPayoutNonce
+		return r.setFromRLP(receiptRLP{data.PostStateOrStatus, data.CumulativeGasUsed, data.Bloom, data.Logs})
 	default:
 		return ErrTxTypeNotSupported
 	}
@@ -410,6 +442,13 @@ func (r *ReceiptForStorage) EncodeRLP(_w io.Writer) error {
 			w.WriteUint64(*r.DepositReceiptVersion)
 		}
 	}
+	if r.PoPPayoutNonce != nil {
+		// Write placeholders because decoding is untyped, so non-zero values are necessary to indicate
+		// fields should be treated as nil
+		w.WriteUint64(NilDepositDataPlaceholder)
+		w.WriteUint64(NilDepositDataPlaceholder)
+		w.WriteUint64(*r.PoPPayoutNonce)
+	}
 	w.ListEnd(outerList)
 	return w.Flush()
 }
@@ -470,9 +509,16 @@ func decodeStoredReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	r.CumulativeGasUsed = stored.CumulativeGasUsed
 	r.Logs = stored.Logs
 	r.Bloom = CreateBloom(Receipts{(*Receipt)(r)})
-	if stored.DepositNonce != nil {
+	// NilDepositDataPlaceholder value in *both* DepositNonce and DepositReceiptVersion indicates
+	// it was filled to populate later fields but should be treated as nil
+	if stored.DepositNonce != nil &&
+		!(*(stored.DepositNonce) == NilDepositDataPlaceholder &&
+			*(stored.DepositReceiptVersion) == NilDepositDataPlaceholder) {
 		r.DepositNonce = stored.DepositNonce
 		r.DepositReceiptVersion = stored.DepositReceiptVersion
+	}
+	if stored.PoPPayoutNonce != nil {
+		r.PoPPayoutNonce = stored.PoPPayoutNonce
 	}
 	return nil
 }
@@ -496,7 +542,7 @@ func (rs Receipts) EncodeIndex(i int, w *bytes.Buffer) {
 	}
 	w.WriteByte(r.Type)
 	switch r.Type {
-	case AccessListTxType, DynamicFeeTxType, BlobTxType:
+	case AccessListTxType, DynamicFeeTxType, BlobTxType, PopPayoutTxType:
 		rlp.Encode(w, data)
 	case DepositTxType:
 		if r.DepositReceiptVersion != nil {
@@ -547,6 +593,9 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, nu
 			if rs[i].DepositNonce != nil {
 				nonce = *rs[i].DepositNonce
 			}
+			if rs[i].PoPPayoutNonce != nil {
+				nonce = *rs[i].PoPPayoutNonce
+			}
 			rs[i].ContractAddress = crypto.CreateAddress(from, nonce)
 		} else {
 			rs[i].ContractAddress = common.Address{}
@@ -578,7 +627,7 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, nu
 			fdivisor := new(big.Float).SetUint64(1_000_000)           // 10**6, i.e. 6 decimals
 			feeScalar := new(big.Float).Quo(fscalar, fdivisor)
 			for i := 0; i < len(rs); i++ {
-				if !txs[i].IsDepositTx() {
+				if !txs[i].IsDepositTx() && !txs[i].IsPopPayoutTx() {
 					gas := txs[i].RollupDataGas().DataGas(time, config)
 					rs[i].L1GasPrice = l1Basefee
 					// GasUsed reported in receipt should include the overhead

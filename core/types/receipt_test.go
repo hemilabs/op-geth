@@ -141,6 +141,41 @@ var (
 		},
 		Type: DepositTxType,
 	}
+	popPayoutReceiptNoNonce = &Receipt{
+		Status:            ReceiptStatusFailed,
+		CumulativeGasUsed: 1,
+		Logs: []*Log{
+			{
+				Address: common.BytesToAddress([]byte{0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+			{
+				Address: common.BytesToAddress([]byte{0x01, 0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+		},
+		Type: PopPayoutTxType,
+	}
+	popPayoutReceiptWithNonce = &Receipt{
+		Status:            ReceiptStatusFailed,
+		CumulativeGasUsed: 1,
+		PoPPayoutNonce:    &nonce,
+		Logs: []*Log{
+			{
+				Address: common.BytesToAddress([]byte{0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+			{
+				Address: common.BytesToAddress([]byte{0x01, 0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+		},
+		Type: PopPayoutTxType,
+	}
 
 	// Create a few transactions to have receipts for
 	to2 = common.HexToAddress("0x2")
@@ -882,6 +917,8 @@ func TestRoundTripReceipt(t *testing.T) {
 		{name: "DepositNoNonce", rcpt: depositReceiptNoNonce},
 		{name: "DepositWithNonce", rcpt: depositReceiptWithNonce},
 		{name: "DepositWithNonceAndVersion", rcpt: depositReceiptWithNonceAndVersion},
+		{name: "PoPPayoutNoNonce", rcpt: popPayoutReceiptNoNonce},
+		{name: "PoPPayoutWithNonce", rcpt: popPayoutReceiptWithNonce},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -894,6 +931,7 @@ func TestRoundTripReceipt(t *testing.T) {
 			require.Equal(t, test.rcpt, d)
 			require.Equal(t, test.rcpt.DepositNonce, d.DepositNonce)
 			require.Equal(t, test.rcpt.DepositReceiptVersion, d.DepositReceiptVersion)
+			require.Equal(t, test.rcpt.PoPPayoutNonce, d.PoPPayoutNonce)
 		})
 
 		t.Run(fmt.Sprintf("%sRejectExtraData", test.name), func(t *testing.T) {
@@ -918,6 +956,8 @@ func TestRoundTripReceiptForStorage(t *testing.T) {
 		{name: "DepositNoNonce", rcpt: depositReceiptNoNonce},
 		{name: "DepositWithNonce", rcpt: depositReceiptWithNonce},
 		{name: "DepositWithNonceAndVersion", rcpt: depositReceiptWithNonceAndVersion},
+		{name: "PoPPayoutNoNonce", rcpt: popPayoutReceiptNoNonce},
+		{name: "PoPPayoutWithNonce", rcpt: popPayoutReceiptWithNonce},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -933,6 +973,7 @@ func TestRoundTripReceiptForStorage(t *testing.T) {
 			require.Equal(t, test.rcpt.Logs, d.Logs)
 			require.Equal(t, test.rcpt.DepositNonce, d.DepositNonce)
 			require.Equal(t, test.rcpt.DepositReceiptVersion, d.DepositReceiptVersion)
+			require.Equal(t, test.rcpt.PoPPayoutNonce, d.PoPPayoutNonce)
 		})
 	}
 }
