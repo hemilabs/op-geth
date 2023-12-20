@@ -111,7 +111,8 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	evm.Reset(txContext, statedb)
 
 	nonce := tx.Nonce()
-	if msg.IsDepositTx && config.IsOptimismRegolith(evm.Context.Time) {
+
+	if (msg.IsDepositTx || msg.IsPopPayoutTx) && config.IsOptimismRegolith(evm.Context.Time) {
 		nonce = statedb.GetNonce(msg.From)
 	}
 
@@ -152,6 +153,13 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 			*receipt.DepositReceiptVersion = types.CanyonDepositReceiptVersion
 		}
 	}
+
+	// TODO: Consider assuming post-Regolith for PoP Txes
+	if msg.IsPopPayoutTx && config.IsOptimismRegolith(evm.Context.Time) {
+		// The actual nonce for PoP Payout transactions is only recorded from Regolith onwards.
+		receipt.PoPPayoutNonce = &nonce
+	}
+
 	if tx.Type() == types.BlobTxType {
 		receipt.BlobGasUsed = uint64(len(tx.BlobHashes()) * params.BlobTxBlobGasPerBlob)
 		receipt.BlobGasPrice = evm.Context.BlobBaseFee

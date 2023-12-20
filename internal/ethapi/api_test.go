@@ -115,6 +115,10 @@ func TestRPCTransactionDepositTxWithVersion(t *testing.T) {
 	require.Equal(t, "0x1", parsed["depositReceiptVersion"])
 }
 
+func TestNewRPCTransactionPoPPayoutTx(t *testing.T) {
+	// TODO: Implement me
+}
+
 func TestNewRPCTransactionOmitIsSystemTxFalse(t *testing.T) {
 	tx := types.NewTx(&types.DepositTx{
 		IsSystemTransaction: false,
@@ -122,6 +126,35 @@ func TestNewRPCTransactionOmitIsSystemTxFalse(t *testing.T) {
 	got := newRPCTransaction(tx, common.Hash{}, uint64(12), uint64(1234), uint64(1), big.NewInt(0), &params.ChainConfig{}, nil)
 
 	require.Nil(t, got.IsSystemTx, "should omit IsSystemTx when false")
+}
+
+func TestUnmarshalRpcPopTxNoReceipt(t *testing.T) {
+	toAddr := types.PoPPayoutSenderAddress
+	tx := types.NewTx(&types.PopPayoutTx{
+		To:   &toAddr,
+		Gas:  5,
+		Data: []byte{4, 4, 4, 4},
+	})
+
+	t.Logf("Will Unmarshal %+v\n", tx)
+
+	rpcTx := newRPCTransaction(tx, common.Hash{}, uint64(12), uint64(1234), uint64(1), big.NewInt(3), &params.ChainConfig{}, nil)
+
+	if rpcTx.Type != hexutil.Uint64(types.PopPayoutTxType) {
+		t.Fatalf("unexpected rpcTx.Type: 0x%X", rpcTx.Type)
+	}
+
+	if rpcTx.Nonce != 0 {
+		t.Fatalf("unexpected non-zero nonce: %d", rpcTx.Nonce)
+	}
+
+	if rpcTx.Gas != hexutil.Uint64(tx.Gas()) {
+		t.Fatalf("unexpected gas value: got %d, expected %d", rpcTx.Gas, tx.Gas())
+	}
+
+	if rpcTx.Input.String() != hexutil.Encode(tx.Data()) {
+		t.Fatalf("unexpected data: got %x, expected %x", rpcTx.Input.String(), hexutil.Encode(tx.Data()))
+	}
 }
 
 func TestUnmarshalRpcDepositTx(t *testing.T) {
