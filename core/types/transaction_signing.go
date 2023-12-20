@@ -350,6 +350,8 @@ func (s eip2930Signer) Sender(tx *Transaction) (common.Address, error) {
 		// AL txs are defined to use 0 and 1 as their recovery
 		// id, add 27 to become equivalent to unprotected Homestead signatures.
 		V = new(big.Int).Add(V, big.NewInt(27))
+	case PopPayoutTxType:
+		return PoPPayoutSenderAddress, nil
 	default:
 		return common.Address{}, ErrTxTypeNotSupported
 	}

@@ -213,6 +213,8 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(BlobTx)
 	case DepositTxType:
 		inner = new(DepositTx)
+	case PopPayoutTxType:
+		inner = new(PopPayoutTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
@@ -352,6 +354,11 @@ func (tx *Transaction) Mint() *big.Int {
 // IsDepositTx returns true if the transaction is a deposit tx type.
 func (tx *Transaction) IsDepositTx() bool {
 	return tx.Type() == DepositTxType
+}
+
+// IsPopPayoutTx returns true if the transaction is a pop payout tx type.
+func (tx *Transaction) IsPopPayoutTx() bool {
+	return tx.Type() == PopPayoutTxType
 }
 
 // IsSystemTx returns true for deposits that are system transactions. These transactions
