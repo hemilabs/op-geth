@@ -318,7 +318,7 @@ func prepare(ctx *cli.Context) {
 		log.Info("Starting geth on an OP network...", "network", ctx.String(utils.OPNetworkFlag.Name))
 
 	case !ctx.IsSet(utils.NetworkIdFlag.Name):
-		log.Info("Starting Geth on Ethereum mainnet...")
+		log.Info("Starting Geth on Ethereum mainnet boiz...")
 	}
 	// If we're a full node on mainnet without --cache specified, bump default cache allowance
 	if ctx.String(utils.SyncModeFlag.Name) != "light" && !ctx.IsSet(utils.CacheFlag.Name) && !ctx.IsSet(utils.NetworkIdFlag.Name) {

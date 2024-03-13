@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -210,6 +211,7 @@ func (api *ConsensusAPI) verifyPayloadAttributes(attr *engine.PayloadAttributes)
 	if err := checkAttribute(c.IsShanghai, attr.Withdrawals != nil, c.LondonBlock, attr.Timestamp); err != nil {
 		return fmt.Errorf("invalid withdrawals: %w", err)
 	}
+
 	// Verify beacon root attribute for Cancun.
 	if err := checkAttribute(c.IsCancun, attr.BeaconRoot != nil, c.LondonBlock, attr.Timestamp); err != nil {
 		return fmt.Errorf("invalid parent beacon block root: %w", err)
@@ -375,6 +377,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			}
 			transactions = append(transactions, &tx)
 		}
+
 		args := &miner.BuildPayloadArgs{
 			Parent:       update.HeadBlockHash,
 			Timestamp:    payloadAttributes.Timestamp,
@@ -386,6 +389,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			Transactions: transactions,
 			GasLimit:     payloadAttributes.GasLimit,
 		}
+		log.Trace("miner build payload args: %s", spew.Sdump(args))
 		id := args.Id()
 		// If we already are busy generating this work, then we do not need
 		// to start a second process.
