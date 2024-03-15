@@ -21,6 +21,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/hvm"
+	"github.com/ethereum/go-ethereum/log"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -40,6 +42,16 @@ import (
 type PrecompiledContract interface {
 	RequiredGas(input []byte) uint64  // RequiredPrice calculates the contract gas use
 	Run(input []byte) ([]byte, error) // Run runs the precompiled contract
+}
+
+// TODO: Need to move this to EVM instantiation so historical data can be provided by a different source - this is a hack for testing
+var HVMDatabase hvm.HvmDb
+
+func SetupHvm(pguri string) error {
+	db := hvm.NewPGHvmDb(pguri)
+	err := db.Connect()
+	HVMDatabase = db
+	return err
 }
 
 // PrecompiledContractsHomestead contains the default set of pre-compiled Ethereum
@@ -81,15 +93,18 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 // PrecompiledContractsBerlin contains the default set of pre-compiled Ethereum
 // contracts used in the Berlin release.
 var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}): &ecrecover{},
-	common.BytesToAddress([]byte{2}): &sha256hash{},
-	common.BytesToAddress([]byte{3}): &ripemd160hash{},
-	common.BytesToAddress([]byte{4}): &dataCopy{},
-	common.BytesToAddress([]byte{5}): &bigModExp{eip2565: true},
-	common.BytesToAddress([]byte{6}): &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}): &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}): &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}): &blake2F{},
+	common.BytesToAddress([]byte{1}):    &ecrecover{},
+	common.BytesToAddress([]byte{2}):    &sha256hash{},
+	common.BytesToAddress([]byte{3}):    &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):    &dataCopy{},
+	common.BytesToAddress([]byte{5}):    &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):    &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):    &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}):    &blake2F{},
+	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
+	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
+	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
 }
 
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
@@ -105,20 +120,26 @@ var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
 	common.BytesToAddress([]byte{9}):    &blake2F{},
 	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{},
+	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
+	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
+	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
 // contracts specified in EIP-2537. These are exported for testing purposes.
 var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{10}): &bls12381G1Add{},
-	common.BytesToAddress([]byte{11}): &bls12381G1Mul{},
-	common.BytesToAddress([]byte{12}): &bls12381G1MultiExp{},
-	common.BytesToAddress([]byte{13}): &bls12381G2Add{},
-	common.BytesToAddress([]byte{14}): &bls12381G2Mul{},
-	common.BytesToAddress([]byte{15}): &bls12381G2MultiExp{},
-	common.BytesToAddress([]byte{16}): &bls12381Pairing{},
-	common.BytesToAddress([]byte{17}): &bls12381MapG1{},
-	common.BytesToAddress([]byte{18}): &bls12381MapG2{},
+	common.BytesToAddress([]byte{10}):   &bls12381G1Add{},
+	common.BytesToAddress([]byte{11}):   &bls12381G1Mul{},
+	common.BytesToAddress([]byte{12}):   &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{13}):   &bls12381G2Add{},
+	common.BytesToAddress([]byte{14}):   &bls12381G2Mul{},
+	common.BytesToAddress([]byte{15}):   &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{16}):   &bls12381Pairing{},
+	common.BytesToAddress([]byte{17}):   &bls12381MapG1{},
+	common.BytesToAddress([]byte{18}):   &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
+	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
+	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
 }
 
 var (
@@ -176,6 +197,248 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 	suppliedGas -= gasCost
 	output, err := p.Run(input)
 	return output, suppliedGas, err
+}
+
+type btcBalAddr struct{}
+
+func (c *btcBalAddr) RequiredGas(input []byte) uint64 {
+	return params.BtcAddrBal
+}
+
+func (c *btcBalAddr) Run(input []byte) ([]byte, error) {
+	// TODO: 27 to global variable, check value
+	if input == nil || len(input) < 27 {
+		log.Debug("btcBalAddr run called with nil or too small input", "input", input)
+		return nil, nil
+	}
+	addr := string(input)
+	log.Debug("btcBalAddr called", "address", addr)
+	if HVMDatabase == nil {
+		log.Crit("HVMDatabase is nil!")
+	}
+
+	bal, err := HVMDatabase.GetBtcAddrBal(addr)
+	fmt.Printf("Balance: %d\n", bal)
+
+	if err != nil {
+		// TODO: Error handling
+		log.Debug("Unable to process balance of address! Cannot progress EVM.", "address", addr, "err", err)
+		bal = 0 // TODO: temp, change w/ error handling
+	}
+
+	resp := make([]byte, 8)
+	binary.BigEndian.PutUint64(resp, bal)
+	log.Debug("btcBalAddr returning data", "returnedData", fmt.Sprintf("%x", resp))
+	return resp, nil
+}
+
+type btcUtxosAddrList struct{}
+
+func (c *btcUtxosAddrList) RequiredGas(input []byte) uint64 {
+	return params.BtcUtxosAddrList
+}
+
+func (c *btcUtxosAddrList) Run(input []byte) ([]byte, error) {
+	// TODO: Move to variable, check addr min length + 4 bytes
+	if len(input) < 27 {
+		return nil, nil
+	}
+
+	addrEnd := len(input) - 4
+	addr := string(input)[0:addrEnd]
+	pg := (uint32(input[addrEnd]&0xFF) << 16) |
+		(uint32(input[addrEnd+1]&0xFF) << 8) |
+		uint32(input[addrEnd+2]&0xFF)
+	pgSize := uint32(input[addrEnd+3])
+
+	if pgSize == 0 {
+		pgSize = 10 // TODO review default here
+	}
+
+	log.Debug("btcUtxosAddrList run called", "addr", addr, "pg", pg, "pgSize", pgSize)
+
+	utxos, err := HVMDatabase.GetBtcAddrUtxos(addr, pg, pgSize)
+	if err != nil {
+		// TODO: Error handling
+		log.Crit("Unable to process UTXOs of address %s!", addr)
+		return nil, nil
+	}
+
+	resp := make([]byte, 1)
+	resp[0] = byte(len(utxos) & 0xFF)
+
+	for _, utxo := range utxos {
+		resp = append(resp, utxo.Txid...)
+		resp = binary.BigEndian.AppendUint16(resp, uint16(utxo.OutputIndex))
+		resp = binary.BigEndian.AppendUint64(resp, utxo.Value)
+		log.Debug("btcUtxosAddrList adding output to returned data",
+			"txid", fmt.Sprintf("%x", utxo.Txid), "outputIndex", utxo.OutputIndex,
+			"value", utxo.Value)
+	}
+
+	log.Debug("btcUtxosAddrList returning data", "returnedData", fmt.Sprintf("%x", resp))
+	return resp, nil
+}
+
+type btcTxByTxid struct{}
+
+func (c *btcTxByTxid) RequiredGas(input []byte) uint64 {
+	// TODO: Gas based on returned size and/or enabled fields
+	return params.BtcTxByTxid
+}
+
+func (c *btcTxByTxid) Run(input []byte) ([]byte, error) {
+	// TODO: Move to variable
+	if len(input) != 36 { // 4 bytes bitflag, 32 bytes txid. TODO: Allow 32-byte input (just TxID) and assume some default bitflag values?
+		return nil, nil
+	}
+
+	txid := input[0:32]
+
+	bitflag1 := input[32]
+	includeTxHash := bitflag1&(0x01<<7) != 0
+	includeContainingBlock := bitflag1&(0x01<<6) != 0
+	includeVersion := bitflag1&(0x01<<5) != 0
+	includeSizes := bitflag1&(0x01<<4) != 0 // Size, vsize, weight
+	includeLockTime := bitflag1&(0x01<<3) != 0
+	includeInputs := bitflag1&(0x01<<2) != 0
+	includeInputSource := bitflag1&(0x01<<1) != 0
+	includeInputScriptSig := bitflag1&(0x01) != 0
+
+	bitflag2 := input[33]
+	includeInputSeq := bitflag1&(0x01<<7) != 0
+	includeOutputs := bitflag2&(0x01<<6) != 0
+	includeOutputScript := bitflag2&(0x01<<5) != 0
+	includeOutputAddress := bitflag2&(0x01<<4) != 0
+	includeOpReturnOutputs := bitflag2&(0x01<<3) != 0
+	includeOutputSpent := bitflag2&(0x01<<2) != 0
+	includeOutputSpentBy := bitflag2&(0x01<<1) != 0
+	// One unused bit for future, possibly meta-protocol info like Ordinals
+
+	bitflag3 := input[34] // Gives size limits for data which could get unexpectedly expensive to return
+	// Two free bits here
+	maxInputsExponent := bitflag3 & (0x07 << 3) // bits xxXXXxxx used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 inputs
+	maxOutputsExponent := bitflag3 & (0x07)     // bits xxxxxXXX used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 outputs
+
+	maxInputs := 0x01 << maxInputsExponent
+	maxOutputs := 0x01 << maxOutputsExponent
+
+	bitflag4 := input[35]
+	// Four free bits here
+	maxInputScriptSigSizeExponent := bitflag4 & (0x03 << 2) // bits xxxxXXxx used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
+	maxOutputScriptSizeExponent := bitflag4 & (0x03)        // bits xxxxxxXX used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
+
+	maxInputScriptSigSize := 0x01 << (4 + maxInputScriptSigSizeExponent)
+	maxOutputScriptSize := 0x01 << (4 + maxOutputScriptSizeExponent)
+
+	log.Debug("btcTxByTxid called", "includeTxHash", includeTxHash,
+		"includeContainingBlock", includeContainingBlock, "includeVersion", includeVersion,
+		"includeSizes", includeSizes, "includeLockTime", includeLockTime, "includeInputs", includeInputs,
+		"includeInputSource", includeInputSource, "includeInputScriptSig", includeInputScriptSig,
+		"includeInputSeq", includeInputSeq, "includeInputAddress", includeOutputs,
+		"includeOutputScript", includeOutputScript, "includeOutputAddress", includeOutputAddress,
+		"includeOpReturnOutputs", includeOpReturnOutputs, "includeOutputSpent", includeOutputSpent,
+		"includeOutputSpentBy", includeOutputSpentBy, "maxInputsExponent", maxInputsExponent,
+		"maxOutputsExponent", maxOutputsExponent, "maxInputScriptSigSizeExponent", maxInputScriptSigSizeExponent,
+		"maxOutputScriptSizeExponent", maxOutputScriptSizeExponent, "maxInputs", maxInputs, "maxOutputs", maxOutputs,
+		"maxInputScriptSigSize", maxInputScriptSigSize, "maxOutputScriptSize", maxOutputScriptSize)
+
+	tx, err := HVMDatabase.GetTxByTxid(txid)
+	if err != nil {
+		// TODO: Error handling
+		log.Warn("Unable to lookup Tx by Txid!", "txid", txid)
+		return make([]byte, 0), nil
+	}
+
+	if tx == nil {
+		// TODO: Error handling
+		return make([]byte, 0), nil
+	}
+
+	resp := make([]byte, 0)
+
+	if includeTxHash {
+		// TODO: Not yet implemented
+	}
+
+	if includeContainingBlock {
+		resp = append(resp, tx.Block...)
+	}
+
+	if includeVersion {
+		resp = binary.BigEndian.AppendUint32(resp, tx.Version)
+	}
+
+	if includeSizes {
+		resp = binary.BigEndian.AppendUint32(resp, tx.Size)
+		resp = binary.BigEndian.AppendUint32(resp, tx.VSize)
+		// TODO: Weight
+	}
+
+	if includeLockTime {
+		resp = binary.BigEndian.AppendUint32(resp, tx.NLockTime)
+	}
+
+	if includeInputs {
+		resp = append(resp, byte(len(tx.Inputs))) // TODO: Check no more inputs than allowed
+		for _, in := range tx.Inputs {
+			// Always include input value
+			resp = binary.BigEndian.AppendUint64(resp, in.Value)
+			if includeInputSource {
+				resp = append(resp, in.Txid...)
+				resp = binary.BigEndian.AppendUint16(resp, uint16(in.SourceIndex)) // TODO: Check outputs cannot exceed 2^16-1
+			}
+			if includeInputScriptSig {
+				// TODO: chop to max size and decide on size encoding
+
+				resp = binary.BigEndian.AppendUint16(resp, uint16(len(in.ScriptSig)))
+				resp = append(resp, in.ScriptSig...)
+			}
+			//
+			// TODO: respect max inputs setting
+			if includeInputSeq {
+				resp = binary.BigEndian.AppendUint32(resp, in.Sequence)
+			}
+		}
+	}
+
+	if includeOutputs {
+		resp = append(resp, byte(len(tx.Outputs))) // TODO: Check no more outputs than allowed
+		for _, out := range tx.Outputs {
+			// Always include output value
+			resp = binary.BigEndian.AppendUint64(resp, out.Value)
+			if includeOutputScript {
+				resp = append(resp, byte(len(out.SpendScript))) // TODO: Length check and truncate
+				resp = append(resp, out.SpendScript...)
+			}
+			if includeOutputAddress {
+				addrBytes := []byte(*out.Address)
+				resp = append(resp, byte(len(addrBytes)))
+				resp = append(resp, addrBytes...) // TODO: right now this is just ASCII->Bytes, consider changing to Base58 decode? Could be flag option
+			}
+			if includeOpReturnOutputs {
+				// TODO: need to add query for opreturns table, until then observed indexes of other outputs will be wrong if after an OP_RETURN output
+			}
+			if includeOutputSpent {
+				spent := 0
+				if out.Spent {
+					spent = 1
+				}
+				resp = append(resp, byte(spent))
+				if includeOutputSpentBy {
+					// If not spent, do not include spender TxID
+					if spent == 1 {
+						// TxID then input index
+						resp = append(resp, out.SpendTx...)
+						resp = binary.BigEndian.AppendUint16(resp, uint16(out.SpendIndex))
+					}
+				}
+			}
+		}
+	}
+
+	log.Debug("btcTxByTxid returning data", "returnedData", fmt.Sprintf("%x", resp))
+	return resp, nil
 }
 
 // ECRECOVER implemented as a native contract.

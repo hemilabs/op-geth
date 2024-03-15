@@ -927,6 +927,30 @@ var (
 		Category: flags.RollupCategory,
 		Value:    true,
 	}
+	RollupHVMPgUser = &cli.StringFlag{
+		Name:     "hvm.pguser",
+		Usage:    "Username for HVM postgres database",
+		Category: flags.RollupCategory,
+		Value:    "user", // TODO: Set these defaults correctly
+	}
+	RollupHVMPgPass = &cli.StringFlag{
+		Name:     "hvm.pgpass",
+		Usage:    "Password for HVM postgres database",
+		Category: flags.RollupCategory,
+		Value:    "pass",
+	}
+	RollupHVMPgAddr = &cli.StringFlag{
+		Name:     "hvm.pgaddr",
+		Usage:    "Host for HVM postgres database",
+		Category: flags.RollupCategory,
+		Value:    "127.0.0.1",
+	}
+	RollupHVMPgPort = &cli.IntFlag{
+		Name:     "hvm.pgport",
+		Usage:    "Port for HVM postgres database",
+		Category: flags.RollupCategory,
+		Value:    5432,
+	}
 
 	// Metrics flags
 	MetricsEnabledFlag = &cli.BoolFlag{
