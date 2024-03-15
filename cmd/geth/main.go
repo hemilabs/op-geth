@@ -19,6 +19,7 @@ package main
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"os"
 	"sort"
 	"strconv"
@@ -155,6 +156,10 @@ var (
 		utils.RollupComputePendingBlock,
 		utils.RollupHaltOnIncompatibleProtocolVersionFlag,
 		utils.RollupSuperchainUpgradesFlag,
+		utils.RollupHVMPgUser,
+		utils.RollupHVMPgPass,
+		utils.RollupHVMPgAddr,
+		utils.RollupHVMPgPort,
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
@@ -384,6 +389,34 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	// Create a client to interact with local geth node.
 	rpcClient := stack.Attach()
 	ethClient := ethclient.NewClient(rpcClient)
+
+	// TODO: Move this somewhere better and implement defaults correctly
+	user := "user"
+	pass := "pass"
+	addr := "127.0.0.1"
+	port := 5432
+
+	if ctx.IsSet(utils.RollupHVMPgUser.Name) {
+		user = ctx.String(utils.RollupHVMPgUser.Name)
+	}
+	if ctx.IsSet(utils.RollupHVMPgPass.Name) {
+		pass = ctx.String(utils.RollupHVMPgPass.Name)
+	}
+	if ctx.IsSet(utils.RollupHVMPgAddr.Name) {
+		addr = ctx.String(utils.RollupHVMPgAddr.Name)
+	}
+	if ctx.IsSet(utils.RollupHVMPgPort.Name) {
+		port = ctx.Int(utils.RollupHVMPgPort.Name)
+	}
+
+	// TODO: Configure db name? Also add config option for SSL
+	pguri := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=bitcoin sslmode=require", addr, port, user, pass)
+
+	err := vm.SetupHvm(pguri)
+	if err != nil {
+		// TODO: Error handling here - add logic to prevent chain progressing without hVM and retry connection when lost
+		log.Crit("Unable to connect to HVM provider, chain cannot be processed.")
+	}
 
 	go func() {
 		// Open any wallets already attached
