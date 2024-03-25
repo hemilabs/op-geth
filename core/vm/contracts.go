@@ -105,6 +105,9 @@ var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
 	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
 	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
+	common.BytesToAddress([]byte{0x43}): &btcTxConfirmations{},
+	common.BytesToAddress([]byte{0x44}): &btcLastHeader{},
+	common.BytesToAddress([]byte{0x45}): &btcHeaderN{},
 }
 
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
@@ -123,6 +126,9 @@ var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
 	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
 	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
+	common.BytesToAddress([]byte{0x43}): &btcTxConfirmations{},
+	common.BytesToAddress([]byte{0x44}): &btcLastHeader{},
+	common.BytesToAddress([]byte{0x45}): &btcHeaderN{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
@@ -140,6 +146,9 @@ var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
 	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
 	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
 	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
+	common.BytesToAddress([]byte{0x43}): &btcTxConfirmations{},
+	common.BytesToAddress([]byte{0x44}): &btcLastHeader{},
+	common.BytesToAddress([]byte{0x45}): &btcHeaderN{},
 }
 
 var (
@@ -229,6 +238,114 @@ func (c *btcBalAddr) Run(input []byte) ([]byte, error) {
 	resp := make([]byte, 8)
 	binary.BigEndian.PutUint64(resp, bal)
 	log.Debug("btcBalAddr returning data", "returnedData", fmt.Sprintf("%x", resp))
+	return resp, nil
+}
+
+type btcTxConfirmations struct{}
+
+func (c *btcTxConfirmations) RequiredGas(input []byte) uint64 {
+	return params.BtcTxConf
+}
+
+func (c *btcTxConfirmations) Run(input []byte) ([]byte, error) {
+	if input == nil || len(input) != 32 {
+		return nil, nil
+	}
+	log.Debug("txidConfirmations called", "txid", input)
+	if HVMDatabase == nil {
+		log.Crit("HVMDatabase is nil!")
+	}
+
+	// TODO: Use different method that doesn't do expensive tx reconstruction operations
+	tx, err := HVMDatabase.GetTxByTxid(input)
+	if err != nil {
+		// TODO: Error handling
+		log.Warn("Unable to lookup Tx conformations by Txid!", "txid", input)
+		return make([]byte, 0), nil
+	}
+
+	resp := make([]byte, 4)
+	binary.BigEndian.PutUint32(resp, tx.Confirmations)
+
+	log.Debug("txidConfirmations returning data", "returnedData", fmt.Sprintf("%x", resp))
+	return resp, nil
+}
+
+type btcLastHeader struct{}
+
+func (c *btcLastHeader) RequiredGas(input []byte) uint64 {
+	return params.BtcLastHeader
+}
+
+func (c *btcLastHeader) Run(input []byte) ([]byte, error) {
+	// No input validation
+	log.Debug("btcLastHeader called")
+	if HVMDatabase == nil {
+		log.Crit("HVMDatabase is nil!")
+	}
+
+	header, err := HVMDatabase.GetLastHeader()
+	if err != nil {
+		// TODO: Error handling
+		log.Warn("Unable to lookup Tx conformations by Txid!", "txid", input)
+		return make([]byte, 0), nil
+	}
+
+	resp := make([]byte, 4)
+	binary.BigEndian.PutUint32(resp, header.Height)
+
+	resp = append(resp, header.Hash...)
+	resp = binary.BigEndian.AppendUint32(resp, header.Version)
+	resp = append(resp, header.PrevHash...)
+	resp = append(resp, header.MerkleRoot...)
+	resp = binary.BigEndian.AppendUint32(resp, header.Timestamp)
+	resp = binary.BigEndian.AppendUint32(resp, header.NBits)
+	resp = binary.BigEndian.AppendUint32(resp, header.Nonce)
+
+	log.Debug("btcLastHeader returning data", "returnedData", fmt.Sprintf("%x", resp))
+	return resp, nil
+}
+
+type btcHeaderN struct{}
+
+func (c *btcHeaderN) RequiredGas(input []byte) uint64 {
+	return params.BtcHeaderN
+}
+
+func (c *btcHeaderN) Run(input []byte) ([]byte, error) {
+	if input == nil || len(input) != 4 {
+		return nil, nil
+	}
+
+	height := (uint32(input[0]&0xFF) << 16) |
+		(uint32(input[1]&0xFF) << 16) |
+		(uint32(input[2]&0xFF) << 8) |
+		uint32(input[3]&0xFF)
+
+	log.Debug("btcHeaderN called", "height", height)
+	if HVMDatabase == nil {
+		log.Crit("HVMDatabase is nil!")
+	}
+
+	header, err := HVMDatabase.GetHeader(height)
+	if err != nil {
+		// TODO: Error handling
+		log.Warn("Unable to lookup block at height!", "height", height)
+		return make([]byte, 0), nil
+	}
+
+	resp := make([]byte, 4)
+	binary.BigEndian.PutUint32(resp, header.Height)
+
+	resp = append(resp, header.Hash...)
+	resp = binary.BigEndian.AppendUint32(resp, header.Version)
+	resp = append(resp, header.PrevHash...)
+	resp = append(resp, header.MerkleRoot...)
+	resp = binary.BigEndian.AppendUint32(resp, header.Timestamp)
+	resp = binary.BigEndian.AppendUint32(resp, header.NBits)
+	resp = binary.BigEndian.AppendUint32(resp, header.Nonce)
+
+	log.Debug("btcHeaderN returning data", "returnedData", fmt.Sprintf("%x", resp))
 	return resp, nil
 }
 
