@@ -12,6 +12,8 @@ type HvmDb interface {
 	GetBtcAddrUtxos(addr string, pg uint32, pgsize uint32) ([]DbOutput, error)
 	GetBtcAddrBal(addr string) (uint64, error)
 	GetTxByTxid(txid []byte) (*FullTransaction, error)
+	GetLastHeader() (*BlockHeader, error)
+	GetHeader(height uint32) (*BlockHeader, error)
 }
 
 type PGHvmDb struct {
@@ -45,6 +47,116 @@ func (h *PGHvmDb) Connect() error {
 
 	h.db = db
 	return nil
+}
+
+func (h *PGHvmDb) GetHeader(height uint32) (*BlockHeader, error) {
+	blockQuery := fmt.Sprintf("SELECT * FROM blocks WHERE height=%d", height)
+
+	blockRows, err := h.db.Queryx(blockQuery)
+	if err != nil {
+		log.Warn("unable to fetch block data from blocks table", "height", height)
+		return nil, err
+	}
+	defer blockRows.Close()
+
+	dbBlock := DbBlock{}
+	if blockRows.Next() {
+		err := blockRows.StructScan(&dbBlock)
+		if err != nil {
+			return nil, nil // TODO: Error handling
+		}
+	} else {
+		log.Warn("Error scanning query from blocks table looking block", "height", height)
+		return nil, nil // TODO: Err
+	}
+
+	secondBlockQuery := fmt.Sprintf("SELECT * FROM blocks WHERE height=%d", height-1)
+
+	secondBlockRows, err := h.db.Queryx(secondBlockQuery)
+	if err != nil {
+		log.Warn("unable to fetch previous block data from table", "height", height)
+		return nil, err
+	}
+	defer secondBlockRows.Close()
+
+	dbSecondBlock := DbBlock{}
+	if secondBlockRows.Next() {
+		err := secondBlockRows.StructScan(&dbSecondBlock)
+		if err != nil {
+			return nil, nil // TODO: Error handling
+		}
+	} else {
+		log.Warn("Error scanning query from previous block data from table", "height", height)
+		return nil, nil // TODO: Err
+	}
+
+	block := BlockHeader{
+		Height:     dbBlock.Height,
+		Hash:       dbBlock.Hash,
+		Version:    0, // Temp
+		PrevHash:   dbSecondBlock.Hash,
+		MerkleRoot: dbBlock.MerkleRoot,
+		Timestamp:  dbBlock.Timestamp,
+		NBits:      0, // Temp
+		Nonce:      0, // Temp
+	}
+
+	return &block, nil
+}
+
+func (h *PGHvmDb) GetLastHeader() (*BlockHeader, error) {
+	tipBlockQuery := fmt.Sprintf("SELECT * FROM blocks ORDER BY height DESC LIMIT 1")
+
+	tipBlockRows, err := h.db.Queryx(tipBlockQuery)
+	if err != nil {
+		log.Warn("unable to fetch tip block data from blocks table")
+		return nil, err
+	}
+	defer tipBlockRows.Close()
+
+	dbTipBlock := DbBlock{}
+	if tipBlockRows.Next() {
+		err := tipBlockRows.StructScan(&dbTipBlock)
+		if err != nil {
+			return nil, nil // TODO: Error handling
+		}
+	} else {
+		log.Warn("Error scanning query from blocks table looking for tip")
+		return nil, nil // TODO: Err
+	}
+
+	secondBlockQuery := fmt.Sprintf("SELECT * FROM blocks ORDER BY height DESC LIMIT 1 OFFSET 1")
+
+	secondBlockRows, err := h.db.Queryx(secondBlockQuery)
+	if err != nil {
+		log.Warn("unable to fetch 2nd block data from blocks table")
+		return nil, err
+	}
+	defer secondBlockRows.Close()
+
+	dbSecondBlock := DbBlock{}
+	if secondBlockRows.Next() {
+		err := secondBlockRows.StructScan(&dbSecondBlock)
+		if err != nil {
+			return nil, nil // TODO: Error handling
+		}
+	} else {
+		log.Warn("Error scanning query from blocks table looking for 2nd block")
+		return nil, nil // TODO: Err
+	}
+
+	block := BlockHeader{
+		Height:     dbTipBlock.Height,
+		Hash:       dbTipBlock.Hash,
+		Version:    0, // Temp
+		PrevHash:   dbSecondBlock.Hash,
+		MerkleRoot: dbTipBlock.MerkleRoot,
+		Timestamp:  dbTipBlock.Timestamp,
+		NBits:      0, // Temp
+		Nonce:      0, // Temp
+	}
+
+	return &block, nil
 }
 
 func (h *PGHvmDb) GetTxByTxid(txid []byte) (*FullTransaction, error) {
@@ -254,6 +366,17 @@ func (h *PGHvmDb) GetBtcAddrBal(addr string) (uint64, error) {
 	}
 
 	return 0, nil
+}
+
+type BlockHeader struct {
+	Height     uint32
+	Hash       []byte
+	Version    uint32
+	PrevHash   []byte
+	MerkleRoot []byte
+	Timestamp  uint32
+	NBits      uint32
+	Nonce      uint32
 }
 
 type DbBlock struct {
