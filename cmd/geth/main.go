@@ -20,6 +20,7 @@ package main
 import (
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hemilabs/heminetwork/service/tbc"
 	"os"
 	"sort"
 	"strconv"
@@ -156,10 +157,12 @@ var (
 		utils.RollupComputePendingBlock,
 		utils.RollupHaltOnIncompatibleProtocolVersionFlag,
 		utils.RollupSuperchainUpgradesFlag,
-		utils.RollupHVMPgUser,
-		utils.RollupHVMPgPass,
-		utils.RollupHVMPgAddr,
-		utils.RollupHVMPgPort,
+		utils.TBCListenAddress,
+		utils.TBCMaxCachedTxs,
+		utils.TBCLevelDBHome,
+		utils.TBCBlockSanity,
+		utils.TBCNetwork,
+		utils.TBCPrometheusAddress,
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
@@ -390,32 +393,64 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	rpcClient := stack.Attach()
 	ethClient := ethclient.NewClient(rpcClient)
 
-	// TODO: Move this somewhere better and implement defaults correctly
-	user := "user"
-	pass := "pass"
-	addr := "127.0.0.1"
-	port := 5432
+	tbcCfg := tbc.NewDefaultConfig()
 
-	if ctx.IsSet(utils.RollupHVMPgUser.Name) {
-		user = ctx.String(utils.RollupHVMPgUser.Name)
+	tbcCfg.Network = "testnet3"
+
+	if ctx.IsSet(utils.TBCListenAddress.Name) {
+		tbcCfg.ListenAddress = ctx.String(utils.TBCListenAddress.Name)
 	}
-	if ctx.IsSet(utils.RollupHVMPgPass.Name) {
-		pass = ctx.String(utils.RollupHVMPgPass.Name)
+	if ctx.IsSet(utils.TBCMaxCachedTxs.Name) {
+		tbcCfg.MaxCachedTxs = ctx.Int(utils.TBCMaxCachedTxs.Name)
 	}
-	if ctx.IsSet(utils.RollupHVMPgAddr.Name) {
-		addr = ctx.String(utils.RollupHVMPgAddr.Name)
+	if ctx.IsSet(utils.TBCLevelDBHome.Name) {
+		tbcCfg.LevelDBHome = ctx.String(utils.TBCLevelDBHome.Name)
 	}
-	if ctx.IsSet(utils.RollupHVMPgPort.Name) {
-		port = ctx.Int(utils.RollupHVMPgPort.Name)
+	if ctx.IsSet(utils.TBCBlockSanity.Name) {
+		tbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
+	}
+	if ctx.IsSet(utils.TBCNetwork.Name) {
+		tbcCfg.Network = ctx.String(utils.TBCNetwork.Name)
+	}
+	if ctx.IsSet(utils.TBCPrometheusAddress.Name) {
+		tbcCfg.PrometheusListenAddress = ctx.String(utils.TBCPrometheusAddress.Name)
+	}
+	// TODO: convert op-geth log level integer to TBC log level string
+
+	// Initialize TBC Bitcoin indexer to answer hVM queries
+	err := vm.SetupTBC(ctx.Context, tbcCfg)
+
+	var initHeight uint64
+	initHeight = 10000 // Temp, this should be part of chain config
+
+	for {
+		log.Info("SLeeping 5 before checking TBC again")
+		time.Sleep(5 * time.Second)
+		if vm.TBCInitSynced(ctx.Context, initHeight) {
+			log.Info("TBCInitSynced=true, continuing...")
+			break
+		} else {
+			log.Info("Geth still waiting for TBC initial sync")
+		}
 	}
 
-	// TODO: Configure db name? Also add config option for SSL
-	pguri := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=bitcoin sslmode=require", addr, port, user, pass)
-
-	err := vm.SetupHvm(pguri)
+	log.Info("Performing initial UTXO index", "initHeight", initHeight)
+	err = vm.TBCInitialUTXOIndex(ctx.Context, initHeight)
 	if err != nil {
-		// TODO: Error handling here - add logic to prevent chain progressing without hVM and retry connection when lost
-		log.Crit("Unable to connect to HVM provider, chain cannot be processed.")
+		log.Crit("Unable to perform initial UTXO index", "initHeight", initHeight, "err", err)
+	}
+
+	log.Info("Performing initial Tx index", "initHeight", initHeight)
+	err = vm.TBCInitialTxIndex(ctx.Context, initHeight)
+	if err != nil {
+		log.Crit("Unable to perform initial Tx index", "initHeight", initHeight)
+	}
+
+	log.Info("Finished initial indexing", "initHeight", initHeight)
+
+	if err != nil {
+		// TODO: Error handling here - add logic to prevent chain progressing without TBC and retry connection when lost
+		log.Crit("Unable to start TBC, chain cannot be processed.", "err", err)
 	}
 
 	go func() {
