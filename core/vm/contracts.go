@@ -17,13 +17,17 @@
 package vm
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/hvm"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/service/tbc"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -46,12 +50,102 @@ type PrecompiledContract interface {
 
 // TODO: Need to move this to EVM instantiation so historical data can be provided by a different source - this is a hack for testing
 var HVMDatabase hvm.HvmDb
+var TBCIndexer *tbc.Server
 
-func SetupHvm(pguri string) error {
+func SetupHvmOld(pguri string) error {
 	db := hvm.NewPGHvmDb(pguri)
 	err := db.Connect()
 	HVMDatabase = db
 	return err
+}
+
+func TBCInitialTxIndex(ctx context.Context, initHeight uint64) error {
+	var h uint64
+	// Get current indexed height
+	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.TxIndexHeightKey)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			return fmt.Errorf("metadata %v: %w",
+				string(tbc.UtxoIndexHeightKey), err)
+		}
+		he = make([]byte, 8)
+	}
+	h = binary.BigEndian.Uint64(he)
+
+	err = TBCIndexer.TxIndexer(ctx, h, initHeight)
+	if err != nil {
+		return fmt.Errorf("TX indexer error: %w", err)
+	}
+	return nil
+}
+
+func TBCInitialUTXOIndex(ctx context.Context, initHeight uint64) error {
+	var h uint64
+	// Get current indexed height
+	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.UtxoIndexHeightKey)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			return fmt.Errorf("metadata %v: %w",
+				string(tbc.UtxoIndexHeightKey), err)
+		}
+		he = make([]byte, 8)
+	}
+	h = binary.BigEndian.Uint64(he)
+
+	err = TBCIndexer.UtxoIndexer(ctx, h, initHeight)
+	if err != nil {
+		return fmt.Errorf("UTXO indexer error: %w", err)
+	}
+	return nil
+}
+
+func TBCInitSynced(ctx context.Context, initHeight uint64) bool {
+	// TODO: Check for all blocks available not only tip, since download is async
+	blockHeaders, err := TBCIndexer.DB().BlockHeadersByHeight(ctx, initHeight)
+	if err != nil {
+		log.Error("Unable to get best block headers from TBC")
+		return false
+	}
+
+	if len(blockHeaders) == 0 {
+		log.Info("TBC does not have headers yet")
+		return false
+	}
+
+	bestHash := blockHeaders[0].Hash
+
+	block, err := TBCIndexer.DB().BlockByHash(ctx, bestHash)
+	if err != nil {
+		log.Info("TBC not synced, no block downloaded for tip header", "tip", blockHeaders[0].Height)
+		return false
+	}
+
+	if block != nil {
+		log.Info("TBC synced, has tip block", "tipHash", bestHash)
+		// TODO: Remove this hack around full check
+		log.Info("Sleeping 60 seconds to give TBC time to back-fill any missing blocks before initHeight", "initHeight", initHeight)
+		time.Sleep(60 * time.Second)
+		return true
+	}
+	return false
+}
+
+func SetupTBC(ctx context.Context, cfg *tbc.Config) error {
+	tbcNode, err := tbc.NewServer(cfg)
+	if err != nil {
+		log.Crit("Unable to create TBC node!", "err", err)
+		return err
+	}
+
+	go func() {
+		err := tbcNode.Run(ctx)
+		if err != nil && err != context.Canceled {
+			panic(err)
+		}
+	}()
+
+	TBCIndexer = tbcNode
+	return nil
 }
 
 // PrecompiledContractsHomestead contains the default set of pre-compiled Ethereum
@@ -222,11 +316,11 @@ func (c *btcBalAddr) Run(input []byte) ([]byte, error) {
 	}
 	addr := string(input)
 	log.Debug("btcBalAddr called", "address", addr)
-	if HVMDatabase == nil {
+	if TBCIndexer == nil {
 		log.Crit("HVMDatabase is nil!")
 	}
 
-	bal, err := HVMDatabase.GetBtcAddrBal(addr)
+	bal, err := TBCIndexer.BalanceByAddress(context.Background(), addr)
 	fmt.Printf("Balance: %d\n", bal)
 
 	if err != nil {
@@ -374,7 +468,13 @@ func (c *btcUtxosAddrList) Run(input []byte) ([]byte, error) {
 
 	log.Debug("btcUtxosAddrList run called", "addr", addr, "pg", pg, "pgSize", pgSize)
 
-	utxos, err := HVMDatabase.GetBtcAddrUtxos(addr, pg, pgSize)
+	if TBCIndexer == nil {
+		log.Crit("No TBC indexer available, cannot perform hVM precompile call!")
+	}
+
+	// TODO: Correct Context
+	utxos, err := TBCIndexer.UtxosByAddress(context.Background(), addr, uint64(pg), uint64(pgSize))
+
 	if err != nil {
 		// TODO: Error handling
 		log.Crit("Unable to process UTXOs of address %s!", addr)
@@ -385,12 +485,12 @@ func (c *btcUtxosAddrList) Run(input []byte) ([]byte, error) {
 	resp[0] = byte(len(utxos) & 0xFF)
 
 	for _, utxo := range utxos {
-		resp = append(resp, utxo.Txid...)
-		resp = binary.BigEndian.AppendUint16(resp, uint16(utxo.OutputIndex))
-		resp = binary.BigEndian.AppendUint64(resp, utxo.Value)
+		resp = append(resp, utxo.ScriptHashSlice()...) // TODO: Rename ScriptHash/ScriptHashSlice in TBC to TxID[...]
+		resp = binary.BigEndian.AppendUint16(resp, uint16(utxo.OutputIndex()))
+		resp = binary.BigEndian.AppendUint64(resp, utxo.Value())
 		log.Debug("btcUtxosAddrList adding output to returned data",
-			"txid", fmt.Sprintf("%x", utxo.Txid), "outputIndex", utxo.OutputIndex,
-			"value", utxo.Value)
+			"txid", fmt.Sprintf("%x", utxo.ScriptHashSlice()), "outputIndex", utxo.OutputIndex(),
+			"value", utxo.Value())
 	}
 
 	log.Debug("btcUtxosAddrList returning data", "returnedData", fmt.Sprintf("%x", resp))
