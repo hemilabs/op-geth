@@ -149,6 +149,14 @@ require (
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 
+// Excludes to work around genproto conflicts between op-geth and heminetwork dependencies
+exclude google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
+
+exclude google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8
+
+exclude google.golang.org/genproto v0.0.0-20180518175338-11a468237815
+
+// Temp replacement for testing, revert once marco/bitcoin branch is merged in
 replace github.com/hemilabs/heminetwork => ../heminetwork
 
 //replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain
