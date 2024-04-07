@@ -424,7 +424,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	initHeight = 10000 // Temp, this should be part of chain config
 
 	for {
-		log.Info("SLeeping 5 before checking TBC again")
+		log.Info("Sleeping 5 before checking TBC again")
 		time.Sleep(5 * time.Second)
 		if vm.TBCInitSynced(ctx.Context, initHeight) {
 			log.Info("TBCInitSynced=true, continuing...")
