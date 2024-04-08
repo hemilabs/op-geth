@@ -428,29 +428,48 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	initHeight = 10000 // Temp, this should be part of chain config
 
 	for {
-		log.Info("Sleeping 5 before checking TBC again")
+		log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
+			" Cannot progress Hemi chain until download is complete.", initHeight))
 		time.Sleep(5 * time.Second)
-		if vm.TBCInitSynced(ctx.Context, initHeight) {
-			log.Info("TBCInitSynced=true, continuing...")
+		if vm.TBCBlocksAvailableToHeight(ctx.Context, 0, initHeight) {
+			log.Info("TBC Initial syncing is complete, continuing...")
 			break
 		} else {
-			log.Info("Geth still waiting for TBC initial sync")
+			log.Info("Geth still waiting for TBC initial sync", "initHeight", initHeight)
 		}
 	}
 
 	log.Info("Performing initial UTXO index", "initHeight", initHeight)
-	err = vm.TBCInitialUTXOIndex(ctx.Context, initHeight)
+	err = vm.TBCIndexUTXOs(ctx.Context, initHeight)
 	if err != nil {
+		log.Info("Error is not nil!")
+		log.Info(fmt.Sprintf("Error: %v", err))
+		log.Info("Error: ", "err", err.Error())
 		log.Crit("Unable to perform initial UTXO index", "initHeight", initHeight, "err", err)
 	}
 
 	log.Info("Performing initial Tx index", "initHeight", initHeight)
-	err = vm.TBCInitialTxIndex(ctx.Context, initHeight)
+	err = vm.TBCIndexTxs(ctx.Context, initHeight)
 	if err != nil {
 		log.Crit("Unable to perform initial Tx index", "initHeight", initHeight)
 	}
 
 	log.Info("Finished initial indexing", "initHeight", initHeight)
+
+	si := vm.TBCIndexer.Synced(ctx.Context)
+
+	if si.UtxoHeight != initHeight {
+		log.Crit("TBC did not index UTXOs to initHeight!",
+			"utxoIndexHeight", si.UtxoHeight, "initHeight", initHeight)
+	}
+
+	if si.TxHeight != initHeight {
+		log.Crit("TBC did not index txs to initHeight!",
+			"txIndexHeight", si.TxHeight, "initHeight", initHeight)
+	}
+
+	log.Info("TBC initial sync completed", "headerHeight", si.BlockHeaderHeight,
+		"utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
 
 	if err != nil {
 		// TODO: Error handling here - add logic to prevent chain progressing without TBC and retry connection when lost

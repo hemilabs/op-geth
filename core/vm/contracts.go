@@ -22,22 +22,20 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/hvm"
-	"github.com/ethereum/go-ethereum/log"
-	"github.com/hemilabs/heminetwork/database"
-	"github.com/hemilabs/heminetwork/service/tbc"
-	"math/big"
-	"time"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
+	"github.com/ethereum/go-ethereum/core/hvm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/blake2b"
 	"github.com/ethereum/go-ethereum/crypto/bls12381"
 	"github.com/ethereum/go-ethereum/crypto/bn256"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/crypto/ripemd160"
+	"math/big"
 )
 
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
@@ -59,75 +57,112 @@ func SetupHvmOld(pguri string) error {
 	return err
 }
 
-func TBCInitialTxIndex(ctx context.Context, initHeight uint64) error {
+func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 	var h uint64
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.TxIndexHeightKey)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
-			return fmt.Errorf("metadata %v: %w",
+			log.Info("No Tx indexing performed yet, starting height for Tx indexing set to 0.")
+		} else {
+			// Error was something other than key not being found
+			return fmt.Errorf("Error querying for Tx index metadata %v: %w",
 				string(tbc.UtxoIndexHeightKey), err)
 		}
 		he = make([]byte, 8)
 	}
 	h = binary.BigEndian.Uint64(he)
 
-	err = TBCIndexer.TxIndexer(ctx, h, initHeight)
+	err = TBCIndexer.TxIndexer(ctx, h, tipHeight-h)
 	if err != nil {
-		return fmt.Errorf("TX indexer error: %w", err)
+		return fmt.Errorf("Tx indexer error: %w", err)
 	}
 	return nil
 }
 
-func TBCInitialUTXOIndex(ctx context.Context, initHeight uint64) error {
+func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 	var h uint64
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.UtxoIndexHeightKey)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
-			return fmt.Errorf("metadata %v: %w",
+			log.Info("No UTXO indexing performed yet, starting height for UTXO indexing set to 0.")
+		} else {
+			// Error was something other than key not being found
+			return fmt.Errorf("Error querying for UTXO Index metadata %v: %w",
 				string(tbc.UtxoIndexHeightKey), err)
 		}
 		he = make([]byte, 8)
 	}
 	h = binary.BigEndian.Uint64(he)
 
-	err = TBCIndexer.UtxoIndexer(ctx, h, initHeight)
+	err = TBCIndexer.UtxoIndexer(ctx, h, tipHeight-h)
 	if err != nil {
 		return fmt.Errorf("UTXO indexer error: %w", err)
 	}
 	return nil
 }
 
-func TBCInitSynced(ctx context.Context, initHeight uint64) bool {
-	// TODO: Check for all blocks available not only tip, since download is async
-	blockHeaders, err := TBCIndexer.DB().BlockHeadersByHeight(ctx, initHeight)
+func TBCBlocksAvailableToHeight(ctx context.Context, startingHeight uint64, endingHeight uint64) bool {
+	// See if endingHeight header exists
+	blockHeaders, err := TBCIndexer.DB().BlockHeadersByHeight(ctx, endingHeight)
 	if err != nil {
-		log.Error("Unable to get best block headers from TBC")
+		log.Error("Unable to get block headers from TBC at ending height", "endingHeight", endingHeight)
 		return false
 	}
 
 	if len(blockHeaders) == 0 {
-		log.Info("TBC does not have headers yet")
+		// endingHeight header does not exist
+		log.Info("TBC does not have header for ending block", "endingHeight", endingHeight)
 		return false
 	}
 
 	bestHash := blockHeaders[0].Hash
 
+	// See if endingHeight block exists
 	block, err := TBCIndexer.DB().BlockByHash(ctx, bestHash)
 	if err != nil {
-		log.Info("TBC not synced, no block downloaded for tip header", "tip", blockHeaders[0].Height)
+		log.Info("TBC not synced, no block downloaded for final header", "tip", blockHeaders[0].Height)
 		return false
 	}
 
-	if block != nil {
-		log.Info("TBC synced, has tip block", "tipHash", bestHash)
-		// TODO: Remove this hack around full check
-		log.Info("Sleeping 60 seconds to give TBC time to back-fill any missing blocks before initHeight", "initHeight", initHeight)
-		time.Sleep(60 * time.Second)
-		return true
+	if block == nil {
+		log.Info("Block at endingHeight is nil", "endingHeight", endingHeight)
+		return false
 	}
-	return false
+
+	// Tip has been downloaded, so do expensive check of all blocks up to tip
+	log.Info("TBC has endingHeight block synced, checking blocks in-between...")
+	for htc := startingHeight; htc < endingHeight; htc++ {
+		if htc%10000 == 0 {
+			log.Debug(fmt.Sprintf("Checking for contiguous blocks between %d and %d,"+
+				" current block check for %d...",
+				startingHeight, endingHeight, htc))
+		}
+
+		blockHeadersCheck, err := TBCIndexer.DB().BlockHeadersByHeight(ctx, htc)
+		if err != nil {
+			log.Error("Unable to get best block headers from TBC at intermediate height", "heightToCheck", htc)
+			return false
+		}
+
+		if len(blockHeadersCheck) == 0 {
+			log.Info("TBC does not have header for intermediate block", "heightToCheck", htc)
+		}
+
+		// TODO: Check for chain contiguousness
+		intermediateHash := blockHeadersCheck[0].Hash
+
+		intermediateBlock, err := TBCIndexer.DB().BlockByHash(ctx, intermediateHash)
+		if err != nil || intermediateBlock == nil {
+			log.Info("TBC not synced, no block downloaded for intermediate header", "intermediateHash", intermediateHash)
+			return false
+		}
+		// If execution got here, then the block and its header are downloaded, continue looking
+		log.Trace("Block found, continuing contiguous blocks search", "heightToCheck", htc)
+	}
+	log.Info("TBC synced, has all blocks downloaded from starting height to ending height", "startingHeight", startingHeight, "endingHeight", endingHeight, "tipHash")
+	return true
 }
 
 func SetupTBC(ctx context.Context, cfg *tbc.Config) error {
