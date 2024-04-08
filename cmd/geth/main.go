@@ -421,11 +421,15 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	}
 	// TODO: convert op-geth log level integer to TBC log level string
 
+	si := vm.TBCIndexer.Synced(ctx.Context)
+
 	// Initialize TBC Bitcoin indexer to answer hVM queries
 	err := vm.SetupTBC(ctx.Context, tbcCfg)
 
 	var initHeight uint64
 	initHeight = 10000 // Temp, this should be part of chain config
+
+	log.Info("On op-geth startup, TBC index status: ", "utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
 
 	for {
 		log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
@@ -456,7 +460,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 
 	log.Info("Finished initial indexing", "initHeight", initHeight)
 
-	si := vm.TBCIndexer.Synced(ctx.Context)
+	si = vm.TBCIndexer.Synced(ctx.Context)
 
 	if si.UtxoHeight != initHeight {
 		log.Crit("TBC did not index UTXOs to initHeight!",
