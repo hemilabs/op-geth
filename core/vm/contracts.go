@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/hvm"
@@ -33,8 +34,10 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/database/tbcd"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/crypto/ripemd160"
+	"golang.org/x/exp/slices"
 	"math/big"
 )
 
@@ -385,16 +388,22 @@ func (c *btcTxConfirmations) Run(input []byte) ([]byte, error) {
 		log.Crit("HVMDatabase is nil!")
 	}
 
-	// TODO: Use different method that doesn't do expensive tx reconstruction operations
-	tx, err := HVMDatabase.GetTxByTxid(input)
-	if err != nil {
-		// TODO: Error handling
-		log.Warn("Unable to lookup Tx conformations by Txid!", "txid", input)
+	var txid [32]byte
+	copy(txid[0:32], input[0:32])
+
+	blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), tbcd.NewTxId(txid))
+	if err != nil || blocks == nil || len(blocks) == 0 {
+		log.Warn("Unable to lookup transaction confirmations by txid", "txid", input)
 		return make([]byte, 0), nil
 	}
 
+	// TODO: Canonical check
+	// block := blocks[0]
+
+	// TODO: Map block hash to height in TBC
+
 	resp := make([]byte, 4)
-	binary.BigEndian.PutUint32(resp, tx.Confirmations)
+	binary.BigEndian.PutUint32(resp, 0) // TODO
 
 	log.Debug("txidConfirmations returning data", "returnedData", fmt.Sprintf("%x", resp))
 	return resp, nil
@@ -409,27 +418,33 @@ func (c *btcLastHeader) RequiredGas(input []byte) uint64 {
 func (c *btcLastHeader) Run(input []byte) ([]byte, error) {
 	// No input validation
 	log.Debug("btcLastHeader called")
-	if HVMDatabase == nil {
-		log.Crit("HVMDatabase is nil!")
+	if TBCIndexer == nil {
+		log.Crit("TBCIndexer is nil!")
 	}
 
-	header, err := HVMDatabase.GetLastHeader()
-	if err != nil {
-		// TODO: Error handling
-		log.Warn("Unable to lookup Tx conformations by Txid!", "txid", input)
+	height, headers, err := TBCIndexer.BlockHeadersBest(context.Background())
+
+	if err != nil || len(headers) == 0 {
+		log.Warn("Unable to lookup best header!")
 		return make([]byte, 0), nil
 	}
 
-	resp := make([]byte, 4)
-	binary.BigEndian.PutUint32(resp, header.Height)
+	// TODO: Canonical check
+	bestHeader := headers[0]
 
-	resp = append(resp, header.Hash...)
-	resp = binary.BigEndian.AppendUint32(resp, header.Version)
-	resp = append(resp, header.PrevHash...)
-	resp = append(resp, header.MerkleRoot...)
-	resp = binary.BigEndian.AppendUint32(resp, header.Timestamp)
-	resp = binary.BigEndian.AppendUint32(resp, header.NBits)
-	resp = binary.BigEndian.AppendUint32(resp, header.Nonce)
+	hash := bestHeader.BlockHash()
+	prevHash := bestHeader.PrevBlock
+	merkle := bestHeader.MerkleRoot
+
+	resp := make([]byte, 4)
+	binary.BigEndian.PutUint32(resp, uint32(height))
+	resp = append(resp, hash[:]...)
+	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Version))
+	resp = append(resp, prevHash[:]...)
+	resp = append(resp, merkle[:]...)
+	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Timestamp.Unix()))
+	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Bits)
+	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
 
 	log.Debug("btcLastHeader returning data", "returnedData", fmt.Sprintf("%x", resp))
 	return resp, nil
@@ -456,23 +471,29 @@ func (c *btcHeaderN) Run(input []byte) ([]byte, error) {
 		log.Crit("HVMDatabase is nil!")
 	}
 
-	header, err := HVMDatabase.GetHeader(height)
-	if err != nil {
-		// TODO: Error handling
-		log.Warn("Unable to lookup block at height!", "height", height)
+	headers, err := TBCIndexer.BlockHeadersByHeight(context.Background(), uint64(height))
+
+	if err != nil || len(headers) == 0 {
+		log.Warn("Unable to lookup header!", "height", height)
 		return make([]byte, 0), nil
 	}
 
-	resp := make([]byte, 4)
-	binary.BigEndian.PutUint32(resp, header.Height)
+	// TODO: Canonical check
+	bestHeader := headers[0]
 
-	resp = append(resp, header.Hash...)
-	resp = binary.BigEndian.AppendUint32(resp, header.Version)
-	resp = append(resp, header.PrevHash...)
-	resp = append(resp, header.MerkleRoot...)
-	resp = binary.BigEndian.AppendUint32(resp, header.Timestamp)
-	resp = binary.BigEndian.AppendUint32(resp, header.NBits)
-	resp = binary.BigEndian.AppendUint32(resp, header.Nonce)
+	hash := bestHeader.BlockHash()
+	prevHash := bestHeader.PrevBlock
+	merkle := bestHeader.MerkleRoot
+
+	resp := make([]byte, 4)
+	binary.BigEndian.PutUint32(resp, uint32(height))
+	resp = append(resp, hash[:]...)
+	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Version))
+	resp = append(resp, prevHash[:]...)
+	resp = append(resp, merkle[:]...)
+	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Timestamp.Unix()))
+	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Bits)
+	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
 
 	log.Debug("btcHeaderN returning data", "returnedData", fmt.Sprintf("%x", resp))
 	return resp, nil
@@ -520,7 +541,9 @@ func (c *btcUtxosAddrList) Run(input []byte) ([]byte, error) {
 	resp[0] = byte(len(utxos) & 0xFF)
 
 	for _, utxo := range utxos {
-		resp = append(resp, utxo.ScriptHashSlice()...) // TODO: Rename ScriptHash/ScriptHashSlice in TBC to TxID[...]
+		txid := utxo.ScriptHashSlice()
+		slices.Reverse(txid)
+		resp = append(resp, txid...) // TODO: Rename ScriptHash/ScriptHashSlice in TBC to TxID[...]
 		resp = binary.BigEndian.AppendUint16(resp, uint16(utxo.OutputIndex()))
 		resp = binary.BigEndian.AppendUint64(resp, utxo.Value())
 		log.Debug("btcUtxosAddrList adding output to returned data",
@@ -545,7 +568,9 @@ func (c *btcTxByTxid) Run(input []byte) ([]byte, error) {
 		return nil, nil
 	}
 
-	txid := input[0:32]
+	var txid = make([]byte, 32)
+	copy(txid[0:32], input[0:32])
+	slices.Reverse(txid)
 
 	bitflag1 := input[32]
 	includeTxHash := bitflag1&(0x01<<7) != 0
@@ -595,7 +620,15 @@ func (c *btcTxByTxid) Run(input []byte) ([]byte, error) {
 		"maxOutputScriptSizeExponent", maxOutputScriptSizeExponent, "maxInputs", maxInputs, "maxOutputs", maxOutputs,
 		"maxInputScriptSigSize", maxInputScriptSigSize, "maxOutputScriptSize", maxOutputScriptSize)
 
-	tx, err := HVMDatabase.GetTxByTxid(txid)
+	txidMade := [32]byte(txid)
+
+	tx, err := TBCIndexer.TxById(context.Background(), txidMade)
+	if err != nil {
+		// TODO: Error handling
+		log.Warn("Unable to lookup Tx conformations by Txid!", "txid", input)
+		return make([]byte, 0), nil
+	}
+
 	if err != nil {
 		// TODO: Error handling
 		log.Warn("Unable to lookup Tx by Txid!", "txid", txid)
@@ -614,37 +647,53 @@ func (c *btcTxByTxid) Run(input []byte) ([]byte, error) {
 	}
 
 	if includeContainingBlock {
-		resp = append(resp, tx.Block...)
+		blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), txidMade)
+		if err != nil || blocks == nil || len(blocks) == 0 {
+			// TODO: Error handling
+			return make([]byte, 0), nil
+		}
+
+		resp = append(resp, blocks[0][:]...)
 	}
 
 	if includeVersion {
-		resp = binary.BigEndian.AppendUint32(resp, tx.Version)
+		resp = binary.BigEndian.AppendUint32(resp, uint32(tx.Version))
 	}
 
 	if includeSizes {
-		resp = binary.BigEndian.AppendUint32(resp, tx.Size)
-		resp = binary.BigEndian.AppendUint32(resp, tx.VSize)
-		// TODO: Weight
+		// resp = binary.BigEndian.AppendUint32(resp, tx.Serialize())
+		// resp = binary.BigEndian.AppendUint32(resp, tx.VSize)
+		// TODO
 	}
 
 	if includeLockTime {
-		resp = binary.BigEndian.AppendUint32(resp, tx.NLockTime)
+		resp = binary.BigEndian.AppendUint32(resp, tx.LockTime)
 	}
 
 	if includeInputs {
-		resp = append(resp, byte(len(tx.Inputs))) // TODO: Check no more inputs than allowed
-		for _, in := range tx.Inputs {
-			// Always include input value
-			resp = binary.BigEndian.AppendUint64(resp, in.Value)
+		resp = append(resp, byte(len(tx.TxIn))) // TODO: Check no more inputs than allowed
+		for _, in := range tx.TxIn {
+			// Always include input value - Review if this is desired behavior because of extra lookup cost
+			prevIn := in.PreviousOutPoint
+			sourceTx, err := TBCIndexer.TxById(context.Background(), tbcd.NewTxId(prevIn.Hash))
+
+			value := sourceTx.TxOut[prevIn.Index].Value
+
+			if err != nil {
+				return make([]byte, 0), nil
+			}
+
+			resp = binary.BigEndian.AppendUint64(resp, uint64(value))
 			if includeInputSource {
-				resp = append(resp, in.Txid...)
-				resp = binary.BigEndian.AppendUint16(resp, uint16(in.SourceIndex)) // TODO: Check outputs cannot exceed 2^16-1
+				prevInHash := prevIn.Hash
+				slices.Reverse(prevInHash[:])
+				resp = append(resp, prevInHash[:]...)
+				resp = binary.BigEndian.AppendUint16(resp, uint16(prevIn.Index)) // TODO: Check outputs cannot exceed 2^16-1
 			}
 			if includeInputScriptSig {
 				// TODO: chop to max size and decide on size encoding
-
-				resp = binary.BigEndian.AppendUint16(resp, uint16(len(in.ScriptSig)))
-				resp = append(resp, in.ScriptSig...)
+				resp = binary.BigEndian.AppendUint16(resp, uint16(len(in.SignatureScript)))
+				resp = append(resp, in.SignatureScript...)
 			}
 			//
 			// TODO: respect max inputs setting
@@ -655,34 +704,54 @@ func (c *btcTxByTxid) Run(input []byte) ([]byte, error) {
 	}
 
 	if includeOutputs {
-		resp = append(resp, byte(len(tx.Outputs))) // TODO: Check no more outputs than allowed
-		for _, out := range tx.Outputs {
+		var unspendable int
+		for _, out := range tx.TxOut {
+			if txscript.IsUnspendable(out.PkScript) {
+				unspendable++
+			}
+		}
+
+		outLen := len(tx.TxOut)
+		if !includeOpReturnOutputs {
+			outLen -= unspendable
+		}
+
+		resp = append(resp, byte(outLen)) // TODO: Check no more outputs than allowed
+		for idx, out := range tx.TxOut {
 			// Always include output value
-			resp = binary.BigEndian.AppendUint64(resp, out.Value)
+			resp = binary.BigEndian.AppendUint64(resp, uint64(out.Value))
 			if includeOutputScript {
-				resp = append(resp, byte(len(out.SpendScript))) // TODO: Length check and truncate
-				resp = append(resp, out.SpendScript...)
+				unspendable := txscript.IsUnspendable(out.PkScript)
+				if unspendable && !includeOpReturnOutputs {
+					continue
+				}
+				resp = append(resp, byte(len(out.PkScript))) // TODO: Length check and truncate
+				resp = append(resp, out.PkScript...)
 			}
 			if includeOutputAddress {
-				addrBytes := []byte(*out.Address)
-				resp = append(resp, byte(len(addrBytes)))
-				resp = append(resp, addrBytes...) // TODO: right now this is just ASCII->Bytes, consider changing to Base58 decode? Could be flag option
-			}
-			if includeOpReturnOutputs {
-				// TODO: need to add query for opreturns table, until then observed indexes of other outputs will be wrong if after an OP_RETURN output
+				// TODO
+				// addrBytes := []byte(*out.)
+				// resp = append(resp, byte(len(addrBytes)))
+				// resp = append(resp, addrBytes...) // TODO: right now this is just ASCII->Bytes, consider changing to Base58 decode? Could be flag option
 			}
 			if includeOutputSpent {
+				op := tbcd.NewOutpoint(txidMade, uint32(idx))
+				sh, _ := TBCIndexer.DB().ScriptHashByOutpoint(context.Background(), op)
+
 				spent := 0
-				if out.Spent {
+				if sh == nil {
+					// Could not look up Outpoint in UTXO table, therefore spent
 					spent = 1
 				}
+
 				resp = append(resp, byte(spent))
 				if includeOutputSpentBy {
 					// If not spent, do not include spender TxID
 					if spent == 1 {
+						// TODO
 						// TxID then input index
-						resp = append(resp, out.SpendTx...)
-						resp = binary.BigEndian.AppendUint16(resp, uint16(out.SpendIndex))
+						// resp = append(resp, out.SpendTx...)
+						// resp = binary.BigEndian.AppendUint16(resp, uint16(out.SpendIndex))
 					}
 				}
 			}
