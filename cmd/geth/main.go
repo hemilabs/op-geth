@@ -18,6 +18,7 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -420,12 +421,21 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	// Initialize TBC Bitcoin indexer to answer hVM queries
 	err := vm.SetupTBC(ctx.Context, tbcCfg)
 
-	si := vm.TBCIndexer.Synced(ctx.Context)
+	utxoHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.UtxoIndexHeightKey)
+	if err != nil {
+		log.Crit("Unable to get UTXO height key from database")
+	}
+
+	txHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.TxIndexHeightKey)
+	if err != nil {
+		log.Crit("Unable to get Tx height key from database")
+	}
+
+	log.Info("On op-geth startup, TBC index status: ", "utxoIndexHeight",
+		binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
 
 	var initHeight uint64
 	initHeight = 10000 // Temp, this should be part of chain config
-
-	log.Info("On op-geth startup, TBC index status: ", "utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
 
 	for {
 		log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
@@ -456,7 +466,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 
 	log.Info("Finished initial indexing", "initHeight", initHeight)
 
-	si = vm.TBCIndexer.Synced(ctx.Context)
+	si := vm.TBCIndexer.Synced(ctx.Context)
 
 	if si.UtxoHeight != initHeight {
 		log.Crit("TBC did not index UTXOs to initHeight!",
