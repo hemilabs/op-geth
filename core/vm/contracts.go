@@ -71,7 +71,7 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 			log.Info("No Tx indexing performed yet, starting height for Tx indexing set to 0.")
 		} else {
 			// Error was something other than key not being found
-			return fmt.Errorf("Error querying for Tx index metadata %v: %w",
+			return fmt.Errorf("error querying for Tx index metadata %v: %w",
 				string(tbc.UtxoIndexHeightKey), err)
 		}
 		he = make([]byte, 8)
@@ -87,7 +87,7 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 	count := tipHeight - h
 	err = TBCIndexer.TxIndexer(ctx, h, count)
 	if err != nil {
-		return fmt.Errorf("Tx indexer error: %w", err)
+		return fmt.Errorf("tx indexer error: %w", err)
 	}
 	return nil
 }
@@ -102,7 +102,7 @@ func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 			log.Info("No UTXO indexing performed yet, starting height for UTXO indexing set to 0.")
 		} else {
 			// Error was something other than key not being found
-			return fmt.Errorf("Error querying for UTXO Index metadata %v: %w",
+			return fmt.Errorf("error querying for UTXO Index metadata %v: %w",
 				string(tbc.UtxoIndexHeightKey), err)
 		}
 		he = make([]byte, 8)
