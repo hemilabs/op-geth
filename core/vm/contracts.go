@@ -65,6 +65,7 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 	var h uint64
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.TxIndexHeightKey)
+	log.Info(fmt.Sprintf("TBC has indexed Txs to height %d", he))
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			log.Info("No Tx indexing performed yet, starting height for Tx indexing set to 0.")
@@ -77,7 +78,14 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 	}
 	h = binary.BigEndian.Uint64(he)
 
-	err = TBCIndexer.TxIndexer(ctx, h, tipHeight-h)
+	if tipHeight <= h {
+		// Already indexed past this point
+		// TODO: decide whether to always check correct index height in upstream logic or throw error here
+		return nil
+	}
+
+	count := tipHeight - h
+	err = TBCIndexer.TxIndexer(ctx, h, count)
 	if err != nil {
 		return fmt.Errorf("Tx indexer error: %w", err)
 	}
@@ -88,6 +96,7 @@ func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 	var h uint64
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.UtxoIndexHeightKey)
+	log.Info(fmt.Sprintf("TBC has indexed UTXOs to height %d", he))
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			log.Info("No UTXO indexing performed yet, starting height for UTXO indexing set to 0.")
@@ -100,7 +109,14 @@ func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 	}
 	h = binary.BigEndian.Uint64(he)
 
-	err = TBCIndexer.UtxoIndexer(ctx, h, tipHeight-h)
+	if tipHeight <= h {
+		// Already indexed past this point
+		// TODO: decide whether to always check correct index height in upstream logic or throw error here
+		return nil
+	}
+
+	count := tipHeight - h
+	err = TBCIndexer.UtxoIndexer(ctx, h, count)
 	if err != nil {
 		return fmt.Errorf("UTXO indexer error: %w", err)
 	}
