@@ -22,6 +22,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
@@ -384,8 +385,8 @@ func (c *btcTxConfirmations) Run(input []byte) ([]byte, error) {
 		return nil, nil
 	}
 	log.Debug("txidConfirmations called", "txid", input)
-	if HVMDatabase == nil {
-		log.Crit("HVMDatabase is nil!")
+	if TBCIndexer == nil {
+		log.Crit("TBCIndexer is nil!")
 	}
 
 	var txid [32]byte
@@ -398,12 +399,16 @@ func (c *btcTxConfirmations) Run(input []byte) ([]byte, error) {
 	}
 
 	// TODO: Canonical check
-	// block := blocks[0]
+	hash, err := chainhash.NewHash(blocks[0][:])
+	if err != nil {
+		log.Warn(fmt.Sprintf("Unable to create blockhash from %x", blocks[0][:]))
+		return make([]byte, 0), nil
+	}
 
-	// TODO: Map block hash to height in TBC
+	_, height, err := TBCIndexer.BlockHeaderByHash(context.Background(), hash)
 
 	resp := make([]byte, 4)
-	binary.BigEndian.PutUint32(resp, 0) // TODO
+	binary.BigEndian.PutUint32(resp, uint32(height))
 
 	log.Debug("txidConfirmations returning data", "returnedData", fmt.Sprintf("%x", resp))
 	return resp, nil
