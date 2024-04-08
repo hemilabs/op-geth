@@ -421,18 +421,27 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	// Initialize TBC Bitcoin indexer to answer hVM queries
 	err := vm.SetupTBC(ctx.Context, tbcCfg)
 
+	// TODO: Review, give TBC time to warm up
+	time.Sleep(5 * time.Second)
+
+	firstStartup := false
+
 	utxoHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.UtxoIndexHeightKey)
 	if err != nil {
-		log.Crit("Unable to get UTXO height key from database")
+		log.Info("Unable to get UTXO height key from database, assuming first startup.")
+		firstStartup = true
 	}
 
 	txHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.TxIndexHeightKey)
 	if err != nil {
-		log.Crit("Unable to get Tx height key from database")
+		log.Info("Unable to get Tx height key from database, assuming first startup.")
+		firstStartup = true
 	}
 
-	log.Info("On op-geth startup, TBC index status: ", "utxoIndexHeight",
-		binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
+	if !firstStartup {
+		log.Info("On op-geth startup, TBC index status: ", "utxoIndexHeight",
+			binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
+	}
 
 	var initHeight uint64
 	initHeight = 10000 // Temp, this should be part of chain config
@@ -449,42 +458,36 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 		}
 	}
 
-	log.Info("Performing initial UTXO index", "initHeight", initHeight)
-	err = vm.TBCIndexUTXOs(ctx.Context, initHeight)
-	if err != nil {
-		log.Info("Error is not nil!")
-		log.Info(fmt.Sprintf("Error: %v", err))
-		log.Info("Error: ", "err", err.Error())
-		log.Crit("Unable to perform initial UTXO index", "initHeight", initHeight, "err", err)
-	}
+	if firstStartup {
+		log.Info("Performing initial UTXO index", "initHeight", initHeight)
+		err = vm.TBCIndexUTXOs(ctx.Context, initHeight)
+		if err != nil {
+			log.Crit("Unable to perform initial UTXO index", "initHeight", initHeight, "err", err)
+		}
 
-	log.Info("Performing initial Tx index", "initHeight", initHeight)
-	err = vm.TBCIndexTxs(ctx.Context, initHeight)
-	if err != nil {
-		log.Crit("Unable to perform initial Tx index", "initHeight", initHeight)
-	}
+		log.Info("Performing initial Tx index", "initHeight", initHeight)
+		err = vm.TBCIndexTxs(ctx.Context, initHeight)
+		if err != nil {
+			log.Crit("Unable to perform initial Tx index", "initHeight", initHeight)
+		}
 
-	log.Info("Finished initial indexing", "initHeight", initHeight)
+		log.Info("Finished initial indexing", "initHeight", initHeight)
+	}
 
 	si := vm.TBCIndexer.Synced(ctx.Context)
 
-	if si.UtxoHeight != initHeight {
+	if si.UtxoHeight < initHeight {
 		log.Crit("TBC did not index UTXOs to initHeight!",
 			"utxoIndexHeight", si.UtxoHeight, "initHeight", initHeight)
 	}
 
-	if si.TxHeight != initHeight {
+	if si.TxHeight < initHeight {
 		log.Crit("TBC did not index txs to initHeight!",
 			"txIndexHeight", si.TxHeight, "initHeight", initHeight)
 	}
 
 	log.Info("TBC initial sync completed", "headerHeight", si.BlockHeaderHeight,
 		"utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
-
-	if err != nil {
-		// TODO: Error handling here - add logic to prevent chain progressing without TBC and retry connection when lost
-		log.Crit("Unable to start TBC, chain cannot be processed.", "err", err)
-	}
 
 	go func() {
 		// Open any wallets already attached
