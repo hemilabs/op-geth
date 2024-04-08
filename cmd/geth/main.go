@@ -417,10 +417,10 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	}
 	// TODO: convert op-geth log level integer to TBC log level string
 
-	si := vm.TBCIndexer.Synced(ctx.Context)
-
 	// Initialize TBC Bitcoin indexer to answer hVM queries
 	err := vm.SetupTBC(ctx.Context, tbcCfg)
+
+	si := vm.TBCIndexer.Synced(ctx.Context)
 
 	var initHeight uint64
 	initHeight = 10000 // Temp, this should be part of chain config
