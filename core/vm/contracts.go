@@ -63,12 +63,14 @@ func SetupHvmOld(pguri string) error {
 
 func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 	var h uint64
+	firstSync := false
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.TxIndexHeightKey)
 	log.Info(fmt.Sprintf("TBC has indexed Txs to height %d", he))
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			log.Info("No Tx indexing performed yet, starting height for Tx indexing set to 0.")
+			firstSync = true
 		} else {
 			// Error was something other than key not being found
 			return fmt.Errorf("error querying for Tx index metadata %v: %w",
@@ -85,6 +87,9 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 	}
 
 	count := tipHeight - h
+	if firstSync {
+		count++ // Genesis block also needs to be indexed
+	}
 	err = TBCIndexer.TxIndexer(ctx, h, count)
 	if err != nil {
 		return fmt.Errorf("tx indexer error: %w", err)
@@ -94,12 +99,14 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 
 func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 	var h uint64
+	firstSync := false
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.UtxoIndexHeightKey)
 	log.Info(fmt.Sprintf("TBC has indexed UTXOs to height %d", he))
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			log.Info("No UTXO indexing performed yet, starting height for UTXO indexing set to 0.")
+			firstSync = true
 		} else {
 			// Error was something other than key not being found
 			return fmt.Errorf("error querying for UTXO Index metadata %v: %w",
@@ -116,6 +123,9 @@ func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 	}
 
 	count := tipHeight - h
+	if firstSync {
+		count++ // Genesis block also needs to be indexed
+	}
 	err = TBCIndexer.UtxoIndexer(ctx, h, count)
 	if err != nil {
 		return fmt.Errorf("UTXO indexer error: %w", err)
