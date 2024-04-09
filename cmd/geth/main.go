@@ -489,6 +489,8 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	log.Info("TBC initial sync completed", "headerHeight", si.BlockHeaderHeight,
 		"utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
 
+	vm.SetInitReady()
+
 	go func() {
 		// Open any wallets already attached
 		for _, wallet := range stack.AccountManager().Wallets() {
