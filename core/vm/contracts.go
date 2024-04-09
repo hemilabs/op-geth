@@ -53,12 +53,18 @@ type PrecompiledContract interface {
 // TODO: Need to move this to EVM instantiation so historical data can be provided by a different source - this is a hack for testing
 var HVMDatabase hvm.HvmDb
 var TBCIndexer *tbc.Server
+var initReady bool
 
 func SetupHvmOld(pguri string) error {
 	db := hvm.NewPGHvmDb(pguri)
 	err := db.Connect()
 	HVMDatabase = db
 	return err
+}
+
+// TODO: Review, refactor initialization to its own method
+func SetInitReady() {
+	initReady = true
 }
 
 func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
@@ -180,7 +186,7 @@ func TBCBlocksAvailableToHeight(ctx context.Context, startingHeight uint64, endi
 			log.Info("TBC does not have header for intermediate block", "heightToCheck", htc)
 		}
 
-		// TODO: Check for chain contiguousness
+		// TODO: Check that block is part of canonical chain
 		intermediateHash := blockHeadersCheck[0].Hash
 
 		intermediateBlock, err := TBCIndexer.DB().BlockByHash(ctx, intermediateHash)
