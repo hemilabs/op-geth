@@ -26,7 +26,6 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
-	"github.com/ethereum/go-ethereum/core/hvm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/blake2b"
 	"github.com/ethereum/go-ethereum/crypto/bls12381"
@@ -46,23 +45,19 @@ import (
 // requires a deterministic gas count based on the input size of the Run method of the
 // contract.
 type PrecompiledContract interface {
-	RequiredGas(input []byte) uint64  // RequiredPrice calculates the contract gas use
-	Run(input []byte) ([]byte, error) // Run runs the precompiled contract
+	RequiredGas(input []byte) uint64 // RequiredPrice calculates the contract gas use
+	// Run TODO: Refactor and have a separate signature for hVM calls?
+	Run(input []byte, blockContext common.Hash) ([]byte, error) // Run runs the precompiled contract
 }
 
-// TODO: Need to move this to EVM instantiation so historical data can be provided by a different source - this is a hack for testing
-var HVMDatabase hvm.HvmDb
+type hVMQueryKey [32]byte
+
+// TODO: Cache responses so old blocks can be processed against the hVM responses at their call time
 var TBCIndexer *tbc.Server
 var initReady bool
+var hvmQueryMap map[hVMQueryKey][]byte
 
-func SetupHvmOld(pguri string) error {
-	db := hvm.NewPGHvmDb(pguri)
-	err := db.Connect()
-	HVMDatabase = db
-	return err
-}
-
-// TODO: Review, refactor initialization to its own method
+// SetInitReady TODO: Review, refactor initialization to its own method that accepts initial chain BTC block configuration
 func SetInitReady() {
 	initReady = true
 }
@@ -363,13 +358,13 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 // - the returned bytes,
 // - the _remaining_ gas,
 // - any error that occurred
-func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64) (ret []byte, remainingGas uint64, err error) {
+func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, blockContext common.Hash) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas
 	}
 	suppliedGas -= gasCost
-	output, err := p.Run(input)
+	output, err := p.Run(input, blockContext)
 	return output, suppliedGas, err
 }
 
@@ -379,7 +374,7 @@ func (c *btcBalAddr) RequiredGas(input []byte) uint64 {
 	return params.BtcAddrBal
 }
 
-func (c *btcBalAddr) Run(input []byte) ([]byte, error) {
+func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// TODO: 27 to global variable, check value
 	if input == nil || len(input) < 27 {
 		log.Debug("btcBalAddr run called with nil or too small input", "input", input)
@@ -388,7 +383,7 @@ func (c *btcBalAddr) Run(input []byte) ([]byte, error) {
 	addr := string(input)
 	log.Debug("btcBalAddr called", "address", addr)
 	if TBCIndexer == nil {
-		log.Crit("HVMDatabase is nil!")
+		log.Crit("TBCIndexer is nil!")
 	}
 
 	bal, err := TBCIndexer.BalanceByAddress(context.Background(), addr)
@@ -412,7 +407,22 @@ func (c *btcTxConfirmations) RequiredGas(input []byte) uint64 {
 	return params.BtcTxConf
 }
 
-func (c *btcTxConfirmations) Run(input []byte) ([]byte, error) {
+func calculateHVMQueryKey(input []byte, blockContext common.Hash) (hVMQueryKey, error) {
+	h := sha256.New()
+	v := append(blockContext[:], input...)
+	_, err := h.Write(v)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	hs := h.Sum(nil)
+	var c [32]byte
+	copy(c[0:32], hs[0:32])
+	var k hVMQueryKey
+	k = c
+	return k, nil
+}
+
+func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) != 32 {
 		return nil, nil
 	}
@@ -420,6 +430,11 @@ func (c *btcTxConfirmations) Run(input []byte) ([]byte, error) {
 	if TBCIndexer == nil {
 		log.Crit("TBCIndexer is nil!")
 	}
+
+	// k, err := calculateHVMQueryKey(input, blockContext)
+	// if err != nil {
+	//
+	// }
 
 	var txid [32]byte
 	copy(txid[0:32], input[0:32])
@@ -452,7 +467,7 @@ func (c *btcLastHeader) RequiredGas(input []byte) uint64 {
 	return params.BtcLastHeader
 }
 
-func (c *btcLastHeader) Run(input []byte) ([]byte, error) {
+func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// No input validation
 	log.Debug("btcLastHeader called")
 	if TBCIndexer == nil {
@@ -493,7 +508,7 @@ func (c *btcHeaderN) RequiredGas(input []byte) uint64 {
 	return params.BtcHeaderN
 }
 
-func (c *btcHeaderN) Run(input []byte) ([]byte, error) {
+func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) != 4 {
 		return nil, nil
 	}
@@ -504,8 +519,8 @@ func (c *btcHeaderN) Run(input []byte) ([]byte, error) {
 		uint32(input[3]&0xFF)
 
 	log.Debug("btcHeaderN called", "height", height)
-	if HVMDatabase == nil {
-		log.Crit("HVMDatabase is nil!")
+	if TBCIndexer == nil {
+		log.Crit("TBCIndexer is nil!")
 	}
 
 	headers, err := TBCIndexer.BlockHeadersByHeight(context.Background(), uint64(height))
@@ -542,7 +557,7 @@ func (c *btcUtxosAddrList) RequiredGas(input []byte) uint64 {
 	return params.BtcUtxosAddrList
 }
 
-func (c *btcUtxosAddrList) Run(input []byte) ([]byte, error) {
+func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// TODO: Move to variable, check addr min length + 4 bytes
 	if len(input) < 27 {
 		return nil, nil
@@ -599,7 +614,7 @@ func (c *btcTxByTxid) RequiredGas(input []byte) uint64 {
 	return params.BtcTxByTxid
 }
 
-func (c *btcTxByTxid) Run(input []byte) ([]byte, error) {
+func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// TODO: Move to variable
 	if len(input) != 36 { // 4 bytes bitflag, 32 bytes txid. TODO: Allow 32-byte input (just TxID) and assume some default bitflag values?
 		return nil, nil
@@ -806,7 +821,7 @@ func (c *ecrecover) RequiredGas(input []byte) uint64 {
 	return params.EcrecoverGas
 }
 
-func (c *ecrecover) Run(input []byte) ([]byte, error) {
+func (c *ecrecover) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	const ecRecoverInputLength = 128
 
 	input = common.RightPadBytes(input, ecRecoverInputLength)
@@ -847,7 +862,7 @@ type sha256hash struct{}
 func (c *sha256hash) RequiredGas(input []byte) uint64 {
 	return uint64(len(input)+31)/32*params.Sha256PerWordGas + params.Sha256BaseGas
 }
-func (c *sha256hash) Run(input []byte) ([]byte, error) {
+func (c *sha256hash) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	h := sha256.Sum256(input)
 	return h[:], nil
 }
@@ -862,7 +877,7 @@ type ripemd160hash struct{}
 func (c *ripemd160hash) RequiredGas(input []byte) uint64 {
 	return uint64(len(input)+31)/32*params.Ripemd160PerWordGas + params.Ripemd160BaseGas
 }
-func (c *ripemd160hash) Run(input []byte) ([]byte, error) {
+func (c *ripemd160hash) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	ripemd := ripemd160.New()
 	ripemd.Write(input)
 	return common.LeftPadBytes(ripemd.Sum(nil), 32), nil
@@ -878,7 +893,7 @@ type dataCopy struct{}
 func (c *dataCopy) RequiredGas(input []byte) uint64 {
 	return uint64(len(input)+31)/32*params.IdentityPerWordGas + params.IdentityBaseGas
 }
-func (c *dataCopy) Run(in []byte) ([]byte, error) {
+func (c *dataCopy) Run(in []byte, blockContext common.Hash) ([]byte, error) {
 	return common.CopyBytes(in), nil
 }
 
@@ -1004,7 +1019,7 @@ func (c *bigModExp) RequiredGas(input []byte) uint64 {
 	return gas.Uint64()
 }
 
-func (c *bigModExp) Run(input []byte) ([]byte, error) {
+func (c *bigModExp) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	var (
 		baseLen = new(big.Int).SetBytes(getData(input, 0, 32)).Uint64()
 		expLen  = new(big.Int).SetBytes(getData(input, 32, 32)).Uint64()
@@ -1084,7 +1099,7 @@ func (c *bn256AddIstanbul) RequiredGas(input []byte) uint64 {
 	return params.Bn256AddGasIstanbul
 }
 
-func (c *bn256AddIstanbul) Run(input []byte) ([]byte, error) {
+func (c *bn256AddIstanbul) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	return runBn256Add(input)
 }
 
@@ -1097,7 +1112,7 @@ func (c *bn256AddByzantium) RequiredGas(input []byte) uint64 {
 	return params.Bn256AddGasByzantium
 }
 
-func (c *bn256AddByzantium) Run(input []byte) ([]byte, error) {
+func (c *bn256AddByzantium) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	return runBn256Add(input)
 }
 
@@ -1122,7 +1137,7 @@ func (c *bn256ScalarMulIstanbul) RequiredGas(input []byte) uint64 {
 	return params.Bn256ScalarMulGasIstanbul
 }
 
-func (c *bn256ScalarMulIstanbul) Run(input []byte) ([]byte, error) {
+func (c *bn256ScalarMulIstanbul) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	return runBn256ScalarMul(input)
 }
 
@@ -1135,7 +1150,7 @@ func (c *bn256ScalarMulByzantium) RequiredGas(input []byte) uint64 {
 	return params.Bn256ScalarMulGasByzantium
 }
 
-func (c *bn256ScalarMulByzantium) Run(input []byte) ([]byte, error) {
+func (c *bn256ScalarMulByzantium) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	return runBn256ScalarMul(input)
 }
 
@@ -1190,7 +1205,7 @@ func (c *bn256PairingIstanbul) RequiredGas(input []byte) uint64 {
 	return params.Bn256PairingBaseGasIstanbul + uint64(len(input)/192)*params.Bn256PairingPerPointGasIstanbul
 }
 
-func (c *bn256PairingIstanbul) Run(input []byte) ([]byte, error) {
+func (c *bn256PairingIstanbul) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	return runBn256Pairing(input)
 }
 
@@ -1203,7 +1218,7 @@ func (c *bn256PairingByzantium) RequiredGas(input []byte) uint64 {
 	return params.Bn256PairingBaseGasByzantium + uint64(len(input)/192)*params.Bn256PairingPerPointGasByzantium
 }
 
-func (c *bn256PairingByzantium) Run(input []byte) ([]byte, error) {
+func (c *bn256PairingByzantium) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	return runBn256Pairing(input)
 }
 
@@ -1229,7 +1244,7 @@ var (
 	errBlake2FInvalidFinalFlag   = errors.New("invalid final flag")
 )
 
-func (c *blake2F) Run(input []byte) ([]byte, error) {
+func (c *blake2F) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Make sure the input is valid (correct length and final flag)
 	if len(input) != blake2FInputLength {
 		return nil, errBlake2FInvalidInputLength
@@ -1283,7 +1298,7 @@ func (c *bls12381G1Add) RequiredGas(input []byte) uint64 {
 	return params.Bls12381G1AddGas
 }
 
-func (c *bls12381G1Add) Run(input []byte) ([]byte, error) {
+func (c *bls12381G1Add) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 G1Add precompile.
 	// > G1 addition call expects `256` bytes as an input that is interpreted as byte concatenation of two G1 points (`128` bytes each).
 	// > Output is an encoding of addition operation result - single G1 point (`128` bytes).
@@ -1321,7 +1336,7 @@ func (c *bls12381G1Mul) RequiredGas(input []byte) uint64 {
 	return params.Bls12381G1MulGas
 }
 
-func (c *bls12381G1Mul) Run(input []byte) ([]byte, error) {
+func (c *bls12381G1Mul) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 G1Mul precompile.
 	// > G1 multiplication call expects `160` bytes as an input that is interpreted as byte concatenation of encoding of G1 point (`128` bytes) and encoding of a scalar value (`32` bytes).
 	// > Output is an encoding of multiplication operation result - single G1 point (`128` bytes).
@@ -1371,7 +1386,7 @@ func (c *bls12381G1MultiExp) RequiredGas(input []byte) uint64 {
 	return (uint64(k) * params.Bls12381G1MulGas * discount) / 1000
 }
 
-func (c *bls12381G1MultiExp) Run(input []byte) ([]byte, error) {
+func (c *bls12381G1MultiExp) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 G1MultiExp precompile.
 	// G1 multiplication call expects `160*k` bytes as an input that is interpreted as byte concatenation of `k` slices each of them being a byte concatenation of encoding of G1 point (`128` bytes) and encoding of a scalar value (`32` bytes).
 	// Output is an encoding of multiexponentiation operation result - single G1 point (`128` bytes).
@@ -1414,7 +1429,7 @@ func (c *bls12381G2Add) RequiredGas(input []byte) uint64 {
 	return params.Bls12381G2AddGas
 }
 
-func (c *bls12381G2Add) Run(input []byte) ([]byte, error) {
+func (c *bls12381G2Add) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 G2Add precompile.
 	// > G2 addition call expects `512` bytes as an input that is interpreted as byte concatenation of two G2 points (`256` bytes each).
 	// > Output is an encoding of addition operation result - single G2 point (`256` bytes).
@@ -1452,7 +1467,7 @@ func (c *bls12381G2Mul) RequiredGas(input []byte) uint64 {
 	return params.Bls12381G2MulGas
 }
 
-func (c *bls12381G2Mul) Run(input []byte) ([]byte, error) {
+func (c *bls12381G2Mul) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 G2MUL precompile logic.
 	// > G2 multiplication call expects `288` bytes as an input that is interpreted as byte concatenation of encoding of G2 point (`256` bytes) and encoding of a scalar value (`32` bytes).
 	// > Output is an encoding of multiplication operation result - single G2 point (`256` bytes).
@@ -1502,7 +1517,7 @@ func (c *bls12381G2MultiExp) RequiredGas(input []byte) uint64 {
 	return (uint64(k) * params.Bls12381G2MulGas * discount) / 1000
 }
 
-func (c *bls12381G2MultiExp) Run(input []byte) ([]byte, error) {
+func (c *bls12381G2MultiExp) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 G2MultiExp precompile logic
 	// > G2 multiplication call expects `288*k` bytes as an input that is interpreted as byte concatenation of `k` slices each of them being a byte concatenation of encoding of G2 point (`256` bytes) and encoding of a scalar value (`32` bytes).
 	// > Output is an encoding of multiexponentiation operation result - single G2 point (`256` bytes).
@@ -1545,7 +1560,7 @@ func (c *bls12381Pairing) RequiredGas(input []byte) uint64 {
 	return params.Bls12381PairingBaseGas + uint64(len(input)/384)*params.Bls12381PairingPerPairGas
 }
 
-func (c *bls12381Pairing) Run(input []byte) ([]byte, error) {
+func (c *bls12381Pairing) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 Pairing precompile logic.
 	// > Pairing call expects `384*k` bytes as an inputs that is interpreted as byte concatenation of `k` slices. Each slice has the following structure:
 	// > - `128` bytes of G1 point encoding
@@ -1624,7 +1639,7 @@ func (c *bls12381MapG1) RequiredGas(input []byte) uint64 {
 	return params.Bls12381MapG1Gas
 }
 
-func (c *bls12381MapG1) Run(input []byte) ([]byte, error) {
+func (c *bls12381MapG1) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 Map_To_G1 precompile.
 	// > Field-to-curve call expects `64` bytes an an input that is interpreted as a an element of the base field.
 	// > Output of this call is `128` bytes and is G1 point following respective encoding rules.
@@ -1659,7 +1674,7 @@ func (c *bls12381MapG2) RequiredGas(input []byte) uint64 {
 	return params.Bls12381MapG2Gas
 }
 
-func (c *bls12381MapG2) Run(input []byte) ([]byte, error) {
+func (c *bls12381MapG2) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 Map_FP2_TO_G2 precompile logic.
 	// > Field-to-curve call expects `128` bytes an an input that is interpreted as a an element of the quadratic extension field.
 	// > Output of this call is `256` bytes and is G2 point following respective encoding rules.
@@ -1714,7 +1729,7 @@ var (
 )
 
 // Run executes the point evaluation precompile.
-func (b *kzgPointEvaluation) Run(input []byte) ([]byte, error) {
+func (b *kzgPointEvaluation) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) != blobVerifyInputLength {
 		return nil, errBlobVerifyInvalidInputLength
 	}
