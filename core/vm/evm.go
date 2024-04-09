@@ -17,7 +17,6 @@
 package vm
 
 import (
-	"github.com/ethereum/go-ethereum/core/hvm"
 	"math/big"
 	"sync/atomic"
 
@@ -38,6 +37,9 @@ type (
 	// and is used by the BLOCKHASH EVM op code.
 	GetHashFunc func(uint64) common.Hash
 )
+
+// ContextBlockNotSet is 0xFFFFFFFF...00 which identifies an hVM query is being executed against a yet-unformed block
+// var ContextBlockNotSet = common.BytesToHash([]byte{0xFF, 0xFF, 0xFF, 0xFF})
 
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	var precompiles map[common.Address]PrecompiledContract
@@ -133,8 +135,13 @@ type EVM struct {
 	// applied in opCall*.
 	callGasTemp uint64
 
-	HvmDb hvm.HvmDb
+	// The Hemi block this EVM is executed within. Required for making sure hVM calls return the correct state.
+	// blockExecutionContext common.Hash
 }
+
+// func (evm *EVM) SetExecutionContext(block common.Hash) {
+// 	evm.blockExecutionContext = block
+// }
 
 // NewEVM returns a new EVM. The returned EVM is not thread safe and should
 // only ever be used *once*.
@@ -150,6 +157,7 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig
 			blockCtx.BlobBaseFee = new(big.Int)
 		}
 	}
+
 	evm := &EVM{
 		Context:     blockCtx,
 		TxContext:   txCtx,
@@ -159,6 +167,7 @@ func NewEVM(blockCtx BlockContext, txCtx TxContext, statedb StateDB, chainConfig
 		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
 	}
 	evm.interpreter = NewEVMInterpreter(evm)
+
 	return evm
 }
 
@@ -237,7 +246,7 @@ func (evm *EVM) Call(caller ContractRef, addr common.Address, input []byte, gas 
 	}
 
 	if isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Context.GetHash(evm.Context.BlockNumber.Uint64()))
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -300,7 +309,7 @@ func (evm *EVM) CallCode(caller ContractRef, addr common.Address, input []byte, 
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Context.GetHash(evm.Context.BlockNumber.Uint64()))
 	} else {
 		addrCopy := addr
 		// Initialise a new contract and set the code that is to be used by the EVM.
@@ -345,7 +354,7 @@ func (evm *EVM) DelegateCall(caller ContractRef, addr common.Address, input []by
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Context.GetHash(evm.Context.BlockNumber.Uint64()))
 	} else {
 		addrCopy := addr
 		// Initialise a new contract and make initialise the delegate values
@@ -394,7 +403,7 @@ func (evm *EVM) StaticCall(caller ContractRef, addr common.Address, input []byte
 	}
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Context.GetHash(evm.Context.BlockNumber.Uint64()))
 	} else {
 		// At this point, we use a copy of address. If we don't, the go compiler will
 		// leak the 'contract' to the outer scope, and make allocation for 'contract'
