@@ -378,24 +378,10 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
-	debug.Memsize.Add("node", stack)
-
-	// Start up the node itself
-	utils.StartNode(ctx, stack, isConsole)
-
-	// Unlock any account specifically requested
-	unlockAccounts(ctx, stack)
-
-	// Register wallet event handlers to open and auto-derive wallets
-	events := make(chan accounts.WalletEvent, 16)
-	stack.AccountManager().Subscribe(events)
-
-	// Create a client to interact with local geth node.
-	rpcClient := stack.Attach()
-	ethClient := ethclient.NewClient(rpcClient)
-
+	// Before starting up any other services, make sure TBC is in correct initial state
 	tbcCfg := tbc.NewDefaultConfig()
 
+	// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
 	tbcCfg.Network = "testnet3"
 
 	if ctx.IsSet(utils.TBCListenAddress.Name) {
@@ -490,6 +476,22 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 		"utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
 
 	vm.SetInitReady()
+
+	debug.Memsize.Add("node", stack)
+
+	// Start up the node itself
+	utils.StartNode(ctx, stack, isConsole)
+
+	// Unlock any account specifically requested
+	unlockAccounts(ctx, stack)
+
+	// Register wallet event handlers to open and auto-derive wallets
+	events := make(chan accounts.WalletEvent, 16)
+	stack.AccountManager().Subscribe(events)
+
+	// Create a client to interact with local geth node.
+	rpcClient := stack.Attach()
+	ethClient := ethclient.NewClient(rpcClient)
 
 	go func() {
 		// Open any wallets already attached
