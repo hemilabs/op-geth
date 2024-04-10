@@ -18,6 +18,7 @@
 package core
 
 import (
+	context2 "context"
 	"errors"
 	"fmt"
 	"io"
@@ -2327,6 +2328,8 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 		context = append(context, []interface{}{"age", common.PrettyAge(timestamp)}...)
 	}
 	log.Info("Chain head was updated", context...)
+	vm.ProgressTip(context2.Background(), uint32(head.Time()))
+
 	return head.Hash(), nil
 }
 
