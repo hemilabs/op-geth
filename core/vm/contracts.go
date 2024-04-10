@@ -57,7 +57,7 @@ var TBCIndexer *tbc.Server
 var initReady bool
 
 // TODO: Cache this on-disk at some point, will need to persist restarts to correctly provide execution traces for old txs
-var hvmQueryMap map[hVMQueryKey][]byte
+var hvmQueryMap = make(map[hVMQueryKey][]byte)
 
 // SetInitReady TODO: Review, refactor initialization to its own method that accepts initial chain BTC block configuration
 func SetInitReady() {
