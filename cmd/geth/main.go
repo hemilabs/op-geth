@@ -432,19 +432,18 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	var initHeight uint64
 	initHeight = 2585811 // Temp for testing, this should be part of chain config
 
-	for {
-		log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
-			" Cannot progress Hemi chain until download is complete.", initHeight))
-		time.Sleep(5 * time.Second)
-		if vm.TBCBlocksAvailableToHeight(ctx.Context, 0, initHeight) {
-			log.Info("TBC Initial syncing is complete, continuing...")
-			break
-		} else {
-			log.Info("Geth still waiting for TBC initial sync", "initHeight", initHeight)
-		}
-	}
-
 	if firstStartup {
+		for {
+			log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
+				" Cannot progress Hemi chain until download is complete.", initHeight))
+			time.Sleep(5 * time.Second)
+			if vm.TBCBlocksAvailableToHeight(ctx.Context, 0, initHeight) {
+				log.Info("TBC Initial syncing is complete, continuing...")
+				break
+			} else {
+				log.Info("Geth still waiting for TBC initial sync", "initHeight", initHeight)
+			}
+		}
 		log.Info("Performing initial UTXO index", "initHeight", initHeight)
 		err = vm.TBCIndexUTXOs(ctx.Context, initHeight)
 		if err != nil {
