@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
@@ -58,6 +59,8 @@ var initReady bool
 
 // TODO: Cache this on-disk at some point, will need to persist restarts to correctly provide execution traces for old txs
 var hvmQueryMap = make(map[hVMQueryKey][]byte)
+
+var HvmNullBlockHash = make([]byte, 32)
 
 // SetInitReady TODO: Review, refactor initialization to its own method that accepts initial chain BTC block configuration
 func SetInitReady() {
@@ -456,6 +459,9 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 // Each key is (precompile_input + precompile_address_byte + containing_header_hash)
 // This query key is unique for a specific precompile called with specific input argument contained in a specific block
 func calculateHVMQueryKey(input []byte, precompileAddress byte, blockContext common.Hash) (hVMQueryKey, error) {
+	if bytes.Equal(blockContext[:], HvmNullBlockHash) {
+		return hVMQueryKey(make([]byte, 32)), fmt.Errorf("cannot create a hVM Query Key for a null containing block")
+	}
 	h := sha256.New()
 	v := append(blockContext[:], precompileAddress)
 	v = append(v, input...)
@@ -469,6 +475,10 @@ func calculateHVMQueryKey(input []byte, precompileAddress byte, blockContext com
 	var k hVMQueryKey
 	k = c
 	return k, nil
+}
+
+func isValidBlock(blockContext common.Hash) bool {
+	return !bytes.Equal(blockContext[:], HvmNullBlockHash)
 }
 
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
@@ -499,15 +509,18 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		return nil, nil
 	}
 
-	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
-	if err != nil {
-		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
-	}
-	cachedResult, exists := hvmQueryMap[k]
-	if exists {
-		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
-			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
-		return cachedResult, nil
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
 	}
 
 	addr := string(input)
@@ -528,7 +541,9 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	resp := make([]byte, 8)
 	binary.BigEndian.PutUint64(resp, bal)
 	log.Debug("btcBalAddr returning data", "returnedData", fmt.Sprintf("%x", resp))
-	hvmQueryMap[k] = resp
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
 	return resp, nil
 }
 
@@ -547,15 +562,18 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
-	if err != nil {
-		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
-	}
-	cachedResult, exists := hvmQueryMap[k]
-	if exists {
-		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
-			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
-		return cachedResult, nil
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
 	}
 
 	var txid [32]byte
@@ -585,7 +603,9 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 
 	log.Debug("txidConfirmations returning data", "returnedData", fmt.Sprintf("%x", resp))
 
-	hvmQueryMap[k] = resp
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
 	return resp, nil
 }
 
@@ -602,15 +622,18 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
-	if err != nil {
-		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
-	}
-	cachedResult, exists := hvmQueryMap[k]
-	if exists {
-		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
-			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
-		return cachedResult, nil
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
 	}
 
 	height, headers, err := TBCIndexer.BlockHeadersBest(context.Background())
@@ -640,7 +663,9 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
 
 	log.Debug("btcLastHeader returning data", "returnedData", fmt.Sprintf("%x", resp))
-	hvmQueryMap[k] = resp
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
 	return resp, nil
 }
 
@@ -655,15 +680,18 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		return nil, nil
 	}
 
-	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
-	if err != nil {
-		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
-	}
-	cachedResult, exists := hvmQueryMap[k]
-	if exists {
-		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
-			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
-		return cachedResult, nil
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
 	}
 
 	height := (uint32(input[0]&0xFF) << 16) |
@@ -703,7 +731,9 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
 
 	log.Debug("btcHeaderN returning data", "returnedData", fmt.Sprintf("%x", resp))
-	hvmQueryMap[k] = resp
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
 	return resp, nil
 }
 
@@ -719,15 +749,18 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 		return nil, nil
 	}
 
-	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
-	if err != nil {
-		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
-	}
-	cachedResult, exists := hvmQueryMap[k]
-	if exists {
-		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
-			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
-		return cachedResult, nil
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
 	}
 
 	addrEnd := len(input) - 4
@@ -773,7 +806,9 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 	}
 
 	log.Debug("btcUtxosAddrList returning data", "returnedData", fmt.Sprintf("%x", resp))
-	hvmQueryMap[k] = resp
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
 	return resp, nil
 }
 
@@ -790,15 +825,18 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		return nil, nil
 	}
 
-	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
-	if err != nil {
-		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
-	}
-	cachedResult, exists := hvmQueryMap[k]
-	if exists {
-		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
-			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
-		return cachedResult, nil
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
 	}
 
 	var txid = make([]byte, 32)
@@ -1002,7 +1040,9 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	}
 
 	log.Debug("btcTxByTxid returning data", "returnedData", fmt.Sprintf("%x", resp))
-	hvmQueryMap[k] = resp
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
 	return resp, nil
 }
 
