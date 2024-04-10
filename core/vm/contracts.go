@@ -39,6 +39,7 @@ import (
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/exp/slices"
 	"math/big"
+	"reflect"
 )
 
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
@@ -52,7 +53,6 @@ type PrecompiledContract interface {
 
 type hVMQueryKey [32]byte
 
-// TODO: Cache responses so old blocks can be processed against the hVM responses at their call time
 var TBCIndexer *tbc.Server
 var initReady bool
 
@@ -304,6 +304,15 @@ func SetupTBC(ctx context.Context, cfg *tbc.Config) error {
 	return nil
 }
 
+var hvmContractsToAddress = map[reflect.Type][]byte{
+	reflect.TypeOf(&btcBalAddr{}):         {0x40},
+	reflect.TypeOf(&btcTxByTxid{}):        {0x41},
+	reflect.TypeOf(&btcTxConfirmations{}): {0x42},
+	reflect.TypeOf(&btcTxConfirmations{}): {0x43},
+	reflect.TypeOf(&btcLastHeader{}):      {0x44},
+	reflect.TypeOf(&btcHeaderN{}):         {0x45},
+}
+
 // PrecompiledContractsHomestead contains the default set of pre-compiled Ethereum
 // contracts used in the Frontier and Homestead releases.
 var PrecompiledContractsHomestead = map[common.Address]PrecompiledContract{
@@ -343,62 +352,62 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 // PrecompiledContractsBerlin contains the default set of pre-compiled Ethereum
 // contracts used in the Berlin release.
 var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}):    &ecrecover{},
-	common.BytesToAddress([]byte{2}):    &sha256hash{},
-	common.BytesToAddress([]byte{3}):    &ripemd160hash{},
-	common.BytesToAddress([]byte{4}):    &dataCopy{},
-	common.BytesToAddress([]byte{5}):    &bigModExp{eip2565: true},
-	common.BytesToAddress([]byte{6}):    &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}):    &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}):    &blake2F{},
-	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
-	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
-	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
-	common.BytesToAddress([]byte{0x43}): &btcTxConfirmations{},
-	common.BytesToAddress([]byte{0x44}): &btcLastHeader{},
-	common.BytesToAddress([]byte{0x45}): &btcHeaderN{},
+	common.BytesToAddress([]byte{1}):                                                    &ecrecover{},
+	common.BytesToAddress([]byte{2}):                                                    &sha256hash{},
+	common.BytesToAddress([]byte{3}):                                                    &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):                                                    &dataCopy{},
+	common.BytesToAddress([]byte{5}):                                                    &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):                                                    &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):                                                    &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):                                                    &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}):                                                    &blake2F{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcBalAddr{})]):         &btcBalAddr{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcUtxosAddrList{})]):   &btcUtxosAddrList{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxByTxid{})]):        &btcTxByTxid{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
 }
 
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
 // contracts used in the Cancun release.
 var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}):    &ecrecover{},
-	common.BytesToAddress([]byte{2}):    &sha256hash{},
-	common.BytesToAddress([]byte{3}):    &ripemd160hash{},
-	common.BytesToAddress([]byte{4}):    &dataCopy{},
-	common.BytesToAddress([]byte{5}):    &bigModExp{eip2565: true},
-	common.BytesToAddress([]byte{6}):    &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}):    &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}):    &blake2F{},
-	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{},
-	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
-	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
-	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
-	common.BytesToAddress([]byte{0x43}): &btcTxConfirmations{},
-	common.BytesToAddress([]byte{0x44}): &btcLastHeader{},
-	common.BytesToAddress([]byte{0x45}): &btcHeaderN{},
+	common.BytesToAddress([]byte{1}):                                                    &ecrecover{},
+	common.BytesToAddress([]byte{2}):                                                    &sha256hash{},
+	common.BytesToAddress([]byte{3}):                                                    &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):                                                    &dataCopy{},
+	common.BytesToAddress([]byte{5}):                                                    &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):                                                    &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):                                                    &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):                                                    &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}):                                                    &blake2F{},
+	common.BytesToAddress([]byte{0x0a}):                                                 &kzgPointEvaluation{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcBalAddr{})]):         &btcBalAddr{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcUtxosAddrList{})]):   &btcUtxosAddrList{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxByTxid{})]):        &btcTxByTxid{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
 // contracts specified in EIP-2537. These are exported for testing purposes.
 var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{10}):   &bls12381G1Add{},
-	common.BytesToAddress([]byte{11}):   &bls12381G1Mul{},
-	common.BytesToAddress([]byte{12}):   &bls12381G1MultiExp{},
-	common.BytesToAddress([]byte{13}):   &bls12381G2Add{},
-	common.BytesToAddress([]byte{14}):   &bls12381G2Mul{},
-	common.BytesToAddress([]byte{15}):   &bls12381G2MultiExp{},
-	common.BytesToAddress([]byte{16}):   &bls12381Pairing{},
-	common.BytesToAddress([]byte{17}):   &bls12381MapG1{},
-	common.BytesToAddress([]byte{18}):   &bls12381MapG2{},
-	common.BytesToAddress([]byte{0x40}): &btcBalAddr{},
-	common.BytesToAddress([]byte{0x41}): &btcUtxosAddrList{},
-	common.BytesToAddress([]byte{0x42}): &btcTxByTxid{},
-	common.BytesToAddress([]byte{0x43}): &btcTxConfirmations{},
-	common.BytesToAddress([]byte{0x44}): &btcLastHeader{},
-	common.BytesToAddress([]byte{0x45}): &btcHeaderN{},
+	common.BytesToAddress([]byte{10}):                                                   &bls12381G1Add{},
+	common.BytesToAddress([]byte{11}):                                                   &bls12381G1Mul{},
+	common.BytesToAddress([]byte{12}):                                                   &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{13}):                                                   &bls12381G2Add{},
+	common.BytesToAddress([]byte{14}):                                                   &bls12381G2Mul{},
+	common.BytesToAddress([]byte{15}):                                                   &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{16}):                                                   &bls12381Pairing{},
+	common.BytesToAddress([]byte{17}):                                                   &bls12381MapG1{},
+	common.BytesToAddress([]byte{18}):                                                   &bls12381MapG2{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcBalAddr{})]):         &btcBalAddr{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcUtxosAddrList{})]):   &btcUtxosAddrList{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxByTxid{})]):        &btcTxByTxid{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
 }
 
 var (
@@ -443,6 +452,25 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 	}
 }
 
+// calculateHVMQueryKey constructs an hVMQueryKey which is used to cache hVM responses.
+// Each key is (precompile_input + precompile_address_byte + containing_header_hash)
+// This query key is unique for a specific precompile called with specific input argument contained in a specific block
+func calculateHVMQueryKey(input []byte, precompileAddress byte, blockContext common.Hash) (hVMQueryKey, error) {
+	h := sha256.New()
+	v := append(blockContext[:], precompileAddress)
+	v = append(v, input...)
+	_, err := h.Write(v)
+	if err != nil {
+		return [32]byte{}, err
+	}
+	hs := h.Sum(nil)
+	var c [32]byte
+	copy(c[0:32], hs[0:32])
+	var k hVMQueryKey
+	k = c
+	return k, nil
+}
+
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
 // It returns
 // - the returned bytes,
@@ -470,6 +498,18 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		log.Debug("btcBalAddr run called with nil or too small input", "input", input)
 		return nil, nil
 	}
+
+	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+	if err != nil {
+		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+	}
+	cachedResult, exists := hvmQueryMap[k]
+	if exists {
+		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+		return cachedResult, nil
+	}
+
 	addr := string(input)
 	log.Debug("btcBalAddr called", "address", addr)
 	if TBCIndexer == nil {
@@ -488,6 +528,7 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	resp := make([]byte, 8)
 	binary.BigEndian.PutUint64(resp, bal)
 	log.Debug("btcBalAddr returning data", "returnedData", fmt.Sprintf("%x", resp))
+	hvmQueryMap[k] = resp
 	return resp, nil
 }
 
@@ -497,31 +538,16 @@ func (c *btcTxConfirmations) RequiredGas(input []byte) uint64 {
 	return params.BtcTxConf
 }
 
-func calculateHVMQueryKey(input []byte, blockContext common.Hash) (hVMQueryKey, error) {
-	h := sha256.New()
-	v := append(blockContext[:], input...)
-	_, err := h.Write(v)
-	if err != nil {
-		return [32]byte{}, err
-	}
-	hs := h.Sum(nil)
-	var c [32]byte
-	copy(c[0:32], hs[0:32])
-	var k hVMQueryKey
-	k = c
-	return k, nil
-}
-
 func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) != 32 {
 		return nil, nil
 	}
-	log.Debug("txidConfirmations called", "txid", input)
+	log.Debug("btcTxConfirmations called", "txid", input)
 	if TBCIndexer == nil {
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	k, err := calculateHVMQueryKey(input, blockContext)
+	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 	if err != nil {
 		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
 	}
@@ -538,14 +564,18 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 	blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), tbcd.NewTxId(txid))
 	if err != nil || blocks == nil || len(blocks) == 0 {
 		log.Warn("Unable to lookup transaction confirmations by txid", "txid", input)
-		return make([]byte, 0), nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	// TODO: Canonical check
 	hash, err := chainhash.NewHash(blocks[0][:])
 	if err != nil {
 		log.Warn(fmt.Sprintf("Unable to create blockhash from %x", blocks[0][:]))
-		return make([]byte, 0), nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	_, height, err := TBCIndexer.BlockHeaderByHash(context.Background(), hash)
@@ -572,11 +602,24 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 		log.Crit("TBCIndexer is nil!")
 	}
 
+	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+	if err != nil {
+		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+	}
+	cachedResult, exists := hvmQueryMap[k]
+	if exists {
+		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+		return cachedResult, nil
+	}
+
 	height, headers, err := TBCIndexer.BlockHeadersBest(context.Background())
 
 	if err != nil || len(headers) == 0 {
 		log.Warn("Unable to lookup best header!")
-		return make([]byte, 0), nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	// TODO: Canonical check
@@ -597,6 +640,7 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
 
 	log.Debug("btcLastHeader returning data", "returnedData", fmt.Sprintf("%x", resp))
+	hvmQueryMap[k] = resp
 	return resp, nil
 }
 
@@ -609,6 +653,17 @@ func (c *btcHeaderN) RequiredGas(input []byte) uint64 {
 func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) != 4 {
 		return nil, nil
+	}
+
+	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+	if err != nil {
+		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+	}
+	cachedResult, exists := hvmQueryMap[k]
+	if exists {
+		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+		return cachedResult, nil
 	}
 
 	height := (uint32(input[0]&0xFF) << 16) |
@@ -625,7 +680,9 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 
 	if err != nil || len(headers) == 0 {
 		log.Warn("Unable to lookup header!", "height", height)
-		return make([]byte, 0), nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	// TODO: Canonical check
@@ -646,6 +703,7 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
 
 	log.Debug("btcHeaderN returning data", "returnedData", fmt.Sprintf("%x", resp))
+	hvmQueryMap[k] = resp
 	return resp, nil
 }
 
@@ -659,6 +717,17 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 	// TODO: Move to variable, check addr min length + 4 bytes
 	if len(input) < 27 {
 		return nil, nil
+	}
+
+	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+	if err != nil {
+		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+	}
+	cachedResult, exists := hvmQueryMap[k]
+	if exists {
+		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+		return cachedResult, nil
 	}
 
 	addrEnd := len(input) - 4
@@ -684,7 +753,9 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 	if err != nil {
 		// TODO: Error handling
 		log.Crit("Unable to process UTXOs of address %s!", addr)
-		return nil, nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	resp := make([]byte, 1)
@@ -702,6 +773,7 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 	}
 
 	log.Debug("btcUtxosAddrList returning data", "returnedData", fmt.Sprintf("%x", resp))
+	hvmQueryMap[k] = resp
 	return resp, nil
 }
 
@@ -716,6 +788,17 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	// TODO: Move to variable
 	if len(input) != 36 { // 4 bytes bitflag, 32 bytes txid. TODO: Allow 32-byte input (just TxID) and assume some default bitflag values?
 		return nil, nil
+	}
+
+	k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+	if err != nil {
+		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+	}
+	cachedResult, exists := hvmQueryMap[k]
+	if exists {
+		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+		return cachedResult, nil
 	}
 
 	var txid = make([]byte, 32)
@@ -776,18 +859,24 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	if err != nil {
 		// TODO: Error handling
 		log.Warn("Unable to lookup Tx conformations by Txid!", "txid", input)
-		return make([]byte, 0), nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	if err != nil {
 		// TODO: Error handling
 		log.Warn("Unable to lookup Tx by Txid!", "txid", txid)
-		return make([]byte, 0), nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	if tx == nil {
 		// TODO: Error handling
-		return make([]byte, 0), nil
+		resp := make([]byte, 0)
+		hvmQueryMap[k] = resp
+		return resp, nil
 	}
 
 	resp := make([]byte, 0)
@@ -800,7 +889,9 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), txidMade)
 		if err != nil || blocks == nil || len(blocks) == 0 {
 			// TODO: Error handling
-			return make([]byte, 0), nil
+			resp := make([]byte, 0)
+			hvmQueryMap[k] = resp
+			return resp, nil
 		}
 
 		resp = append(resp, blocks[0][:]...)
@@ -830,7 +921,9 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 			value := sourceTx.TxOut[prevIn.Index].Value
 
 			if err != nil {
-				return make([]byte, 0), nil
+				resp := make([]byte, 0)
+				hvmQueryMap[k] = resp
+				return resp, nil
 			}
 
 			resp = binary.BigEndian.AppendUint64(resp, uint64(value))
@@ -909,6 +1002,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	}
 
 	log.Debug("btcTxByTxid returning data", "returnedData", fmt.Sprintf("%x", resp))
+	hvmQueryMap[k] = resp
 	return resp, nil
 }
 
