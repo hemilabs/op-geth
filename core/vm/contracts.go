@@ -307,7 +307,7 @@ func SetupTBC(ctx context.Context, cfg *tbc.Config) error {
 var hvmContractsToAddress = map[reflect.Type][]byte{
 	reflect.TypeOf(&btcBalAddr{}):         {0x40},
 	reflect.TypeOf(&btcTxByTxid{}):        {0x41},
-	reflect.TypeOf(&btcTxConfirmations{}): {0x42},
+	reflect.TypeOf(&btcUtxosAddrList{}):   {0x42},
 	reflect.TypeOf(&btcTxConfirmations{}): {0x43},
 	reflect.TypeOf(&btcLastHeader{}):      {0x44},
 	reflect.TypeOf(&btcHeaderN{}):         {0x45},
