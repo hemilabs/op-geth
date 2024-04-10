@@ -121,21 +121,7 @@ func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 				return
 			}
 
-			log.Info(fmt.Sprintf("Indexing UTXOs from block %d to %d (inclusive)", startingHeight, endingHeight))
-			err = TBCIndexUTXOs(ctx, endingHeight)
-			if err != nil {
-				log.Crit(fmt.Sprintf("Unable to perform UTXO indexing from block %d to %d (inclusive)",
-					startingHeight, endingHeight),
-					"err", err)
-			}
-
-			log.Info(fmt.Sprintf("Indexing Txs from block %d to %d (inclusive)", startingHeight, endingHeight))
-			err = TBCIndexTxs(ctx, endingHeight)
-			if err != nil {
-				log.Crit(fmt.Sprintf("Unable to perform Tx indexing from block %d to %d (inclusive)",
-					startingHeight, endingHeight),
-					"err", err)
-			}
+			TBCIndexer.SyncIndexersToHeight(ctx, endingHeight)
 
 			done := TBCIndexer.Synced(ctx)
 			if done.UtxoHeight != endingHeight {

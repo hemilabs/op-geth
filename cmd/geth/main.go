@@ -444,17 +444,8 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 				log.Info("Geth still waiting for TBC initial sync", "initHeight", initHeight)
 			}
 		}
-		log.Info("Performing initial UTXO index", "initHeight", initHeight)
-		err = vm.TBCIndexUTXOs(ctx.Context, initHeight)
-		if err != nil {
-			log.Crit("Unable to perform initial UTXO index", "initHeight", initHeight, "err", err)
-		}
 
-		log.Info("Performing initial Tx index", "initHeight", initHeight)
-		err = vm.TBCIndexTxs(ctx.Context, initHeight)
-		if err != nil {
-			log.Crit("Unable to perform initial Tx index", "initHeight", initHeight)
-		}
+		err = vm.TBCIndexer.SyncIndexersToHeight(ctx.Context, initHeight)
 
 		log.Info("Finished initial indexing", "initHeight", initHeight)
 	}
