@@ -106,6 +106,7 @@ func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 					break
 				}
 			}
+			endingHeight = height
 		}
 		if endingHeight > uh {
 			startingHeight := uh + 1
@@ -150,7 +151,6 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 	firstSync := false
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.TxIndexHeightKey)
-	log.Info(fmt.Sprintf("TBC has indexed Txs to height %d", he))
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			log.Info("No Tx indexing performed yet, starting height for Tx indexing set to 0.")
@@ -163,6 +163,7 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 		he = make([]byte, 8)
 	}
 	h = binary.BigEndian.Uint64(he)
+	log.Info(fmt.Sprintf("TBC has indexed Txs to height %d", h))
 
 	if tipHeight <= h {
 		// Already indexed past this point
@@ -189,7 +190,6 @@ func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 	firstSync := false
 	// Get current indexed height
 	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.UtxoIndexHeightKey)
-	log.Info(fmt.Sprintf("TBC has indexed UTXOs to height %d", he))
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			log.Info("No UTXO indexing performed yet, starting height for UTXO indexing set to 0.")
@@ -202,6 +202,7 @@ func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 		he = make([]byte, 8)
 	}
 	h = binary.BigEndian.Uint64(he)
+	log.Info(fmt.Sprintf("TBC has indexed UTXOs to height %d", h))
 
 	if tipHeight <= h {
 		// Already indexed past this point
@@ -281,7 +282,7 @@ func TBCBlocksAvailableToHeight(ctx context.Context, startingHeight uint64, endi
 		// If execution got here, then the block and its header are downloaded, continue looking
 		log.Trace("Block found, continuing contiguous blocks search", "heightToCheck", htc)
 	}
-	log.Info("TBC synced, has all blocks downloaded from starting height to ending height", "startingHeight", startingHeight, "endingHeight", endingHeight, "tipHash")
+	log.Info("TBC synced, has all blocks downloaded from starting height to ending height", "startingHeight", startingHeight, "endingHeight", endingHeight, "tipHash", bestHash)
 	return true
 }
 
