@@ -55,11 +55,94 @@ type hVMQueryKey [32]byte
 // TODO: Cache responses so old blocks can be processed against the hVM responses at their call time
 var TBCIndexer *tbc.Server
 var initReady bool
+
+// TODO: Cache this on-disk at some point, will need to persist restarts to correctly provide execution traces for old txs
 var hvmQueryMap map[hVMQueryKey][]byte
 
 // SetInitReady TODO: Review, refactor initialization to its own method that accepts initial chain BTC block configuration
 func SetInitReady() {
 	initReady = true
+}
+
+// TODO: Remove this logic once TBC progression is driven by BTC Attributes Deposited tx
+const TBCTipHeightLag = 2
+const TBCTipTimestampLag = 60 * 10 // 10 minutes
+const TBCMaxBlocksPerProgression = 6
+
+// ProgressTip For now, this update after a new head is set processes TBC updates before construction
+// on a new block payload occurs, so that tx execution will always be the same for the new
+// block being built. Halts if any TBC issues occur for debugging.
+func ProgressTip(ctx context.Context, currentTimestamp uint32) {
+	log.Info("Progressing TBC tip...", "currentTimestamp", currentTimestamp)
+	si := TBCIndexer.Synced(context.Background())
+	uh := si.UtxoHeight
+	th := si.TxHeight
+	log.Info("Checking for TBC progression available", "utxoIndexHeight", uh, "txIndexHeight", th)
+
+	if uh != th {
+		log.Crit("TBC is in an unexpected state, utxoIndexHeight != txIndexHeight!",
+			"utxoIndexHeight", uh, "txIndexHeight", th)
+	}
+
+	tipHeight, headers, err := TBCIndexer.BlockHeadersBest(ctx)
+	if err != nil {
+		log.Crit("Unable to retrieve tip headers from TBC", "err", err)
+	}
+	log.Info(fmt.Sprintf("TBC download status: tipHeight=%d", tipHeight))
+	if len(headers) == 0 {
+		log.Crit("TBC has 0 headers at tip height", "tipHeight", tipHeight)
+	}
+
+	// Tip height is more than 2 blocks ahead, TBC can progress as far as timestamp is sufficiently past
+	if tipHeight > uh+TBCTipHeightLag {
+		endingHeight := uh
+		for height := uh + 1; height <= tipHeight-TBCTipHeightLag && height <= uh+TBCMaxBlocksPerProgression; height++ {
+			headersAtHeight, err := TBCIndexer.BlockHeadersByHeight(ctx, height)
+			if err != nil {
+				log.Crit("Unable to retrieve headers from TBC", "height", height)
+			}
+			for _, h := range headersAtHeight {
+				if uint32(h.Timestamp.Unix())+TBCTipTimestampLag > currentTimestamp {
+					break
+				}
+			}
+		}
+		if endingHeight > uh {
+			startingHeight := uh + 1
+			// TBC has block headers to progress, check that the actual blocks are all available
+			hasAllBlocks := TBCBlocksAvailableToHeight(ctx, startingHeight, endingHeight)
+			if !hasAllBlocks {
+				log.Info("TBC does not have all blocks, will progress chain later", "start",
+					startingHeight, "end", endingHeight)
+				return
+			}
+
+			log.Info(fmt.Sprintf("Indexing UTXOs from block %d to %d (inclusive)", startingHeight, endingHeight))
+			err = TBCIndexUTXOs(ctx, endingHeight)
+			if err != nil {
+				log.Crit(fmt.Sprintf("Unable to perform UTXO indexing from block %d to %d (inclusive)",
+					startingHeight, endingHeight),
+					"err", err)
+			}
+
+			log.Info(fmt.Sprintf("Indexing Txs from block %d to %d (inclusive)", startingHeight, endingHeight))
+			err = TBCIndexTxs(ctx, endingHeight)
+			if err != nil {
+				log.Crit(fmt.Sprintf("Unable to perform Tx indexing from block %d to %d (inclusive)",
+					startingHeight, endingHeight),
+					"err", err)
+			}
+
+			done := TBCIndexer.Synced(ctx)
+			if done.UtxoHeight != endingHeight {
+				log.Crit(fmt.Sprintf("After indexing to block %d, UtxoHeight=%d!", endingHeight, done.UtxoHeight))
+			}
+			if done.TxHeight != endingHeight {
+				log.Crit(fmt.Sprintf("After indexing to block %d, TxHeight=%d!", endingHeight, done.TxHeight))
+			}
+			log.Info("TBC progression done!", "utxoHeight", done.UtxoHeight, "txHeight", done.TxHeight)
+		}
+	}
 }
 
 func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
@@ -89,8 +172,11 @@ func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
 
 	count := tipHeight - h
 	if firstSync {
-		count++ // Genesis block also needs to be indexed
+		count++ // Genesis block also needs to be indexed, leave h=0
+	} else {
+		h++ // Start indexing at current indexed height + 1
 	}
+	log.Info(fmt.Sprintf("Indexing Txs starting at block %d, count %d", h, count))
 	err = TBCIndexer.TxIndexer(ctx, h, count)
 	if err != nil {
 		return fmt.Errorf("tx indexer error: %w", err)
@@ -125,8 +211,11 @@ func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
 
 	count := tipHeight - h
 	if firstSync {
-		count++ // Genesis block also needs to be indexed
+		count++ // Genesis block also needs to be indexed, leave h=0
+	} else {
+		h++ // Start indexing at current indexed height + 1
 	}
+	log.Info(fmt.Sprintf("Indexing UTXOs starting at block %d, count %d", h, count))
 	err = TBCIndexer.UtxoIndexer(ctx, h, count)
 	if err != nil {
 		return fmt.Errorf("UTXO indexer error: %w", err)
@@ -431,10 +520,16 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	// k, err := calculateHVMQueryKey(input, blockContext)
-	// if err != nil {
-	//
-	// }
+	k, err := calculateHVMQueryKey(input, blockContext)
+	if err != nil {
+		log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+	}
+	cachedResult, exists := hvmQueryMap[k]
+	if exists {
+		log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+		return cachedResult, nil
+	}
 
 	var txid [32]byte
 	copy(txid[0:32], input[0:32])
@@ -458,6 +553,8 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 	binary.BigEndian.PutUint32(resp, uint32(height))
 
 	log.Debug("txidConfirmations returning data", "returnedData", fmt.Sprintf("%x", resp))
+
+	hvmQueryMap[k] = resp
 	return resp, nil
 }
 
