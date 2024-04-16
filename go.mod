@@ -12,7 +12,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.18.45
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.43
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.30.2
+	github.com/btcsuite/btcd v0.24.0
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2
+	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
 	github.com/cespare/cp v0.1.0
 	github.com/cloudflare/cloudflare-go v0.79.0
 	github.com/cockroachdb/pebble v0.0.0-20230928194634-aa077af62593
@@ -39,7 +41,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/graph-gophers/graphql-go v1.3.0
 	github.com/hashicorp/go-bexpr v0.1.10
-	github.com/hemilabs/heminetwork v0.0.0-00010101000000-000000000000
+	github.com/hemilabs/heminetwork v0.1.0
 	github.com/holiman/billy v0.0.0-20230718173358-1c7e68d277a7
 	github.com/holiman/bloomfilter/v2 v2.0.3
 	github.com/holiman/uint256 v1.2.4
@@ -95,9 +97,7 @@ require (
 	github.com/aws/smithy-go v1.15.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.7.0 // indirect
-	github.com/btcsuite/btcd v0.24.0 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.5 // indirect
-	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/cockroachdb/errors v1.8.1 // indirect
@@ -164,6 +164,10 @@ exclude google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8
 exclude google.golang.org/genproto v0.0.0-20180518175338-11a468237815
 
 // Temp replacement for testing, revert once marco/bitcoin branch is merged in
-replace github.com/hemilabs/heminetwork => ../heminetwork
+replace github.com/hemilabs/heminetwork => ../optimism/heminetwork
+
+replace github.com/hemilabs/heminetwork/database/tbcd => ../optimism/heminetwork/database/tbcd
+
+replace github.com/hemilabs/heminetwork/service/tbc => ../optimism/heminetwork/service/tbc
 
 //replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain

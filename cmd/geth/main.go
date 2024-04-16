@@ -20,13 +20,14 @@ package main
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hemilabs/heminetwork/service/tbc"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hemilabs/heminetwork/service/tbc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"

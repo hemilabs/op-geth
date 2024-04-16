@@ -23,6 +23,9 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
+	"reflect"
+
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/ethereum/go-ethereum/common"
@@ -39,8 +42,6 @@ import (
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/exp/slices"
-	"math/big"
-	"reflect"
 )
 
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
@@ -77,6 +78,7 @@ const TBCMaxBlocksPerProgression = 6
 // block being built. Halts if any TBC issues occur for debugging.
 func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 	log.Info("Progressing TBC tip...", "currentTimestamp", currentTimestamp)
+
 	si := TBCIndexer.Synced(context.Background())
 	uh := si.UtxoHeight
 	th := si.TxHeight
