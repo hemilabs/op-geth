@@ -680,7 +680,7 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		}
 	}
 
-	height := (uint32(input[0]&0xFF) << 16) |
+	height := (uint32(input[0]&0xFF) << 24) |
 		(uint32(input[1]&0xFF) << 16) |
 		(uint32(input[2]&0xFF) << 8) |
 		uint32(input[3]&0xFF)
