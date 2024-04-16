@@ -927,6 +927,42 @@ var (
 		Category: flags.RollupCategory,
 		Value:    true,
 	}
+	TBCListenAddress = &cli.StringFlag{
+		Name:     "tbc.listenaddress",
+		Usage:    "Address for TBC daemon to listen on",
+		Category: flags.RollupCategory,
+		Value:    "127.0.0.1",
+	}
+	TBCMaxCachedTxs = &cli.IntFlag{
+		Name:     "tbc.maxcachedtxs",
+		Usage:    "Max number of transactions TBC will cache before flushing to disk",
+		Category: flags.RollupCategory,
+		Value:    1e6, // max key 69, max value 36
+	}
+	TBCLevelDBHome = &cli.StringFlag{
+		Name:     "tbc.leveldbhome",
+		Usage:    "Directory for TBC's LevelDB database",
+		Category: flags.RollupCategory,
+		Value:    "~/.tbcd", // TODO: Review default value here
+	}
+	TBCBlockSanity = &cli.BoolFlag{
+		Name:     "tbc.blocksanity",
+		Usage:    "Enable/disable block sanity checks before inserting",
+		Category: flags.RollupCategory,
+		Value:    false,
+	}
+	TBCNetwork = &cli.StringFlag{
+		Name:     "tbc.network",
+		Usage:    "Bitcoin network TBC is running on",
+		Category: flags.RollupCategory,
+		Value:    "testnet3", // Change default to mainnet on Hemi mainnet
+	}
+	TBCPrometheusAddress = &cli.StringFlag{
+		Name:     "tbc.prometheusaddress",
+		Usage:    "Prometheus address for TBC metric monitoring",
+		Category: flags.RollupCategory,
+		Value:    "", // No Prometheus by default
+	}
 
 	// Metrics flags
 	MetricsEnabledFlag = &cli.BoolFlag{

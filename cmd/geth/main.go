@@ -18,7 +18,10 @@
 package main
 
 import (
+	"encoding/binary"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hemilabs/heminetwork/service/tbc"
 	"os"
 	"sort"
 	"strconv"
@@ -154,6 +157,12 @@ var (
 		utils.RollupComputePendingBlock,
 		utils.RollupHaltOnIncompatibleProtocolVersionFlag,
 		utils.RollupSuperchainUpgradesFlag,
+		utils.TBCListenAddress,
+		utils.TBCMaxCachedTxs,
+		utils.TBCLevelDBHome,
+		utils.TBCBlockSanity,
+		utils.TBCNetwork,
+		utils.TBCPrometheusAddress,
 		configFileFlag,
 	}, utils.NetworkFlags, utils.DatabaseFlags)
 
@@ -373,6 +382,95 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
+	// Before starting up any other services, make sure TBC is in correct initial state
+	tbcCfg := tbc.NewDefaultConfig()
+
+	// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
+	tbcCfg.Network = "testnet3"
+
+	if ctx.IsSet(utils.TBCListenAddress.Name) {
+		tbcCfg.ListenAddress = ctx.String(utils.TBCListenAddress.Name)
+	}
+	if ctx.IsSet(utils.TBCMaxCachedTxs.Name) {
+		tbcCfg.MaxCachedTxs = ctx.Int(utils.TBCMaxCachedTxs.Name)
+	}
+	if ctx.IsSet(utils.TBCLevelDBHome.Name) {
+		tbcCfg.LevelDBHome = ctx.String(utils.TBCLevelDBHome.Name)
+	}
+	if ctx.IsSet(utils.TBCBlockSanity.Name) {
+		tbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
+	}
+	if ctx.IsSet(utils.TBCNetwork.Name) {
+		tbcCfg.Network = ctx.String(utils.TBCNetwork.Name)
+	}
+	if ctx.IsSet(utils.TBCPrometheusAddress.Name) {
+		tbcCfg.PrometheusListenAddress = ctx.String(utils.TBCPrometheusAddress.Name)
+	}
+	// TODO: convert op-geth log level integer to TBC log level string
+
+	// Initialize TBC Bitcoin indexer to answer hVM queries
+	err := vm.SetupTBC(ctx.Context, tbcCfg)
+
+	// TODO: Review, give TBC time to warm up
+	time.Sleep(5 * time.Second)
+
+	firstStartup := false
+
+	utxoHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.UtxoIndexHeightKey)
+	if err != nil {
+		log.Info("Unable to get UTXO height key from database, assuming first startup.")
+		firstStartup = true
+	}
+
+	txHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.TxIndexHeightKey)
+	if err != nil {
+		log.Info("Unable to get Tx height key from database, assuming first startup.")
+		firstStartup = true
+	}
+
+	if !firstStartup {
+		log.Info("On op-geth startup, TBC index status: ", "utxoIndexHeight",
+			binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
+	}
+
+	var initHeight uint64
+	initHeight = 2585811 // Temp for testing, this should be part of chain config
+
+	if firstStartup {
+		for {
+			log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
+				" Cannot progress Hemi chain until download is complete.", initHeight))
+			time.Sleep(5 * time.Second)
+			if vm.TBCBlocksAvailableToHeight(ctx.Context, 0, initHeight) {
+				log.Info("TBC Initial syncing is complete, continuing...")
+				break
+			} else {
+				log.Info("Geth still waiting for TBC initial sync", "initHeight", initHeight)
+			}
+		}
+
+		err = vm.TBCIndexer.SyncIndexersToHeight(ctx.Context, initHeight)
+
+		log.Info("Finished initial indexing", "initHeight", initHeight)
+	}
+
+	si := vm.TBCIndexer.Synced(ctx.Context)
+
+	if si.UtxoHeight < initHeight {
+		log.Crit("TBC did not index UTXOs to initHeight!",
+			"utxoIndexHeight", si.UtxoHeight, "initHeight", initHeight)
+	}
+
+	if si.TxHeight < initHeight {
+		log.Crit("TBC did not index txs to initHeight!",
+			"txIndexHeight", si.TxHeight, "initHeight", initHeight)
+	}
+
+	log.Info("TBC initial sync completed", "headerHeight", si.BlockHeaderHeight,
+		"utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
+
+	vm.SetInitReady()
+
 	debug.Memsize.Add("node", stack)
 
 	// Start up the node itself
