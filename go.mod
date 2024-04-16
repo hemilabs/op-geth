@@ -166,5 +166,8 @@ exclude google.golang.org/genproto v0.0.0-20180518175338-11a468237815
 
 // Temp replacement for testing, revert once marco/bitcoin branch is merged in
 replace github.com/hemilabs/heminetwork => ../optimism/heminetwork
+replace github.com/hemilabs/heminetwork/database/tbcd => ../optimism/heminetwork/database/tbcd
+replace github.com/hemilabs/heminetwork/service/tbc => ../optimism/heminetwork/service/tbc
+
 
 //replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain
