@@ -823,7 +823,10 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 			return nil, nil
 		}
 
-		resp = append(resp, blocks[0][:]...)
+		blockHash := make([]byte, 0)
+		blockHash = append(blockHash, blocks[0][:]...)
+		slices.Reverse(blockHash)
+		resp = append(resp, blockHash...)
 	}
 
 	if includeVersion {
@@ -867,7 +870,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 			}
 			if includeInputScriptSig {
 				choppedInputScript := make([]byte, 0)
-				copy(choppedInputScript, in.SignatureScript)
+				choppedInputScript = append(choppedInputScript, in.SignatureScript...)
 				if len(choppedInputScript) > maxInputScriptSigSize {
 					choppedInputScript = choppedInputScript[0:maxInputScriptSigSize]
 				}
@@ -901,15 +904,15 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				break
 			}
 			// Always include output value
+			unspendable := txscript.IsUnspendable(out.PkScript)
+			if unspendable && !includeUnspendableOutputs {
+				continue
+			}
 			resp = binary.BigEndian.AppendUint64(resp, uint64(out.Value))
 			if includeOutputScript {
-				unspendable := txscript.IsUnspendable(out.PkScript)
-				if unspendable && !includeUnspendableOutputs {
-					continue
-				}
 
 				choppedOutputScript := make([]byte, 0)
-				copy(choppedOutputScript, out.PkScript)
+				choppedOutputScript = append(choppedOutputScript, out.PkScript...)
 				if len(choppedOutputScript) > maxOutputScriptSize {
 					choppedOutputScript = choppedOutputScript[0:maxOutputScriptSize]
 				}
