@@ -430,42 +430,6 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 			binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
 	}
 
-	var initHeight uint64
-	initHeight = 2585811 // Temp for testing, this should be part of chain config
-
-	if firstStartup {
-		for {
-			log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
-				" Cannot progress Hemi chain until download is complete.", initHeight))
-			time.Sleep(5 * time.Second)
-			if vm.TBCBlocksAvailableToHeight(ctx.Context, 0, initHeight) {
-				log.Info("TBC Initial syncing is complete, continuing...")
-				break
-			} else {
-				log.Info("Geth still waiting for TBC initial sync", "initHeight", initHeight)
-			}
-		}
-
-		err = vm.TBCIndexer.SyncIndexersToHeight(ctx.Context, initHeight)
-
-		log.Info("Finished initial indexing", "initHeight", initHeight)
-	}
-
-	si := vm.TBCIndexer.Synced(ctx.Context)
-
-	if si.UtxoHeight < initHeight {
-		log.Crit("TBC did not index UTXOs to initHeight!",
-			"utxoIndexHeight", si.UtxoHeight, "initHeight", initHeight)
-	}
-
-	if si.TxHeight < initHeight {
-		log.Crit("TBC did not index txs to initHeight!",
-			"txIndexHeight", si.TxHeight, "initHeight", initHeight)
-	}
-
-	log.Info("TBC initial sync completed", "headerHeight", si.BlockHeaderHeight,
-		"utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
-
 	vm.SetInitReady()
 
 	debug.Memsize.Add("node", stack)
