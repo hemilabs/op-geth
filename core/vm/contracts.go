@@ -79,6 +79,13 @@ const TBCMaxBlocksPerProgression = 6
 func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 	log.Info("Progressing TBC tip...", "currentTimestamp", currentTimestamp)
 
+	if TBCIndexer == nil {
+		log.Warn("TBCIndexer is nil, no-op")
+		return
+	} else {
+		log.Info("TBCIndexer is not nil")
+	}
+
 	si := TBCIndexer.Synced(context.Background())
 	uh := si.UtxoHeight
 	th := si.TxHeight
