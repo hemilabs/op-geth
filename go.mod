@@ -12,7 +12,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.18.45
 	github.com/aws/aws-sdk-go-v2/credentials v1.13.43
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.30.2
+	github.com/btcsuite/btcd v0.24.0
 	github.com/btcsuite/btcd/btcec/v2 v2.3.2
+	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0
 	github.com/cespare/cp v0.1.0
 	github.com/cloudflare/cloudflare-go v0.79.0
 	github.com/cockroachdb/pebble v0.0.0-20230928194634-aa077af62593
@@ -95,9 +97,7 @@ require (
 	github.com/aws/smithy-go v1.15.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/bits-and-blooms/bitset v1.10.0 // indirect
-	github.com/btcsuite/btcd v0.24.0 // indirect
 	github.com/btcsuite/btcd/btcutil v1.1.5 // indirect
-	github.com/btcsuite/btcd/chaincfg/chainhash v1.1.0 // indirect
 	github.com/btcsuite/btclog v0.0.0-20170628155309-84c8d2346e9f // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/cockroachdb/errors v1.8.1 // indirect
@@ -107,7 +107,6 @@ require (
 	github.com/cockroachdb/tokenbucket v0.0.0-20230807174530-cc333fc44b06 // indirect
 	github.com/consensys/bavard v0.1.13 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.2 // indirect
-	github.com/crate-crypto/go-ipa v0.0.0-20230601170251-1830d0757c80 // indirect
 	github.com/decred/dcrd/crypto/blake256 v1.0.1 // indirect
 	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.2.0 // indirect
 	github.com/deepmap/oapi-codegen v1.6.0 // indirect
@@ -166,8 +165,9 @@ exclude google.golang.org/genproto v0.0.0-20180518175338-11a468237815
 
 // Temp replacement for testing, revert once marco/bitcoin branch is merged in
 replace github.com/hemilabs/heminetwork => ../optimism/heminetwork
-replace github.com/hemilabs/heminetwork/database/tbcd => ../optimism/heminetwork/database/tbcd
-replace github.com/hemilabs/heminetwork/service/tbc => ../optimism/heminetwork/service/tbc
 
+replace github.com/hemilabs/heminetwork/database/tbcd => ../optimism/heminetwork/database/tbcd
+
+replace github.com/hemilabs/heminetwork/service/tbc => ../optimism/heminetwork/service/tbc
 
 //replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain
