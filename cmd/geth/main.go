@@ -434,7 +434,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	}
 
 	var initHeight uint64
-	initHeight = 2585811 // Temp for testing, this should be part of chain config
+	initHeight = 2586692 // Temp for testing, this should be part of chain config
 
 	if firstStartup {
 		for {
