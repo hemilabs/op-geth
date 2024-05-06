@@ -776,7 +776,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 
 	bitflag3 := input[34] // Gives size limits for data which could get unexpectedly expensive to return
 	// Two free bits here
-	maxInputsExponent := bitflag3 & (0x07 << 3) // bits xxXXXxxx used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 inputs
+	maxInputsExponent := (bitflag3 & (0x07 << 3)) >> 3 // bits xxXXXxxx used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 inputs
 	maxOutputsExponent := bitflag3 & (0x07)     // bits xxxxxXXX used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 outputs
 
 	maxInputs := 0x01 << maxInputsExponent
@@ -784,7 +784,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 
 	bitflag4 := input[35]
 	// Four free bits here
-	maxInputScriptSigSizeExponent := bitflag4 & (0x03 << 2) // bits xxxxXXxx used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
+	maxInputScriptSigSizeExponent := (bitflag4 & (0x03 << 2)) >> 2 // bits xxxxXXxx used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
 	maxOutputScriptSizeExponent := bitflag4 & (0x03)        // bits xxxxxxXX used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
 
 	maxInputScriptSigSize := 0x01 << (4 + maxInputScriptSigSizeExponent)
