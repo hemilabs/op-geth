@@ -765,7 +765,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	includeInputScriptSig := bitflag1&(0x01) != 0
 
 	bitflag2 := input[33]
-	includeInputSeq := bitflag1&(0x01<<7) != 0
+	includeInputSeq := bitflag2&(0x01<<7) != 0
 	includeOutputs := bitflag2&(0x01<<6) != 0
 	includeOutputScript := bitflag2&(0x01<<5) != 0
 	includeOutputAddress := bitflag2&(0x01<<4) != 0
