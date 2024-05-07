@@ -512,13 +512,13 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		log.Error(fmt.Sprintf("Unable to get block header by hash %x", hash))
 		return nil, err
 	}
-	
+
 	heightBest, _, err := TBCIndexer.BlockHeadersBest(context.Background())
 	if err != nil {
 		log.Error("Unable to get best block header", hash)
 		return nil, err
 	}
-	
+
 	resp := make([]byte, 4)
 	binary.BigEndian.PutUint32(resp, uint32(heightBest - height + 1))
 
