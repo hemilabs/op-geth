@@ -489,10 +489,12 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		}
 	}
 
-	var txid [32]byte
-	copy(txid[0:32], input[0:32])
+        var txid = make([]byte, 32)
+        copy(txid[0:32], input[0:32])
+        slices.Reverse(txid)
+        txidMade := [32]byte(txid)
 
-	blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), tbcd.NewTxId(txid))
+	blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), tbcd.NewTxId(txidMade))
 	if err != nil || blocks == nil || len(blocks) == 0 {
 		log.Error("Unable to lookup transaction confirmations by txid", "txid", txid, "err", err)
 		return nil, err
@@ -506,8 +508,19 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 
 	_, height, err := TBCIndexer.BlockHeaderByHash(context.Background(), hash)
 
+	if err != nil {
+		log.Error(fmt.Sprintf("Unable to get block header by hash %x", hash))
+		return nil, err
+	}
+	
+	heightBest, _, err := TBCIndexer.BlockHeadersBest(context.Background())
+	if err != nil {
+		log.Error("Unable to get best block header", hash)
+		return nil, err
+	}
+	
 	resp := make([]byte, 4)
-	binary.BigEndian.PutUint32(resp, uint32(height))
+	binary.BigEndian.PutUint32(resp, uint32(heightBest - height + 1))
 
 	log.Debug("txidConfirmations returning data", "returnedData", fmt.Sprintf("%x", resp))
 
