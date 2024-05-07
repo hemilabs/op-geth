@@ -929,7 +929,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				if len(choppedOutputScript) > maxOutputScriptSize {
 					choppedOutputScript = choppedOutputScript[0:maxOutputScriptSize]
 				}
-				resp = append(resp, byte(len(out.PkScript)))
+				resp = binary.BigEndian.AppendUint16(resp, uint16(len(out.PkScript)))
 				resp = append(resp, choppedOutputScript...)
 			}
 			if includeOutputAddress {
