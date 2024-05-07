@@ -856,9 +856,9 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	}
 
 	if includeInputs {
-		resp = append(resp, byte(len(tx.TxIn))) // TODO: Check no more inputs than allowed
+		resp = binary.BigEndian.AppendUint16(resp, uint16(len(tx.TxIn)))
 		for count, in := range tx.TxIn {
-			if count > maxInputs {
+			if count >= maxInputs {
 				// Caller needs to check # of inputs compared to claimed length to detect inputs were chopped
 				break
 			}
@@ -910,9 +910,9 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		}
 
 		count := 0
-		resp = append(resp, byte(outLen))
+		resp = binary.BigEndian.AppendUint16(resp, uint16(outLen))
 		for idx, out := range tx.TxOut {
-			if count > maxOutputs {
+			if count >= maxOutputs {
 				// Caller needs to check # of outputs compared to claimed length to detect outputs were chopped
 				break
 			}
