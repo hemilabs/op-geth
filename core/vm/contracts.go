@@ -571,12 +571,24 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 	prevHash := bestHeader.PrevBlock
 	merkle := bestHeader.MerkleRoot
 
+	var hashReverse = make([]byte, 32)
+	copy(hashReverse[0:32], hash[0:32])
+	slices.Reverse(hashReverse)
+
+	var prevHashReverse = make([]byte, 32)
+	copy(prevHashReverse[0:32], prevHash[0:32])
+	slices.Reverse(prevHashReverse)
+
+	var merkleReverse = make([]byte, 32)
+	copy(merkleReverse[0:32], merkle[0:32])
+	slices.Reverse(merkleReverse)
+
 	resp := make([]byte, 4)
 	binary.BigEndian.PutUint32(resp, uint32(height))
-	resp = append(resp, hash[:]...)
+	resp = append(resp, hashReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Version))
-	resp = append(resp, prevHash[:]...)
-	resp = append(resp, merkle[:]...)
+	resp = append(resp, prevHashReverse[:]...)
+	resp = append(resp, merkleReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Timestamp.Unix()))
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Bits)
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
@@ -640,12 +652,24 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	prevHash := bestHeader.PrevBlock
 	merkle := bestHeader.MerkleRoot
 
+	var hashReverse = make([]byte, 32)
+	copy(hashReverse[0:32], hash[0:32])
+	slices.Reverse(hashReverse)
+
+	var prevHashReverse = make([]byte, 32)
+	copy(prevHashReverse[0:32], prevHash[0:32])
+	slices.Reverse(prevHashReverse)
+
+	var merkleReverse = make([]byte, 32)
+	copy(merkleReverse[0:32], merkle[0:32])
+	slices.Reverse(merkleReverse)
+
 	resp := make([]byte, 4)
 	binary.BigEndian.PutUint32(resp, uint32(height))
-	resp = append(resp, hash[:]...)
+	resp = append(resp, hashReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Version))
-	resp = append(resp, prevHash[:]...)
-	resp = append(resp, merkle[:]...)
+	resp = append(resp, prevHashReverse[:]...)
+	resp = append(resp, merkleReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Timestamp.Unix()))
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Bits)
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
