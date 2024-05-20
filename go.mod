@@ -1,8 +1,8 @@
 module github.com/ethereum/go-ethereum
 
-go 1.21
+go 1.22.2
 
-toolchain go1.21.8
+toolchain go1.22.3
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0
@@ -41,7 +41,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/graph-gophers/graphql-go v1.3.0
 	github.com/hashicorp/go-bexpr v0.1.10
-	github.com/hemilabs/heminetwork v0.0.0-00010101000000-000000000000
+	github.com/hemilabs/heminetwork v0.1.1
 	github.com/holiman/billy v0.0.0-20230718173358-1c7e68d277a7
 	github.com/holiman/bloomfilter/v2 v2.0.3
 	github.com/holiman/uint256 v1.2.4
@@ -162,12 +162,5 @@ exclude google.golang.org/genproto v0.0.0-20190819201941-24fa4b261c55
 exclude google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8
 
 exclude google.golang.org/genproto v0.0.0-20180518175338-11a468237815
-
-// Temp replacement for testing, revert once marco/bitcoin branch is merged in
-replace github.com/hemilabs/heminetwork => ../optimism/heminetwork
-
-replace github.com/hemilabs/heminetwork/database/tbcd => ../optimism/heminetwork/database/tbcd
-
-replace github.com/hemilabs/heminetwork/service/tbc => ../optimism/heminetwork/service/tbc
 
 //replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain
