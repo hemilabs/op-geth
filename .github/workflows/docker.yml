@@ -18,7 +18,6 @@ jobs:
     name: "Docker"
     if: ${{ github.repository_owner == 'hemilabs' }}
     runs-on: "ubuntu-latest"
-    needs: [ "prepare" ]
     permissions:
       contents: read
       packages: write
