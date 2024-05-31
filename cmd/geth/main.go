@@ -165,6 +165,7 @@ var (
 		utils.TBCBlockSanity,
 		utils.TBCNetwork,
 		utils.TBCPrometheusAddress,
+		utils.TBCInitHeight,
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
@@ -430,8 +431,10 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 			binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
 	}
 
-	var initHeight uint64
-	initHeight = 2585811 // Temp for testing, this should be part of chain config
+	var initHeight uint64 = 2585811
+	if ctx.IsSet(utils.TBCInitHeight.Name) {
+		initHeight = ctx.Uint64(utils.TBCInitHeight.Name)
+	}
 
 	if firstStartup {
 		for {
