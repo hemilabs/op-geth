@@ -937,7 +937,7 @@ var (
 		Name:     "tbc.initheight",
 		Usage:    "Height to ensure tbc is at before starting geth",
 		Category: flags.RollupCategory,
-		Value:    2585811, // No Prometheus by default
+		Value:    2585811,
 	}
 
 	// Metrics flags
