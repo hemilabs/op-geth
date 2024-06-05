@@ -53,7 +53,8 @@ import (
 )
 
 const (
-	clientIdentifier = "geth" // Client identifier to advertise over the network
+	clientIdentifier     = "geth" // Client identifier to advertise over the network
+	defaultTbcInitHeight = 2585811
 )
 
 var (
@@ -431,7 +432,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 			binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
 	}
 
-	var initHeight uint64 = 2585811
+	var initHeight uint64 = uint64(defaultTbcInitHeight)
 	if ctx.IsSet(utils.TBCInitHeight.Name) {
 		initHeight = ctx.Uint64(utils.TBCInitHeight.Name)
 	}
