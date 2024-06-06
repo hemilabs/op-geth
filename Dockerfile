@@ -40,6 +40,6 @@ ARG BUILDNUM=""
 
 LABEL commit="$COMMIT" version="$VERSION" buildnum="$BUILDNUM"
 
-USER geth:geth
+# USER geth:geth
 WORKDIR /go-ethereum/
 ENTRYPOINT ["/usr/local/bin/geth"]
