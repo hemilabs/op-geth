@@ -417,13 +417,13 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 
 	utxoHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.UtxoIndexHeightKey)
 	if err != nil {
-		log.Info("Unable to get UTXO height key from database, assuming first startup.")
+		log.Error("Unable to get UTXO height key from database, assuming first startup. %s", err)
 		firstStartup = true
 	}
 
 	txHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.TxIndexHeightKey)
 	if err != nil {
-		log.Info("Unable to get Tx height key from database, assuming first startup.")
+		log.Error("Unable to get Tx height key from database, assuming first startup. %s", err)
 		firstStartup = true
 	}
 
