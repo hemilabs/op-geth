@@ -933,6 +933,12 @@ var (
 		Category: flags.RollupCategory,
 		Value:    "", // No Prometheus by default
 	}
+	TBCInitHeight = &cli.Uint64Flag{
+		Name:     "tbc.initheight",
+		Usage:    "Height to ensure tbc is at before starting geth",
+		Category: flags.RollupCategory,
+		Value:    2585811,
+	}
 
 	// Metrics flags
 	MetricsEnabledFlag = &cli.BoolFlag{
