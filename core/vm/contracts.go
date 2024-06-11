@@ -23,6 +23,8 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
 	"math/big"
 	"reflect"
 
@@ -56,6 +58,7 @@ type hVMQueryKey [32]byte
 
 var TBCIndexer *tbc.Server
 var initReady bool
+var tbcChainParams *chaincfg.Params
 
 // TODO: Cache this on-disk at some point, will need to persist restarts to correctly provide execution traces for old txs
 var hvmQueryMap = make(map[hVMQueryKey][]byte)
@@ -208,6 +211,18 @@ func TBCBlocksAvailableToHeight(ctx context.Context, startingHeight uint64, endi
 }
 
 func SetupTBC(ctx context.Context, cfg *tbc.Config) error {
+	// TODO: Expose this btcd chain config inside TBC instead of recreating it here
+	switch cfg.Network {
+	case "mainnet":
+		tbcChainParams = &chaincfg.MainNetParams
+	case "testnet3":
+		tbcChainParams = &chaincfg.TestNet3Params
+	case "localnet":
+		tbcChainParams = &chaincfg.RegressionNetParams
+	default:
+		log.Crit("TBC configured with an unknown network!", "network", cfg.Network)
+	}
+
 	tbcNode, err := tbc.NewServer(cfg)
 	if err != nil {
 		log.Crit("Unable to create TBC node!", "err", err)
@@ -232,6 +247,7 @@ var hvmContractsToAddress = map[reflect.Type][]byte{
 	reflect.TypeOf(&btcTxConfirmations{}): {0x43},
 	reflect.TypeOf(&btcLastHeader{}):      {0x44},
 	reflect.TypeOf(&btcHeaderN{}):         {0x45},
+	reflect.TypeOf(&btcAddrToScript{}):    {0x46},
 }
 
 // PrecompiledContractsHomestead contains the default set of pre-compiled Ethereum
@@ -288,6 +304,7 @@ var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcAddrToScript{})]):    &btcAddrToScript{},
 }
 
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
@@ -309,6 +326,7 @@ var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcAddrToScript{})]):    &btcAddrToScript{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
@@ -329,6 +347,7 @@ var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcAddrToScript{})]):    &btcAddrToScript{},
 }
 
 var (
@@ -439,7 +458,7 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
-			log.Debug(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			log.Debug(fmt.Sprintf("btcBalAddr returning cached result for query of "+
 				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
 			return cachedResult, nil
 		}
@@ -458,6 +477,62 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	resp := make([]byte, 8)
 	binary.BigEndian.PutUint64(resp, bal)
 	log.Debug("btcBalAddr returning data", "returnedData", fmt.Sprintf("%x", resp))
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
+	return resp, nil
+}
+
+type btcAddrToScript struct{}
+
+func (c *btcAddrToScript) RequiredGas(input []byte) uint64 {
+	return params.BtcAddrToScript
+}
+
+func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, error) {
+	if input == nil || len(input) < 24 {
+		log.Debug("btcAddrToScript run called with nil or too small input", "input", fmt.Sprintf("%x", input))
+		return nil, nil
+	}
+	if TBCIndexer == nil {
+		log.Crit("TBCIndexer is nil!")
+	}
+
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Debug(fmt.Sprintf("btcAddrToScript returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
+	}
+
+	addressStr := string(input)
+	log.Debug("btcAddrToScript called", "address", addressStr)
+
+	addr, err := btcutil.DecodeAddress(addressStr, tbcChainParams)
+	if err != nil {
+		log.Error("In btcAddrToScript call, unable to decode address", "addressStr", addressStr)
+		return nil, err
+	}
+
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		log.Error("In btcAddrToScript call, unable to convert address to pay script", "addressStr", addressStr)
+		return nil, err
+	}
+
+	resp := make([]byte, 1)
+	resp[0] = byte(len(script) & 0xFF)
+	resp = append(resp, script[:]...)
+	log.Debug("btcAddrToScript returning data", "returnedData", fmt.Sprintf("%x", resp))
 	if isValidBlock(blockContext) {
 		hvmQueryMap[k] = resp
 	}

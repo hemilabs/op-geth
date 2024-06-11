@@ -173,6 +173,7 @@ const (
 	BtcLastHeader    uint64 = 5000
 	BtcHeaderN       uint64 = 6000
 	BtcFeesLastBlock uint64 = 10000
+	BtcAddrToScript  uint64 = 25000
 
 	// The Refund Quotient is the cap on how much of the used gas can be refunded. Before EIP-3529,
 	// up to half the consumed gas could be refunded. Redefined as 1/5th in EIP-3529
