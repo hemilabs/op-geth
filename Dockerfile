@@ -23,7 +23,7 @@ RUN addgroup --gid 65532 geth && \
         -G geth --uid 65532 geth
 
 # Pull Geth into a second stage deploy stratch container
-FROM scratch
+FROM alpine:latest
 
 COPY --from=builder /etc/group /etc/group
 COPY --from=builder /etc/passwd /etc/passwd
