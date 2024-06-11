@@ -529,8 +529,7 @@ func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, e
 		return nil, err
 	}
 
-	resp := make([]byte, 1)
-	resp[0] = byte(len(script) & 0xFF)
+	resp := make([]byte, 0)
 	resp = append(resp, script[:]...)
 	log.Debug("btcAddrToScript returning data", "returnedData", fmt.Sprintf("%x", resp))
 	if isValidBlock(blockContext) {
@@ -924,7 +923,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 
 	tx, err := TBCIndexer.TxById(context.Background(), txidMade)
 	if err != nil || tx == nil {
-		log.Error("Unable to lookup Tx conformations by txid!", "txid", fmt.Sprintf("%x", txid))
+		log.Error("Unable to lookup Tx confirmations by txid!", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
 	}
 
