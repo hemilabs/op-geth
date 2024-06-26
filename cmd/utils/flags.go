@@ -939,6 +939,12 @@ var (
 		Category: flags.RollupCategory,
 		Value:    2585811,
 	}
+	TBCSeeds = &cli.StringSliceFlag{
+		Name:     "tbc.seeds",
+		Usage:    "override tbc seeds when finding peers",
+		Category: flags.RollupCategory,
+		Value:    nil,
+	}
 
 	// Metrics flags
 	MetricsEnabledFlag = &cli.BoolFlag{

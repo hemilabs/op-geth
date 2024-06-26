@@ -37,7 +37,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/database/tbcd"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/crypto/ripemd160"
@@ -86,8 +85,8 @@ func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 	}
 
 	si := TBCIndexer.Synced(context.Background())
-	uh := si.UtxoHeight
-	th := si.TxHeight
+	uh := si.Utxo.Height
+	th := si.Tx.Height
 	log.Info("Checking for TBC progression available", "utxoIndexHeight", uh, "txIndexHeight", th)
 
 	if uh != th {
@@ -95,14 +94,11 @@ func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 			"utxoIndexHeight", uh, "txIndexHeight", th)
 	}
 
-	tipHeight, headers, err := TBCIndexer.BlockHeadersBest(ctx)
+	tipHeight, _, err := TBCIndexer.BlockHeaderBest(ctx)
 	if err != nil {
 		log.Crit("Unable to retrieve tip headers from TBC", "err", err)
 	}
 	log.Info(fmt.Sprintf("TBC download status: tipHeight=%d", tipHeight))
-	if len(headers) == 0 {
-		log.Crit("TBC has 0 headers at tip height", "tipHeight", tipHeight)
-	}
 
 	// Tip height is more than 2 blocks ahead, TBC can progress as far as timestamp is sufficiently past
 	if tipHeight > uh+TBCTipHeightLag {
@@ -129,95 +125,66 @@ func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 				return
 			}
 
-			TBCIndexer.SyncIndexersToHeight(ctx, endingHeight)
+			headers, err := TBCIndexer.BlockHeadersByHeight(ctx, endingHeight)
+			if err != nil {
+				log.Crit(fmt.Sprintf("could not get BlockHeadersByHeight %v", err))
+			}
+
+			if len(headers) != 1 {
+				log.Crit(fmt.Sprintf("received unexpected headers length %d", len(headers)))
+			}
+
+			hash := headers[0].BlockHash()
+
+			TBCIndexer.SyncIndexersToHash(ctx, &hash)
 
 			done := TBCIndexer.Synced(ctx)
-			if done.UtxoHeight != endingHeight {
-				log.Crit(fmt.Sprintf("After indexing to block %d, UtxoHeight=%d!", endingHeight, done.UtxoHeight))
+			if done.Utxo.Height != endingHeight {
+				log.Crit(fmt.Sprintf("After indexing to block %d, UtxoHeight=%d!", endingHeight, done.Utxo.Height))
 			}
-			if done.TxHeight != endingHeight {
-				log.Crit(fmt.Sprintf("After indexing to block %d, TxHeight=%d!", endingHeight, done.TxHeight))
+			if done.Tx.Height != endingHeight {
+				log.Crit(fmt.Sprintf("After indexing to block %d, TxHeight=%d!", endingHeight, done.Tx.Height))
 			}
-			log.Info("TBC progression done!", "utxoHeight", done.UtxoHeight, "txHeight", done.TxHeight)
+			log.Info("TBC progression done!", "utxoHeight", done.Utxo.Height, "txHeight", done.Tx.Height)
 		}
 	}
 }
 
-func TBCIndexTxs(ctx context.Context, tipHeight uint64) error {
-	var h uint64
-	firstSync := false
-	// Get current indexed height
-	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.TxIndexHeightKey)
+func TBCIndexTxs(ctx context.Context) error {
+	_, bhb, err := TBCIndexer.BlockHeaderBest(ctx)
 	if err != nil {
-		if errors.Is(err, database.ErrNotFound) {
-			log.Info("No Tx indexing performed yet, starting height for Tx indexing set to 0.")
-			firstSync = true
-		} else {
-			// Error was something other than key not being found
-			return fmt.Errorf("error querying for Tx index metadata %v: %w",
-				string(tbc.UtxoIndexHeightKey), err)
-		}
-		he = make([]byte, 8)
-	}
-	h = binary.BigEndian.Uint64(he)
-	log.Info(fmt.Sprintf("TBC has indexed Txs to height %d", h))
-
-	if tipHeight <= h {
-		// Already indexed past this point
-		// TODO: decide whether to always check correct index height in upstream logic or throw error here
-		return nil
+		return err
 	}
 
-	count := tipHeight - h
-	if firstSync {
-		count++ // Genesis block also needs to be indexed, leave h=0
-	} else {
-		h++ // Start indexing at current indexed height + 1
+	bestHash := bhb.BlockHash()
+
+	if err := TBCIndexer.SyncIndexersToHash(ctx, &bestHash); err != nil {
+		return err
 	}
-	log.Info(fmt.Sprintf("Indexing Txs starting at block %d, count %d", h, count))
-	err = TBCIndexer.TxIndexer(ctx, h, count)
-	if err != nil {
-		return fmt.Errorf("tx indexer error: %w", err)
+
+	if err := TBCIndexer.TxIndexer(ctx, &bestHash); err != nil {
+		return err
 	}
+
 	return nil
 }
 
-func TBCIndexUTXOs(ctx context.Context, tipHeight uint64) error {
-	var h uint64
-	firstSync := false
-	// Get current indexed height
-	he, err := TBCIndexer.DB().MetadataGet(ctx, tbc.UtxoIndexHeightKey)
+func TBCIndexUTXOs(ctx context.Context) error {
+	_, bhb, err := TBCIndexer.BlockHeaderBest(ctx)
 	if err != nil {
-		if errors.Is(err, database.ErrNotFound) {
-			log.Info("No UTXO indexing performed yet, starting height for UTXO indexing set to 0.")
-			firstSync = true
-		} else {
-			// Error was something other than key not being found
-			return fmt.Errorf("error querying for UTXO Index metadata %v: %w",
-				string(tbc.UtxoIndexHeightKey), err)
-		}
-		he = make([]byte, 8)
-	}
-	h = binary.BigEndian.Uint64(he)
-	log.Info(fmt.Sprintf("TBC has indexed UTXOs to height %d", h))
-
-	if tipHeight <= h {
-		// Already indexed past this point
-		// TODO: decide whether to always check correct index height in upstream logic or throw error here
-		return nil
+		return err
 	}
 
-	count := tipHeight - h
-	if firstSync {
-		count++ // Genesis block also needs to be indexed, leave h=0
-	} else {
-		h++ // Start indexing at current indexed height + 1
+	bestHash := bhb.BlockHash()
+
+	if err := TBCIndexer.SyncIndexersToHash(ctx, &bestHash); err != nil {
+		return err
 	}
-	log.Info(fmt.Sprintf("Indexing UTXOs starting at block %d, count %d", h, count))
-	err = TBCIndexer.UtxoIndexer(ctx, h, count)
-	if err != nil {
-		return fmt.Errorf("UTXO indexer error: %w", err)
+
+	if err := TBCIndexer.UtxoIndexer(ctx, &bestHash); err != nil {
+		return err
 	}
+
 	return nil
 }
 
@@ -630,17 +597,14 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 		}
 	}
 
-	height, headers, err := TBCIndexer.BlockHeadersBest(context.Background())
+	height, bestHeader, err := TBCIndexer.BlockHeaderBest(context.Background())
 
-	if err != nil || len(headers) == 0 {
+	if err != nil {
 		log.Warn("Unable to lookup best header!")
 		resp := make([]byte, 0)
 		hvmQueryMap[k] = resp
 		return resp, nil
 	}
-
-	// TODO: Canonical check
-	bestHeader := headers[0]
 
 	hash := bestHeader.BlockHash()
 	prevHash := bestHeader.PrevBlock

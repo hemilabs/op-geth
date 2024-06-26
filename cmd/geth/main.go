@@ -18,7 +18,6 @@
 package main
 
 import (
-	"encoding/binary"
 	"fmt"
 	"os"
 	"sort"
@@ -167,6 +166,7 @@ var (
 		utils.TBCNetwork,
 		utils.TBCPrometheusAddress,
 		utils.TBCInitHeight,
+		utils.TBCSeeds,
 		configFileFlag,
 		utils.LogDebugFlag,
 		utils.LogBacktraceAtFlag,
@@ -405,70 +405,62 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 	if ctx.IsSet(utils.TBCPrometheusAddress.Name) {
 		tbcCfg.PrometheusListenAddress = ctx.String(utils.TBCPrometheusAddress.Name)
 	}
+	if ctx.IsSet(utils.TBCSeeds.Name) {
+		tbcCfg.Seeds = ctx.StringSlice(utils.TBCSeeds.Name)
+	}
 	// TODO: convert op-geth log level integer to TBC log level string
 
 	// Initialize TBC Bitcoin indexer to answer hVM queries
-	err := vm.SetupTBC(ctx.Context, tbcCfg)
+	if err := vm.SetupTBC(ctx.Context, tbcCfg); err != nil {
+		log.Crit(fmt.Sprintf("could not SetupTBC: %v", err))
+	}
 
 	// TODO: Review, give TBC time to warm up
 	time.Sleep(5 * time.Second)
-
-	firstStartup := false
-
-	utxoHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.UtxoIndexHeightKey)
-	if err != nil {
-		log.Info("Unable to get UTXO height key from database, assuming first startup.")
-		firstStartup = true
-	}
-
-	txHeight, err := vm.TBCIndexer.DB().MetadataGet(ctx.Context, tbc.TxIndexHeightKey)
-	if err != nil {
-		log.Info("Unable to get Tx height key from database, assuming first startup.")
-		firstStartup = true
-	}
-
-	if !firstStartup {
-		log.Info("On op-geth startup, TBC index status: ", "utxoIndexHeight",
-			binary.BigEndian.Uint64(utxoHeight), "txIndexHeight", binary.BigEndian.Uint64(txHeight))
-	}
 
 	var initHeight uint64 = uint64(defaultTbcInitHeight)
 	if ctx.IsSet(utils.TBCInitHeight.Name) {
 		initHeight = ctx.Uint64(utils.TBCInitHeight.Name)
 	}
 
-	if firstStartup {
-		for {
-			log.Info(fmt.Sprintf("TBC has not downloaded the BTC chain up to %d yet."+
-				" Cannot progress Hemi chain until download is complete.", initHeight))
-			time.Sleep(5 * time.Second)
-			if vm.TBCBlocksAvailableToHeight(ctx.Context, 0, initHeight) {
-				log.Info("TBC Initial syncing is complete, continuing...")
-				break
-			} else {
-				log.Info("Geth still waiting for TBC initial sync", "initHeight", initHeight)
-			}
+	var syncInfo tbc.SyncInfo
+
+	for {
+		_, bhb, err := vm.TBCIndexer.BlockHeaderBest(ctx.Context)
+		if err != nil {
+			log.Crit(fmt.Sprintf("could not get BlockHeaderBest: %v", err))
 		}
 
-		err = vm.TBCIndexer.SyncIndexersToHeight(ctx.Context, initHeight)
+		bestHash := bhb.BlockHash()
 
-		log.Info("Finished initial indexing", "initHeight", initHeight)
+		if err := vm.TBCIndexer.SyncIndexersToHash(ctx.Context, &bestHash); err != nil {
+			log.Crit(fmt.Sprintf("could not SyncIndexersToHash: %v", err))
+		}
+
+		if err := vm.TBCIndexer.TxIndexer(ctx.Context, &bestHash); err != nil {
+			log.Crit(fmt.Sprintf("coult not TxIndexer: %v", err))
+		}
+
+		if err := vm.TBCIndexer.UtxoIndexer(ctx.Context, &bestHash); err != nil {
+			log.Crit(fmt.Sprintf("coult not UTXOIndexer: %v", err))
+		}
+
+		syncInfo = vm.TBCIndexer.Synced(ctx.Context)
+
+		log.Info(fmt.Sprintf("synced block headers to height %d, want to get to %d", syncInfo.BlockHeader.Height, initHeight))
+		if syncInfo.BlockHeader.Height >= initHeight {
+			break
+		}
+
+		select {
+		case <-time.After(500 * time.Millisecond):
+		case <-ctx.Context.Done():
+			log.Crit("context done")
+		}
 	}
 
-	si := vm.TBCIndexer.Synced(ctx.Context)
-
-	if si.UtxoHeight < initHeight {
-		log.Crit("TBC did not index UTXOs to initHeight!",
-			"utxoIndexHeight", si.UtxoHeight, "initHeight", initHeight)
-	}
-
-	if si.TxHeight < initHeight {
-		log.Crit("TBC did not index txs to initHeight!",
-			"txIndexHeight", si.TxHeight, "initHeight", initHeight)
-	}
-
-	log.Info("TBC initial sync completed", "headerHeight", si.BlockHeaderHeight,
-		"utxoIndexHeight", si.UtxoHeight, "txIndexHeight", si.TxHeight)
+	log.Info("TBC initial sync completed", "headerHeight", syncInfo.BlockHeader.Height,
+		"utxoIndexHeight", syncInfo.Utxo.Height, "txIndexHeight", syncInfo.Tx.Height)
 
 	vm.SetInitReady()
 
