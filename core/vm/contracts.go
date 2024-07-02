@@ -150,44 +150,6 @@ func ProgressTip(ctx context.Context, currentTimestamp uint32) {
 	}
 }
 
-func TBCIndexTxs(ctx context.Context) error {
-	_, bhb, err := TBCIndexer.BlockHeaderBest(ctx)
-	if err != nil {
-		return err
-	}
-
-	bestHash := bhb.BlockHash()
-
-	if err := TBCIndexer.SyncIndexersToHash(ctx, &bestHash); err != nil {
-		return err
-	}
-
-	if err := TBCIndexer.TxIndexer(ctx, &bestHash); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func TBCIndexUTXOs(ctx context.Context) error {
-	_, bhb, err := TBCIndexer.BlockHeaderBest(ctx)
-	if err != nil {
-		return err
-	}
-
-	bestHash := bhb.BlockHash()
-
-	if err := TBCIndexer.SyncIndexersToHash(ctx, &bestHash); err != nil {
-		return err
-	}
-
-	if err := TBCIndexer.UtxoIndexer(ctx, &bestHash); err != nil {
-		return err
-	}
-
-	return nil
-}
-
 func TBCBlocksAvailableToHeight(ctx context.Context, startingHeight uint64, endingHeight uint64) bool {
 	// See if endingHeight header exists
 	blockHeaders, err := TBCIndexer.DB().BlockHeadersByHeight(ctx, endingHeight)
