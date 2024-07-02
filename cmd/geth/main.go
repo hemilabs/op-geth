@@ -442,7 +442,7 @@ func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isCon
 		}
 
 		if err := vm.TBCIndexer.UtxoIndexer(ctx.Context, &bestHash); err != nil {
-			log.Crit(fmt.Sprintf("coult not UTXOIndexer: %v", err))
+			log.Crit(fmt.Sprintf("could not UTXOIndexer: %v", err))
 		}
 
 		syncInfo = vm.TBCIndexer.Synced(ctx.Context)
