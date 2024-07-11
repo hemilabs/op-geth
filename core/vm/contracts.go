@@ -71,7 +71,7 @@ func SetInitReady() {
 // TODO: Remove this logic once TBC progression is driven by BTC Attributes Deposited tx
 const TBCTipHeightLag = 2
 const TBCTipTimestampLag = 60 * 10 // 10 minutes
-const TBCMaxBlocksPerProgression = 10000
+const TBCMaxBlocksPerProgression = 1000
 
 // ProgressTip For now, this update after a new head is set processes TBC updates before construction
 // on a new block payload occurs, so that tx execution will always be the same for the new
