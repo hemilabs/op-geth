@@ -36,7 +36,7 @@ func FuzzPrecompiledContracts(f *testing.F) {
 			return
 		}
 		inWant := string(input)
-		RunPrecompiledContract(p, input, gas)
+		RunPrecompiledContract(p, input, gas, common.Hash{0}) // TODO: Review whether this works with hVM
 		if inHave := string(input); inWant != inHave {
 			t.Errorf("Precompiled %v modified input data", a)
 		}

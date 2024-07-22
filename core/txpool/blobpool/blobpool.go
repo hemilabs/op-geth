@@ -1168,6 +1168,10 @@ func (p *BlobPool) Add(txs []*types.Transaction, local bool, sync bool) []error 
 		errs = make([]error, len(txs))
 	)
 	for i, tx := range txs {
+		if tx.IsBtcAttributesDepositedTx() || tx.IsPopPayoutTx() {
+			// Should never happen with blobs, but extra protection
+			continue
+		}
 		errs[i] = p.add(tx)
 		if errs[i] == nil {
 			adds = append(adds, tx.WithoutBlobTxSidecar())

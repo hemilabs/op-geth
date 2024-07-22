@@ -20,10 +20,14 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/service/tbc"
 	"os"
 	"reflect"
 	"runtime"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -194,7 +198,106 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		cfg.Eth.OverrideVerkle = &v
 	}
 
+	if ctx.IsSet(utils.OverrideHvmEnabled.Name) {
+		v := ctx.Bool(utils.OverrideHvmEnabled.Name)
+		cfg.Eth.HvmEnabled = v
+	}
+	if ctx.IsSet(utils.OverrideHvmGenesisHeader.Name) {
+		v := ctx.String(utils.OverrideHvmGenesisHeader.Name)
+		cfg.Eth.HvmGenesisHeader = v
+	}
+	if ctx.IsSet(utils.OverrideHvmGenesisHeight.Name) {
+		v := ctx.Uint64(utils.OverrideHvmGenesisHeight.Name)
+		cfg.Eth.HvmGenesisHeight = v
+	}
+	if ctx.IsSet(utils.OverrideHvmHeaderDataDir.Name) {
+		v := ctx.String(utils.OverrideHvmHeaderDataDir.Name)
+		cfg.Eth.HvmHeaderDataDir = v
+	}
+	if ctx.IsSet(utils.OverrideHvm0.Name) {
+		v := ctx.Uint64(utils.OverrideHvm0.Name)
+		cfg.Eth.OverrideHemiHvm0 = &v
+	}
+
 	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+
+	if cfg.Eth.HvmEnabled {
+		// Before starting up any other services, make sure TBC is in correct initial state
+		fullNodeTbcCfg := tbc.NewDefaultConfig()
+
+		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
+		fullNodeTbcCfg.Network = "testnet3"
+
+		if ctx.IsSet(utils.TBCListenAddress.Name) {
+			fullNodeTbcCfg.ListenAddress = ctx.String(utils.TBCListenAddress.Name)
+		}
+		if ctx.IsSet(utils.TBCMaxCachedTxs.Name) {
+			fullNodeTbcCfg.MaxCachedTxs = ctx.Int(utils.TBCMaxCachedTxs.Name)
+		}
+		if ctx.IsSet(utils.TBCLevelDBHome.Name) {
+			fullNodeTbcCfg.LevelDBHome = ctx.String(utils.TBCLevelDBHome.Name)
+		}
+		if ctx.IsSet(utils.TBCBlockSanity.Name) {
+			fullNodeTbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
+		}
+		if ctx.IsSet(utils.TBCNetwork.Name) {
+			fullNodeTbcCfg.Network = ctx.String(utils.TBCNetwork.Name)
+		}
+		if ctx.IsSet(utils.TBCPrometheusAddress.Name) {
+			fullNodeTbcCfg.PrometheusListenAddress = ctx.String(utils.TBCPrometheusAddress.Name)
+		}
+		if ctx.IsSet(utils.TBCSeeds.Name) {
+			fullNodeTbcCfg.Seeds = ctx.StringSlice(utils.TBCSeeds.Name)
+		}
+		// TODO: convert op-geth log level integer to TBC log level string
+
+		// Initialize TBC Bitcoin indexer to answer hVM queries
+		err := vm.SetupTBCFullNode(ctx.Context, fullNodeTbcCfg)
+		if err != nil {
+			log.Crit("Unable to setup TBC Full Node", "err", err)
+		}
+
+		// TODO: Review TBC Full-Node initial sync logic, maybe do a blocking call in contracts.go?
+		time.Sleep(5 * time.Second)
+		genesisHeader, err := bdf.Hex2Header(cfg.Eth.HvmGenesisHeader)
+		genesisHash := genesisHeader.BlockHash()
+		genesisHeight := cfg.Eth.HvmGenesisHeight
+		log.Info(fmt.Sprintf("TBC Full Node started, will sync to Bitcoin block %x configured as the start "+
+			"of hVM consensus tracking on this chain.", genesisHash[:]))
+		var syncInfo tbc.SyncInfo
+		for {
+			bh, bhb, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
+			if err != nil {
+				log.Crit(fmt.Sprintf("could not get BlockHeaderBest: %v", err))
+			}
+
+			targetHash := bhb.BlockHash()
+			if bh > genesisHeight {
+				targetHash = genesisHash
+			}
+
+			if err := vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &targetHash); err != nil {
+				log.Crit(fmt.Sprintf("could not sync TBC full node indexers to hash %x: %v", targetHash, err))
+			}
+
+			syncInfo = vm.TBCFullNode.Synced(ctx.Context)
+
+			log.Info(fmt.Sprintf("synced block headers to height %d, want to get to %d",
+				syncInfo.BlockHeader.Height, genesisHeight))
+			if syncInfo.BlockHeader.Height >= genesisHeight {
+				break
+			}
+
+			select {
+			case <-time.After(500 * time.Millisecond):
+			case <-ctx.Context.Done():
+				log.Crit("context done")
+			}
+
+			log.Info("TBC initial sync completed", "headerHeight", syncInfo.BlockHeader.Height,
+				"utxoIndexHeight", syncInfo.Utxo.Height, "txIndexHeight", syncInfo.Tx.Height)
+		}
+	}
 
 	// Create gauge with geth system and build information
 	if eth != nil { // The 'eth' backend may be nil in light mode

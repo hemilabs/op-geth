@@ -321,6 +321,11 @@ func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 	splits := make([]int, len(txs))
 
 	for i, tx := range txs {
+		if tx.IsBtcAttributesDepositedTx() || tx.IsPopPayoutTx() {
+			// Should never happen, but extra protection
+			continue
+		}
+
 		// Mark this transaction belonging to no-subpool
 		splits[i] = -1
 

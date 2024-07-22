@@ -25,9 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hemilabs/heminetwork/service/tbc"
-
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/keystore"
 	"github.com/ethereum/go-ethereum/cmd/utils"
@@ -52,8 +49,7 @@ import (
 )
 
 const (
-	clientIdentifier     = "geth" // Client identifier to advertise over the network
-	defaultTbcInitHeight = 2585811
+	clientIdentifier = "geth" // Client identifier to advertise over the network
 )
 
 var (
@@ -165,7 +161,11 @@ var (
 		utils.TBCBlockSanity,
 		utils.TBCNetwork,
 		utils.TBCPrometheusAddress,
-		utils.TBCInitHeight,
+		utils.OverrideHvmEnabled,
+		utils.OverrideHvmGenesisHeader,
+		utils.OverrideHvmHeaderDataDir,
+		utils.OverrideHvmGenesisHeight,
+		utils.OverrideHvm0,
 		utils.TBCSeeds,
 		configFileFlag,
 		utils.LogDebugFlag,
@@ -369,6 +369,7 @@ func geth(ctx *cli.Context) error {
 	}
 
 	prepare(ctx)
+	// TODO MAX: Init 0
 	stack, backend := makeFullNode(ctx)
 	defer stack.Close()
 
@@ -381,88 +382,7 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
-	// Before starting up any other services, make sure TBC is in correct initial state
-	tbcCfg := tbc.NewDefaultConfig()
-
-	// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
-	tbcCfg.Network = "testnet3"
-
-	if ctx.IsSet(utils.TBCListenAddress.Name) {
-		tbcCfg.ListenAddress = ctx.String(utils.TBCListenAddress.Name)
-	}
-	if ctx.IsSet(utils.TBCMaxCachedTxs.Name) {
-		tbcCfg.MaxCachedTxs = ctx.Int(utils.TBCMaxCachedTxs.Name)
-	}
-	if ctx.IsSet(utils.TBCLevelDBHome.Name) {
-		tbcCfg.LevelDBHome = ctx.String(utils.TBCLevelDBHome.Name)
-	}
-	if ctx.IsSet(utils.TBCBlockSanity.Name) {
-		tbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
-	}
-	if ctx.IsSet(utils.TBCNetwork.Name) {
-		tbcCfg.Network = ctx.String(utils.TBCNetwork.Name)
-	}
-	if ctx.IsSet(utils.TBCPrometheusAddress.Name) {
-		tbcCfg.PrometheusListenAddress = ctx.String(utils.TBCPrometheusAddress.Name)
-	}
-	if ctx.IsSet(utils.TBCSeeds.Name) {
-		tbcCfg.Seeds = ctx.StringSlice(utils.TBCSeeds.Name)
-	}
-	// TODO: convert op-geth log level integer to TBC log level string
-
-	// Initialize TBC Bitcoin indexer to answer hVM queries
-	if err := vm.SetupTBC(ctx.Context, tbcCfg); err != nil {
-		log.Crit(fmt.Sprintf("could not SetupTBC: %v", err))
-	}
-
-	// TODO: Review, give TBC time to warm up
-	time.Sleep(5 * time.Second)
-
-	var initHeight uint64 = uint64(defaultTbcInitHeight)
-	if ctx.IsSet(utils.TBCInitHeight.Name) {
-		initHeight = ctx.Uint64(utils.TBCInitHeight.Name)
-	}
-
-	var syncInfo tbc.SyncInfo
-
-	for {
-		_, bhb, err := vm.TBCIndexer.BlockHeaderBest(ctx.Context)
-		if err != nil {
-			log.Crit(fmt.Sprintf("could not get BlockHeaderBest: %v", err))
-		}
-
-		bestHash := bhb.BlockHash()
-
-		if err := vm.TBCIndexer.SyncIndexersToHash(ctx.Context, &bestHash); err != nil {
-			log.Crit(fmt.Sprintf("could not SyncIndexersToHash: %v", err))
-		}
-
-		if err := vm.TBCIndexer.TxIndexer(ctx.Context, &bestHash); err != nil {
-			log.Crit(fmt.Sprintf("could not TxIndexer: %v", err))
-		}
-
-		if err := vm.TBCIndexer.UtxoIndexer(ctx.Context, &bestHash); err != nil {
-			log.Crit(fmt.Sprintf("could not UTXOIndexer: %v", err))
-		}
-
-		syncInfo = vm.TBCIndexer.Synced(ctx.Context)
-
-		log.Info(fmt.Sprintf("synced block headers to height %d, want to get to %d", syncInfo.BlockHeader.Height, initHeight))
-		if syncInfo.BlockHeader.Height >= initHeight {
-			break
-		}
-
-		select {
-		case <-time.After(500 * time.Millisecond):
-		case <-ctx.Context.Done():
-			log.Crit("context done")
-		}
-	}
-
-	log.Info("TBC initial sync completed", "headerHeight", syncInfo.BlockHeader.Height,
-		"utxoIndexHeight", syncInfo.Utxo.Height, "txIndexHeight", syncInfo.Tx.Height)
-
-	vm.SetInitReady()
+	// TODO MAX: TBC init taken from here
 
 	debug.Memsize.Add("node", stack)
 

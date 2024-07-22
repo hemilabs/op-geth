@@ -260,6 +260,7 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 		// enough to run. The empty payload can at least make sure there is something
 		// to deliver for not missing slot.
 		// In OP-Stack, the "empty" block is constructed from provided txs only, i.e. no tx-pool usage.
+		// For hVM, the "empty" block will not include any BTC Attributes Deposited transaction either.
 		emptyParams := &generateParams{
 			timestamp:   args.Timestamp,
 			forceTime:   true,

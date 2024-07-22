@@ -215,6 +215,8 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 		inner = new(DepositTx)
 	case PopPayoutTxType:
 		inner = new(PopPayoutTx)
+	case BtcAttributesDepositedTxType:
+		inner = new(BtcAttributesDepositedTx)
 	default:
 		return nil, ErrTxTypeNotSupported
 	}
@@ -359,6 +361,11 @@ func (tx *Transaction) IsDepositTx() bool {
 // IsPopPayoutTx returns true if the transaction is a pop payout tx type.
 func (tx *Transaction) IsPopPayoutTx() bool {
 	return tx.Type() == PopPayoutTxType
+}
+
+// IsBtcAttributesDepositedTx returns true if the transaction is a Bitcoin Attributes Deposited tx type.
+func (tx *Transaction) IsBtcAttributesDepositedTx() bool {
+	return tx.Type() == BtcAttributesDepositedTxType
 }
 
 // IsSystemTx returns true for deposits that are system transactions. These transactions
@@ -609,6 +616,33 @@ type Transactions []*Transaction
 
 // Len returns the length of s.
 func (s Transactions) Len() int { return len(s) }
+
+func (s Transactions) ExtractBtcAttrData() (*BtcAttributesDepositData, error) {
+	var extracted *BtcAttributesDepositData
+	for _, tx := range s {
+		// BtcAttributesDeposited tx expected to always be at index 1 (no PoP tx present)
+		// or 2 (PoP tx present) if it exists at all, but allow it anywhere here to be
+		//compatible even if transaction ordering changes.
+		if tx.IsBtcAttributesDepositedTx() {
+			if extracted != nil {
+				return nil, fmt.Errorf("transactions contain more than one Bitcoin Attributes Deposited transaction")
+			}
+
+			data := tx.Data()
+
+			var btcDepParsed BtcAttributesDepositData
+			err := btcDepParsed.UnmarshalBinary(data)
+
+			if err != nil {
+				return nil, err
+			}
+
+			extracted = &btcDepParsed
+		}
+	}
+
+	return extracted, nil
+}
 
 // EncodeIndex encodes the i'th transaction to w. Note that this does not check for errors
 // because we assume that *Transaction will only ever contain valid txs that were either

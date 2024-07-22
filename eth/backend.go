@@ -21,6 +21,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/service/tbc"
 	"math/big"
 	"runtime"
 	"sync"
@@ -229,8 +231,34 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	if config.OverrideOptimismInterop != nil {
 		overrides.OverrideOptimismInterop = config.OverrideOptimismInterop
 	}
+	if config.OverrideHemiHvm0 != nil {
+		overrides.OverrideHemiHvm0 = config.OverrideHemiHvm0
+		log.Info("Creating new blockchain with hVM0 override set to: %d", overrides.OverrideHemiHvm0)
+	} else {
+		log.Info("Creating new blockchain, hVM0 override not set.")
+	}
+
 	overrides.ApplySuperchainUpgrades = config.ApplySuperchainUpgrades
 	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, config.Genesis, &overrides, eth.engine, vmConfig, eth.shouldPreserve, &config.TransactionHistory)
+
+	if config.HvmEnabled {
+		tbcCfg := tbc.NewDefaultConfig()
+
+		genesisHeader, err := bdf.Hex2Header(config.HvmGenesisHeader)
+		if err != nil {
+			log.Crit("Unable to deserialize hVM Genesis Header", "header", config.HvmGenesisHeader, "err", err)
+		}
+
+		tbcCfg.ExternalHeaderMode = true
+		tbcCfg.EffectiveGenesisBlock = genesisHeader
+		tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
+		tbcCfg.LevelDBHome = config.HvmHeaderDataDir
+
+		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
+		tbcCfg.Network = "testnet3"
+
+		eth.blockchain.SetupHvmHeaderNode(tbcCfg)
+	}
 	if err != nil {
 		return nil, err
 	}

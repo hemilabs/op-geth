@@ -55,6 +55,13 @@ func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	default:
 		precompiles = PrecompiledContractsHomestead
 	}
+
+	if evm.chainRules.IsHvm0 {
+		for address, contract := range PrecompiledContractsHvm0 {
+			precompiles[address] = contract
+		}
+	}
+
 	p, ok := precompiles[addr]
 	// Restrict overrides to known precompiles
 	if ok && evm.chainConfig.IsOptimism() && evm.Config.OptimismPrecompileOverrides != nil {

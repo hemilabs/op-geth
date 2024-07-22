@@ -23,6 +23,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/hemilabs/heminetwork/database"
 	"math/big"
 	"reflect"
 
@@ -37,7 +41,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/hemilabs/heminetwork/database/tbcd"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/exp/slices"
@@ -54,165 +57,32 @@ type PrecompiledContract interface {
 
 type hVMQueryKey [32]byte
 
-var TBCIndexer *tbc.Server
-var initReady bool
+var TBCFullNode *tbc.Server
+var tbcChainParams *chaincfg.Params
 
 // TODO: Cache this on-disk at some point, will need to persist restarts to correctly provide execution traces for old txs
 var hvmQueryMap = make(map[hVMQueryKey][]byte)
 
 var HvmNullBlockHash = make([]byte, 32)
 
-// SetInitReady TODO: Review, refactor initialization to its own method that accepts initial chain BTC block configuration
-func SetInitReady() {
-	initReady = true
+func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
+	syncInfo := TBCFullNode.Synced(context.Background())
+	return &syncInfo
 }
 
-// TODO: Remove this logic once TBC progression is driven by BTC Attributes Deposited tx
-const TBCTipHeightLag = 2
-const TBCTipTimestampLag = 60 * 10 // 10 minutes
-const TBCMaxBlocksPerProgression = 6
-
-// ProgressTip For now, this update after a new head is set processes TBC updates before construction
-// on a new block payload occurs, so that tx execution will always be the same for the new
-// block being built. Halts if any TBC issues occur for debugging.
-func ProgressTip(ctx context.Context, currentTimestamp uint32) {
-	log.Info("Progressing TBC tip...", "currentTimestamp", currentTimestamp)
-	if TBCIndexer == nil {
-		log.Warn("TBCIndexer is nil, no-op")
-		return
-	} else {
-		log.Info("TBCIndexer is not nil")
+// SetupTBCFullNode Sets up the TBC full node that will be available for precompiles
+func SetupTBCFullNode(ctx context.Context, cfg *tbc.Config) error {
+	switch cfg.Network {
+	case "mainnet":
+		tbcChainParams = &chaincfg.MainNetParams
+	case "testnet3":
+		tbcChainParams = &chaincfg.TestNet3Params
+	case "localnet":
+		tbcChainParams = &chaincfg.RegressionNetParams
+	default:
+		log.Crit("TBC configured with an unknown network!", "network", cfg.Network)
 	}
 
-	si := TBCIndexer.Synced(context.Background())
-	uh := si.Utxo.Height
-	th := si.Tx.Height
-	log.Info("Checking for TBC progression available", "utxoIndexHeight", uh, "txIndexHeight", th)
-
-	if uh != th {
-		log.Crit("TBC is in an unexpected state, utxoIndexHeight != txIndexHeight!",
-			"utxoIndexHeight", uh, "txIndexHeight", th)
-	}
-
-	tipHeight, _, err := TBCIndexer.BlockHeaderBest(ctx)
-	if err != nil {
-		log.Crit("Unable to retrieve tip headers from TBC", "err", err)
-	}
-	log.Info(fmt.Sprintf("TBC download status: tipHeight=%d", tipHeight))
-
-	// Tip height is more than 2 blocks ahead, TBC can progress as far as timestamp is sufficiently past
-	if tipHeight > uh+TBCTipHeightLag {
-		endingHeight := uh
-		for height := uh + 1; height <= tipHeight-TBCTipHeightLag && height <= uh+TBCMaxBlocksPerProgression; height++ {
-			headersAtHeight, err := TBCIndexer.BlockHeadersByHeight(ctx, height)
-			if err != nil {
-				log.Crit("Unable to retrieve headers from TBC", "height", height)
-			}
-			for _, h := range headersAtHeight {
-				if uint32(h.Timestamp.Unix())+TBCTipTimestampLag > currentTimestamp {
-					break
-				}
-			}
-			endingHeight = height
-		}
-		if endingHeight > uh {
-			startingHeight := uh + 1
-			// TBC has block headers to progress, check that the actual blocks are all available
-			hasAllBlocks := TBCBlocksAvailableToHeight(ctx, startingHeight, endingHeight)
-			if !hasAllBlocks {
-				log.Info("TBC does not have all blocks, will progress chain later", "start",
-					startingHeight, "end", endingHeight)
-				return
-			}
-
-			headers, err := TBCIndexer.BlockHeadersByHeight(ctx, endingHeight)
-			if err != nil {
-				log.Crit(fmt.Sprintf("could not get BlockHeadersByHeight %v", err))
-			}
-
-			if len(headers) != 1 {
-				log.Crit(fmt.Sprintf("received unexpected headers length %d", len(headers)))
-			}
-
-			hash := headers[0].BlockHash()
-
-			TBCIndexer.SyncIndexersToHash(ctx, &hash)
-
-			done := TBCIndexer.Synced(ctx)
-			if done.Utxo.Height != endingHeight {
-				log.Crit(fmt.Sprintf("After indexing to block %d, UtxoHeight=%d!", endingHeight, done.Utxo.Height))
-			}
-			if done.Tx.Height != endingHeight {
-				log.Crit(fmt.Sprintf("After indexing to block %d, TxHeight=%d!", endingHeight, done.Tx.Height))
-			}
-			log.Info("TBC progression done!", "utxoHeight", done.Utxo.Height, "txHeight", done.Tx.Height)
-		}
-	}
-}
-
-func TBCBlocksAvailableToHeight(ctx context.Context, startingHeight uint64, endingHeight uint64) bool {
-	// See if endingHeight header exists
-	blockHeaders, err := TBCIndexer.DB().BlockHeadersByHeight(ctx, endingHeight)
-	if err != nil {
-		log.Error("Unable to get block headers from TBC at ending height", "endingHeight", endingHeight)
-		return false
-	}
-
-	if len(blockHeaders) == 0 {
-		// endingHeight header does not exist
-		log.Info("TBC does not have header for ending block", "endingHeight", endingHeight)
-		return false
-	}
-
-	bestHash := blockHeaders[0].Hash
-
-	// See if endingHeight block exists
-	block, err := TBCIndexer.DB().BlockByHash(ctx, bestHash)
-	if err != nil {
-		log.Info("TBC not synced, no block downloaded for final header", "tip", blockHeaders[0].Height)
-		return false
-	}
-
-	if block == nil {
-		log.Info("Block at endingHeight is nil", "endingHeight", endingHeight)
-		return false
-	}
-
-	// Tip has been downloaded, so do expensive check of all blocks up to tip
-	log.Info("TBC has endingHeight block synced, checking blocks in-between...")
-	for htc := startingHeight; htc < endingHeight; htc++ {
-		if htc%10000 == 0 {
-			log.Debug(fmt.Sprintf("Checking for contiguous blocks between %d and %d,"+
-				" current block check for %d...",
-				startingHeight, endingHeight, htc))
-		}
-
-		blockHeadersCheck, err := TBCIndexer.DB().BlockHeadersByHeight(ctx, htc)
-		if err != nil {
-			log.Error("Unable to get best block headers from TBC at intermediate height", "heightToCheck", htc)
-			return false
-		}
-
-		if len(blockHeadersCheck) == 0 {
-			log.Info("TBC does not have header for intermediate block", "heightToCheck", htc)
-		}
-
-		// TODO: Check that block is part of canonical chain
-		intermediateHash := blockHeadersCheck[0].Hash
-
-		intermediateBlock, err := TBCIndexer.DB().BlockByHash(ctx, intermediateHash)
-		if err != nil || intermediateBlock == nil {
-			log.Info("TBC not synced, no block downloaded for intermediate header", "intermediateHash", intermediateHash)
-			return false
-		}
-		// If execution got here, then the block and its header are downloaded, continue looking
-		log.Trace("Block found, continuing contiguous blocks search", "heightToCheck", htc)
-	}
-	log.Info("TBC synced, has all blocks downloaded from starting height to ending height", "startingHeight", startingHeight, "endingHeight", endingHeight, "tipHash", bestHash)
-	return true
-}
-
-func SetupTBC(ctx context.Context, cfg *tbc.Config) error {
 	tbcNode, err := tbc.NewServer(cfg)
 	if err != nil {
 		log.Crit("Unable to create TBC node!", "err", err)
@@ -226,17 +96,508 @@ func SetupTBC(ctx context.Context, cfg *tbc.Config) error {
 		}
 	}()
 
-	TBCIndexer = tbcNode
+	TBCFullNode = tbcNode
+
 	return nil
 }
 
-var hvmContractsToAddress = map[reflect.Type][]byte{
-	reflect.TypeOf(&btcBalAddr{}):         {0x40},
-	reflect.TypeOf(&btcUtxosAddrList{}):   {0x41},
-	reflect.TypeOf(&btcTxByTxid{}):        {0x42},
-	reflect.TypeOf(&btcTxConfirmations{}): {0x43},
-	reflect.TypeOf(&btcLastHeader{}):      {0x44},
-	reflect.TypeOf(&btcHeaderN{}):         {0x45},
+// Very expensive but only needed for recovery.
+// If needed for other things in the future, update TBC to efficiently handle this query.
+func getCanonicalHeaderAtHeight(height uint64) *wire.BlockHeader {
+	height, header, err := TBCFullNode.BlockHeaderBest(context.Background())
+	if err != nil {
+		// TODO: Recovery?
+		log.Crit("Unable to get best block header from TBC Full Node!")
+	}
+
+	cursor := header
+	cursorHeight := height
+	// Walk back best tip until we get to the destination height
+	for cursorHeight > height {
+		prevHeader, prevHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &cursor.PrevBlock)
+		if err != nil {
+			// TODO: Recovery?
+			log.Crit("Unable to get block %x from TBC Full Node!", cursor.PrevBlock[:])
+		}
+		cursor = prevHeader
+		cursorHeight = prevHeight // pedantic
+	}
+
+	return cursor
+}
+
+// TODO: Refactor this, IsEqual was creating issues
+func hashEquals(a chainhash.Hash, b chainhash.Hash) bool {
+	return bytes.Equal(a[:], b[:])
+}
+
+// Walks backwards from both headers to find a common ancestor.
+// Returns common ancestor header, a boolean for whether there was a fork or one of the passed
+// in headers was an ancestor of the other
+// TODO: Refactor this, also could return height to make some upstream uses easier
+func findCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader, bool, error) {
+	if a.Hash.IsEqual(&b.Hash) {
+		header, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), &a.Hash)
+		if err != nil {
+			return nil, false, err
+		}
+		return header, false, nil // They are same, no fork
+	}
+
+	lowerHeight := a.Height
+	higherHash := b.Hash
+	lowerHash := a.Hash
+	if b.Height < lowerHeight {
+		lowerHeight = b.Height
+		higherHash = a.Hash
+		lowerHash = b.Hash
+	}
+
+	highCursorHeader, highCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &higherHash)
+	if err != nil {
+		return nil, false, err
+	}
+
+	lowCursorHeader, lowCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &lowerHash)
+	if err != nil {
+		return nil, false, err
+	}
+
+	// TODO: Redundant heights
+	for highCursorHeight > lowCursorHeight {
+		highCursorHeader, highCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), &highCursorHeader.PrevBlock)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+
+	// If the cursors are now equal then one was the ancestor
+	if hashEquals(lowCursorHeader.BlockHash(), highCursorHeader.BlockHash()) {
+		return lowCursorHeader, false, nil // No fork
+	}
+
+	// Cursors are at the same height but on different forks, walk both of them back until they match
+	// TODO can just do this for loop and ignore the if condition above
+	for !hashEquals(lowCursorHeader.BlockHash(), highCursorHeader.BlockHash()) {
+		lowCursorHeader, lowCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), &lowCursorHeader.PrevBlock)
+		if err != nil {
+			return nil, false, err
+		}
+		highCursorHeader, highCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), &highCursorHeader.PrevBlock)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+
+	// Now the cursors match
+	return lowCursorHeader, true, nil // There was a fork
+}
+
+// Moves the Tx indexer to the specified header. This does not
+// assume that the move to header is straight - it will determine
+// whether a fork is required and handle it appropriately.
+// This should only be used when recovering from a desync between
+// the indexers, otherwise always use moveIndexersToHeight
+// TODO: Dedup with moveTxIndexerToUtxo & TBCIndexToHeader logic somehow?
+func moveTxIndexerToHeader(header *wire.BlockHeader) error {
+	tIndexInfo, err := TBCFullNode.TxIndexHash(context.Background())
+	headerHash := header.BlockHash()
+	if err != nil {
+		// Critical error
+		log.Crit(fmt.Sprintf("Unable to move TBC full node Tx indexer to block %x; unable to get TxIndexHash",
+			headerHash[:]), "err", err)
+	}
+
+	if hashEquals(tIndexInfo.Hash, header.BlockHash()) {
+		// already done
+		return nil
+	}
+
+	targetHash := header.BlockHash()
+	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &targetHash)
+	if err != nil {
+		// Passed in header is not available
+		return err
+	}
+
+	targetHH := &tbc.HashHeight{
+		Height: targetHeight,
+		Hash:   targetHash,
+	}
+
+	ancestor, isFork, err := findCommonAncestor(tIndexInfo, targetHH)
+	if err != nil {
+		// Critical error
+		log.Crit(fmt.Sprintf("Unable to find common ancestor between tx indexer tip %x and best header %x",
+			tIndexInfo.Hash[:], targetHH.Hash[:]))
+	}
+	ancestorHash := ancestor.BlockHash()
+
+	if !isFork {
+		// Tx indexer only needs to move in one direction, and TxIndexer will figure out which
+		err = TBCFullNode.TxIndexer(context.Background(), &targetHH.Hash)
+		if err != nil {
+			log.Error("Unable to move Tx indexer from current hash %x to requested hash %x",
+				tIndexInfo.Hash[:], targetHH.Hash[:])
+			return err
+		}
+	} else {
+		// Tx indexer needs to first unwind to the ancestor, and then wind to the requested target
+		err = TBCFullNode.TxIndexer(context.Background(), &ancestorHash)
+		if err != nil {
+			log.Error("While indexing over a fork, unable to unwind Tx indexer from current hash "+
+				"%x to requested hash %x", tIndexInfo.Hash[:], ancestorHash[:])
+			return err
+		}
+		// We unwound to common ancestor, now need to wind forward
+		err = TBCFullNode.TxIndexer(context.Background(), &targetHH.Hash)
+		if err != nil {
+			log.Error("While indexing over a fork, unable to wind Tx indexer from current hash "+
+				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
+		}
+	}
+
+	// Successful
+	return nil
+}
+
+// Moves the UTXO indexer to the specified header. This does not
+// assume that the move to header is straight - it will determine
+// whether a fork is required and handle it appropriately.
+// This should only be used when recovering from a desync between
+// the indexers, otherwise always use moveIndexersToHeight
+// TODO: Dedup with moveTxIndexerToHeader / TBCIndexToHeader logic somehow?
+func moveUtxoIndexerToHeader(header *wire.BlockHeader) error {
+	uIndexInfo, err := TBCFullNode.UtxoIndexHash(context.Background())
+	headerHash := header.BlockHash()
+	if err != nil {
+		// Critical error
+		log.Crit(fmt.Sprintf("Unable to move TBC full node UTXO indexer to block %x; unable to get UtxoIndexHash",
+			headerHash[:]), "err", err)
+	}
+
+	if hashEquals(uIndexInfo.Hash, header.BlockHash()) {
+		// already done
+		return nil
+	}
+
+	targetHash := header.BlockHash()
+	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &targetHash)
+	if err != nil {
+		// Passed in header is not available
+		return err
+	}
+
+	targetHH := &tbc.HashHeight{
+		Height: targetHeight,
+		Hash:   targetHash,
+	}
+
+	ancestor, isFork, err := findCommonAncestor(uIndexInfo, targetHH)
+	if err != nil {
+		// Critical error
+		log.Crit(fmt.Sprintf("Unable to find common ancestor between utxo indexer tip %x and best header %x",
+			uIndexInfo.Hash[:], targetHH.Hash[:]))
+	}
+	ancestorHash := ancestor.BlockHash()
+
+	if !isFork {
+		// UTXO indexer only needs to move in one direction, and UtxoIndexer will figure out which
+		err = TBCFullNode.UtxoIndexer(context.Background(), &targetHH.Hash)
+		if err != nil {
+			log.Error("Unable to move UTXO indexer from current hash %x to requested hash %x",
+				uIndexInfo.Hash[:], targetHH.Hash[:])
+			return err
+		}
+	} else {
+		// UTXO indexer needs to first unwind to the ancestor, and then wind to the requested target
+		err = TBCFullNode.UtxoIndexer(context.Background(), &ancestorHash)
+		if err != nil {
+			log.Error("While indexing over a fork, unable to unwind UTXO indexer from current hash "+
+				"%x to requested hash %x", uIndexInfo.Hash[:], ancestorHash[:])
+			return err
+		}
+		// We unwound to common ancestor, now need to wind forward
+		err = TBCFullNode.UtxoIndexer(context.Background(), &targetHH.Hash)
+		if err != nil {
+			log.Error("While indexing over a fork, unable to wind UTXO indexer from current hash "+
+				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
+		}
+	}
+
+	// Successful
+	return nil
+}
+
+// fixMismatchedIndexesIfRequired checks if the UTXO and TX indexers do not match,
+// and if they don't walks both of them back to the highest common ancestor.
+// This should only ever be required if something like an unclean
+// shutdown resulted in TBC's indexers being off.
+func fixMismatchedIndexesIfRequired() error {
+	uIndexInfo, err := TBCFullNode.UtxoIndexHash(context.Background())
+	if err != nil {
+		log.Crit("Unable to get UtxoIndexHash", "err", err)
+	}
+	tIndexInfo, err := TBCFullNode.TxIndexHash(context.Background())
+	if err != nil {
+		log.Crit("Unable to get TxIndexHash", "err", err)
+	}
+
+	if !hashEquals(uIndexInfo.Hash, tIndexInfo.Hash) {
+		// Find the common ancestor
+		ancestor, _, err := findCommonAncestor(uIndexInfo, tIndexInfo)
+		if err != nil {
+			log.Error(fmt.Sprintf("Unable to find common ancestor between Utxo and Tx indexers! "+
+				"Utxo indexed to: %x, Tx indexed to: %x", uIndexInfo.Hash[:], tIndexInfo.Hash[:]))
+		}
+
+		ancestorHash := ancestor.BlockHash()
+		log.Info(fmt.Sprintf("Fixing mismatched UTXO and Tx indexes, UTXO indexer @ %x, "+
+			"Tx indexer @ %x, common ancestor @ %x", uIndexInfo.Hash[:], tIndexInfo.Hash[:], ancestorHash[:]))
+
+		ancestorHeader, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), &ancestorHash)
+
+		// Rewind both to common ancestor
+		err = moveUtxoIndexerToHeader(ancestorHeader)
+		if err != nil {
+			log.Crit(fmt.Sprintf("Unable to repair indexer desync by moving UTXO indexer "+
+				"from %x to common ancestor %x", uIndexInfo.Hash[:], ancestorHash[:]))
+		}
+		err = moveTxIndexerToHeader(ancestorHeader)
+		if err != nil {
+			log.Crit(fmt.Sprintf("Unable to repair indexer desync by moving Tx indexer "+
+				"from %x to common ancestor %x", tIndexInfo.Hash[:], ancestorHash[:]))
+		}
+	}
+
+	return nil
+}
+
+// TBCIndexToHeader is a convenience pass-through to TBCIndexToHashHeight with
+// a Bitcoin header provided.
+func TBCIndexToHeader(header *wire.BlockHeader) error {
+	targetHash := header.BlockHash()
+	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &targetHash)
+	if err != nil {
+		// Passed in header is not available
+		return err
+	}
+
+	hh := tbc.HashHeight{
+		Hash:   header.BlockHash(),
+		Height: targetHeight,
+	}
+
+	return TBCIndexToHashHeight(&hh)
+}
+
+// TBCRestoreIndexersToPoint attempts to move the TBC Full Node's UTXO
+// and Tx indexers back to their respective points from a prior SyncInfo.
+// Under normal operation the UTXO and Tx index tips should always be
+// the same, but this method will restore UTXO and Tx indexers to different
+// states if specified by the passed-in Syncinfo.
+func TBCRestoreIndexersToPoint(point *tbc.SyncInfo) error {
+	utxoPoint := point.Utxo
+	utxoHeader, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), &utxoPoint.Hash)
+	if err != nil {
+		return err
+	}
+	err = moveUtxoIndexerToHeader(utxoHeader)
+	if err != nil {
+		return err
+	}
+
+	txPoint := point.Tx
+	txHeader, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), &txPoint.Hash)
+	if err != nil {
+		return err
+	}
+	err = moveTxIndexerToHeader(txHeader)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// TBCIndexToHashHeight first checks to make sure the UTXO and Tx indexers
+// are the same (and if not, moves both to the lowest indexed height of either)
+// and then moves the indexer to the specified target hash and height,
+// unwinding and winding if the move from current indexer state to new
+// target state involves a reorganization.
+func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
+	// Check for indexer desync and attempt to fix.
+	err := fixMismatchedIndexesIfRequired()
+	if err != nil {
+		log.Crit(fmt.Sprintf("Unable to fix mismatched indexes"))
+	}
+
+	targetHash := targetHH.Hash
+
+	// Already checked for indexer desync so if we got here UTXO and Tx indexes are the same
+	tIndexInfo, err := TBCFullNode.TxIndexHash(context.Background())
+	if err != nil {
+		// Critical error
+		log.Crit("Unable to move TBC full node indexers to block %x; unable to get TxIndexHash", "err", err)
+	}
+
+	if hashEquals(tIndexInfo.Hash, targetHash) {
+		// already done
+		return nil
+	}
+
+	ancestor, isFork, err := findCommonAncestor(tIndexInfo, targetHH)
+	if err != nil {
+		// Critical error
+		log.Crit(fmt.Sprintf("Unable to find common ancestor between indexers tip %x and best header %x",
+			tIndexInfo.Hash[:], targetHH.Hash[:]))
+	}
+	ancestorHash := ancestor.BlockHash()
+
+	if !isFork {
+		// Indexers only needs to move in one direction, and the indexer will figure out which
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), &targetHH.Hash)
+		if err != nil {
+			log.Error("Unable to move indexers from current hash %x to requested hash %x",
+				tIndexInfo.Hash[:], targetHH.Hash[:])
+			return err
+		}
+	} else {
+		// Indexers need to first unwind to the ancestor, and then wind to the requested target
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), &ancestorHash)
+		if err != nil {
+			log.Error("While indexing over a fork, unable to unwind indexers from current hash "+
+				"%x to requested hash %x", tIndexInfo.Hash[:], ancestorHash[:])
+			return err
+		}
+		// We unwound to common ancestor, now need to wind forward
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), &targetHH.Hash)
+		if err != nil {
+			log.Error("While indexing over a fork, unable to wind indexers from current hash "+
+				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
+		}
+	}
+
+	// Successful
+	return nil
+}
+
+func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.HashHeight, error) {
+	hash := header.BlockHash()
+	_, height, err := TBCFullNode.BlockHeaderByHash(ctx, &hash)
+	if err != nil {
+		return nil, err
+	}
+
+	return &tbc.HashHeight{Hash: hash, Height: height}, nil
+}
+
+// TBCBlocksAvailableToHeader Checks whether the TBC full node has all of the blocks required to index to the
+// specified header from its current location.
+//
+// This function assumes that any blocks below the current indexed tip are available, otherwise the indexers
+// would have been unable to reach that tip previously.
+//
+// This function will always return true if the specified header is a direct ancestor of current indexed tip,
+// including if they are equal.
+//
+// If this function is called with a header that requires a reorg, it finds the common ancestor and returns
+// whether all blocks required to index after walking back to that common ancestor are available.
+//
+// If TBC's UTXO and Tx indexers are not in the same state, this function will determine whether all blocks
+// are available based on the commnon ancestor of the misaligned indexer tips (such that reconciling the
+// indexer tips and then moving to the specified endingHeader would have all required blocks.
+func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHeader) (bool, error) {
+	syncInfo := TBCFullNode.Synced(ctx)
+	utxoSync := syncInfo.Utxo
+	txSync := syncInfo.Tx
+
+	// When both indexers are at the same header, this will be that header.
+	// If the indexers are at different positions, this will be the common
+	// ancestor they share, which we know we could walk back to since the
+	// blocks were available to index to the two different tips
+	commonIndexTip, _, err := findCommonAncestor(&utxoSync, &txSync)
+	if err != nil {
+		if errors.As(err, &database.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	tipHH, err := hashHeightForHeader(ctx, commonIndexTip)
+	if err != nil {
+		if errors.As(err, &database.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	targetHH, err := hashHeightForHeader(ctx, endingHeader)
+	if err != nil {
+		if errors.As(err, &database.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	// Find common ancestor between current common index ancestor tip and target header
+	ancestorToTarget, _, err := findCommonAncestor(tipHH, targetHH)
+	if err != nil {
+		if errors.As(err, &database.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	ancestorToTargetHash := ancestorToTarget.BlockHash()
+	_, ancestorHeight, err := TBCFullNode.BlockHeaderByHash(ctx, &ancestorToTargetHash)
+	if err != nil {
+		if errors.As(err, &database.ErrNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+
+	// Whether or not moving to the target requires unwinding, the only blocks that
+	// could be missing are the ones that would have to be indexed after the rewind,
+	// so we only need to check for all blocks from the ancestor to the target.
+	// Walk backwards from the target down to the ancestor, as generally if blocks
+	// are missing they will be towards the end so top down will find more efficiently.
+	// TODO: make more efficient by adding a cheap check in TBC for a full block being available.
+	endingHash := endingHeader.BlockHash()
+	cursor, height, err := TBCFullNode.BlockHeaderByHash(ctx, &endingHash)
+	if err != nil {
+		return false, err
+	}
+	cursorHash := endingHash
+
+	// Walk backwards until our cursor matches the ancestor
+	for !bytes.Equal(cursorHash[:], ancestorToTargetHash[:]) {
+		available, err := TBCFullNode.FullBlockAvailable(ctx, &cursorHash)
+		if err != nil {
+			return false, err
+		}
+		if !available {
+			return false, nil
+		}
+
+		cursor, height, err = TBCFullNode.BlockHeaderByHash(ctx, &cursor.PrevBlock)
+		if err != nil {
+			if errors.As(err, &database.ErrNotFound) {
+				return false, nil
+			}
+			return false, err
+		}
+		if height < ancestorHeight {
+			// Somehow walking backwards got to a lower block than the ancestor we are looking for.
+			// Should never happen, would imply that the current indexed tip and target are not
+			// on the same chain graph
+			return false, fmt.Errorf("TBCBlocksAvailableToHeader failed walking backwards from"+
+				" %x looking for %x, walked to height=%d but ancestorHeight=%d", endingHash[:],
+				ancestorToTargetHash[:], height, ancestorHeight)
+		}
+		cursorHash = cursor.PrevBlock
+	}
+
+	// Above for loop exited meaning all blocks from the target back to common ancestor with
+	// indexer were successfully fetched from database
+	return true, nil
 }
 
 // PrecompiledContractsHomestead contains the default set of pre-compiled Ethereum
@@ -278,62 +639,64 @@ var PrecompiledContractsIstanbul = map[common.Address]PrecompiledContract{
 // PrecompiledContractsBerlin contains the default set of pre-compiled Ethereum
 // contracts used in the Berlin release.
 var PrecompiledContractsBerlin = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}):                                                    &ecrecover{},
-	common.BytesToAddress([]byte{2}):                                                    &sha256hash{},
-	common.BytesToAddress([]byte{3}):                                                    &ripemd160hash{},
-	common.BytesToAddress([]byte{4}):                                                    &dataCopy{},
-	common.BytesToAddress([]byte{5}):                                                    &bigModExp{eip2565: true},
-	common.BytesToAddress([]byte{6}):                                                    &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}):                                                    &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}):                                                    &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}):                                                    &blake2F{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcBalAddr{})]):         &btcBalAddr{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcUtxosAddrList{})]):   &btcUtxosAddrList{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxByTxid{})]):        &btcTxByTxid{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
+	common.BytesToAddress([]byte{1}): &ecrecover{},
+	common.BytesToAddress([]byte{2}): &sha256hash{},
+	common.BytesToAddress([]byte{3}): &ripemd160hash{},
+	common.BytesToAddress([]byte{4}): &dataCopy{},
+	common.BytesToAddress([]byte{5}): &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}): &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}): &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}): &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}): &blake2F{},
 }
 
 // PrecompiledContractsCancun contains the default set of pre-compiled Ethereum
 // contracts used in the Cancun release.
 var PrecompiledContractsCancun = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{1}):                                                    &ecrecover{},
-	common.BytesToAddress([]byte{2}):                                                    &sha256hash{},
-	common.BytesToAddress([]byte{3}):                                                    &ripemd160hash{},
-	common.BytesToAddress([]byte{4}):                                                    &dataCopy{},
-	common.BytesToAddress([]byte{5}):                                                    &bigModExp{eip2565: true},
-	common.BytesToAddress([]byte{6}):                                                    &bn256AddIstanbul{},
-	common.BytesToAddress([]byte{7}):                                                    &bn256ScalarMulIstanbul{},
-	common.BytesToAddress([]byte{8}):                                                    &bn256PairingIstanbul{},
-	common.BytesToAddress([]byte{9}):                                                    &blake2F{},
-	common.BytesToAddress([]byte{0x0a}):                                                 &kzgPointEvaluation{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcBalAddr{})]):         &btcBalAddr{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcUtxosAddrList{})]):   &btcUtxosAddrList{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxByTxid{})]):        &btcTxByTxid{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
-	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
+	common.BytesToAddress([]byte{1}):    &ecrecover{},
+	common.BytesToAddress([]byte{2}):    &sha256hash{},
+	common.BytesToAddress([]byte{3}):    &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):    &dataCopy{},
+	common.BytesToAddress([]byte{5}):    &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):    &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):    &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):    &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}):    &blake2F{},
+	common.BytesToAddress([]byte{0x0a}): &kzgPointEvaluation{},
 }
 
 // PrecompiledContractsBLS contains the set of pre-compiled Ethereum
 // contracts specified in EIP-2537. These are exported for testing purposes.
 var PrecompiledContractsBLS = map[common.Address]PrecompiledContract{
-	common.BytesToAddress([]byte{10}):                                                   &bls12381G1Add{},
-	common.BytesToAddress([]byte{11}):                                                   &bls12381G1Mul{},
-	common.BytesToAddress([]byte{12}):                                                   &bls12381G1MultiExp{},
-	common.BytesToAddress([]byte{13}):                                                   &bls12381G2Add{},
-	common.BytesToAddress([]byte{14}):                                                   &bls12381G2Mul{},
-	common.BytesToAddress([]byte{15}):                                                   &bls12381G2MultiExp{},
-	common.BytesToAddress([]byte{16}):                                                   &bls12381Pairing{},
-	common.BytesToAddress([]byte{17}):                                                   &bls12381MapG1{},
-	common.BytesToAddress([]byte{18}):                                                   &bls12381MapG2{},
+	common.BytesToAddress([]byte{10}): &bls12381G1Add{},
+	common.BytesToAddress([]byte{11}): &bls12381G1Mul{},
+	common.BytesToAddress([]byte{12}): &bls12381G1MultiExp{},
+	common.BytesToAddress([]byte{13}): &bls12381G2Add{},
+	common.BytesToAddress([]byte{14}): &bls12381G2Mul{},
+	common.BytesToAddress([]byte{15}): &bls12381G2MultiExp{},
+	common.BytesToAddress([]byte{16}): &bls12381Pairing{},
+	common.BytesToAddress([]byte{17}): &bls12381MapG1{},
+	common.BytesToAddress([]byte{18}): &bls12381MapG2{},
+}
+
+var hvmContractsToAddress = map[reflect.Type][]byte{
+	reflect.TypeOf(&btcBalAddr{}):         {0x40},
+	reflect.TypeOf(&btcUtxosAddrList{}):   {0x41},
+	reflect.TypeOf(&btcTxByTxid{}):        {0x42},
+	reflect.TypeOf(&btcTxConfirmations{}): {0x43},
+	reflect.TypeOf(&btcLastHeader{}):      {0x44},
+	reflect.TypeOf(&btcHeaderN{}):         {0x45},
+	reflect.TypeOf(&btcAddrToScript{}):    {0x46},
+}
+
+var PrecompiledContractsHvm0 = map[common.Address]PrecompiledContract{
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcBalAddr{})]):         &btcBalAddr{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcUtxosAddrList{})]):   &btcUtxosAddrList{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxByTxid{})]):        &btcTxByTxid{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxConfirmations{})]): &btcTxConfirmations{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcLastHeader{})]):      &btcLastHeader{},
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcHeaderN{})]):         &btcHeaderN{},
+	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcAddrToScript{})]):    &btcAddrToScript{},
 }
 
 var (
@@ -342,6 +705,7 @@ var (
 	PrecompiledAddressesIstanbul  []common.Address
 	PrecompiledAddressesByzantium []common.Address
 	PrecompiledAddressesHomestead []common.Address
+	PrecompiledAddressesHvm0      []common.Address
 )
 
 func init() {
@@ -360,10 +724,13 @@ func init() {
 	for k := range PrecompiledContractsCancun {
 		PrecompiledAddressesCancun = append(PrecompiledAddressesCancun, k)
 	}
+	for k := range PrecompiledContractsHvm0 {
+		// TODO: Does this assume bad indexes? Does this even need to be done?
+		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
+	}
 }
 
-// ActivePrecompiles returns the precompiles enabled with the current configuration.
-func ActivePrecompiles(rules params.Rules) []common.Address {
+func activeUpstreamPrecompiles(rules params.Rules) []common.Address {
 	switch {
 	case rules.IsCancun:
 		return PrecompiledAddressesCancun
@@ -375,6 +742,24 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 		return PrecompiledAddressesByzantium
 	default:
 		return PrecompiledAddressesHomestead
+	}
+}
+
+// ActivePrecompiles returns the precompiles enabled with the current configuration.
+func ActivePrecompiles(rules params.Rules) []common.Address {
+	// For now, Hemi upgrades can be performed out-of-sync with upstream updates.
+	// As a result, this code is modified to select upstream precompiles, and then
+	// Layer on Hemi-specific precompile lists.
+	// Original ActivePrecompiles logic moved to activeUpstreamPrecompiles.
+	// TODO: Make this more efficient if necessary
+
+	nonHvmPrecompiles := activeUpstreamPrecompiles(rules)
+
+	switch {
+	case rules.IsHvm0:
+		return append(nonHvmPrecompiles, PrecompiledAddressesHvm0...)
+	default:
+		return nonHvmPrecompiles
 	}
 }
 
@@ -426,10 +811,13 @@ func (c *btcBalAddr) RequiredGas(input []byte) uint64 {
 }
 
 func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error) {
-	// TODO: 27 to global variable, check value
-	if input == nil || len(input) < 27 {
+	// TODO: 24 to global variable
+	if input == nil || len(input) < 24 {
 		log.Debug("btcBalAddr run called with nil or too small input", "input", input)
 		return nil, nil
+	}
+	if TBCFullNode == nil {
+		log.Crit("hVM Precompile called but the TBC Full Node is not setup")
 	}
 
 	var k hVMQueryKey
@@ -440,7 +828,7 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
-			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			log.Debug(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
 				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
 			return cachedResult, nil
 		}
@@ -448,17 +836,16 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 
 	addr := string(input)
 	log.Debug("btcBalAddr called", "address", addr)
-	if TBCIndexer == nil {
+	if TBCFullNode == nil {
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	bal, err := TBCIndexer.BalanceByAddress(context.Background(), addr)
-	fmt.Printf("Balance: %d\n", bal)
+	bal, err := TBCFullNode.BalanceByAddress(context.Background(), addr)
 
 	if err != nil {
 		// TODO: Error handling
-		log.Debug("Unable to process balance of address! Cannot progress EVM.", "address", addr, "err", err)
-		bal = 0 // TODO: temp, change w/ error handling
+		log.Error("hVM Error: Unable to process balance of address", "address", addr, "err", err)
+		return nil, err
 	}
 
 	resp := make([]byte, 8)
@@ -478,10 +865,10 @@ func (c *btcTxConfirmations) RequiredGas(input []byte) uint64 {
 
 func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) != 32 {
-		return nil, nil
+		log.Debug("btcTxConfirmations run called with nil or != 32 input", "input", fmt.Sprintf("%x", input))
 	}
 	log.Debug("btcTxConfirmations called", "txid", input)
-	if TBCIndexer == nil {
+	if TBCFullNode == nil {
 		log.Crit("TBCIndexer is nil!")
 	}
 
@@ -489,43 +876,109 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 	if isValidBlock(blockContext) {
 		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
-			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
-			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			log.Debug(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
 				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
 			return cachedResult, nil
 		}
 	}
 
-	var txid [32]byte
+	var txid = make([]byte, 32)
 	copy(txid[0:32], input[0:32])
-
-	blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), tbcd.NewTxId(txid))
-	if err != nil || blocks == nil || len(blocks) == 0 {
-		log.Warn("Unable to lookup transaction confirmations by txid", "txid", input)
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
-	}
-
-	// TODO: Canonical check
-	hash, err := chainhash.NewHash(blocks[0][:])
+	slices.Reverse(txid)
+	// txidMade := [32]byte(txid)
+	txHash := chainhash.Hash{}
+	err := txHash.SetBytes(txid[:])
 	if err != nil {
-		log.Warn(fmt.Sprintf("Unable to create blockhash from %x", blocks[0][:]))
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
+		log.Warn("Unable to lookup tx confirmations by Txid; unable to convert txid %x to chainhash!", "txid", txid, "err", err)
 	}
 
-	_, height, err := TBCIndexer.BlockHeaderByHash(context.Background(), hash)
+	_, blockHash, err := TBCFullNode.TxByTxId(context.Background(), &txHash)
+	if err != nil {
+		log.Error("Unable to lookup transaction confirmations by txid", "txid", txid, "err", err)
+		return nil, err
+	}
+
+	// TODO: Canonical check, needs upstream TBC modification.
+	// For now hVM has an edge case where confirmation value from a forked chain could be returned.
+
+	_, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), blockHash)
+	if err != nil {
+		log.Error(fmt.Sprintf("Unable to get block header by hash %x", blockHash[:]))
+		return nil, err
+	}
+
+	heightBest, _, err := TBCFullNode.BlockHeaderBest(context.Background())
+	if err != nil {
+		log.Error("Unable to get best block header")
+		return nil, err
+	}
 
 	resp := make([]byte, 4)
-	binary.BigEndian.PutUint32(resp, uint32(height))
+	binary.BigEndian.PutUint32(resp, uint32(heightBest-height+1))
 
 	log.Debug("txidConfirmations returning data", "returnedData", fmt.Sprintf("%x", resp))
 
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
+	return resp, nil
+}
+
+type btcAddrToScript struct{}
+
+func (c *btcAddrToScript) RequiredGas(input []byte) uint64 {
+	return params.BtcAddrToScript
+}
+
+func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, error) {
+	if input == nil || len(input) < 24 {
+		log.Debug("btcAddrToScript run called with nil or too small input", "input", fmt.Sprintf("%x", input))
+		return nil, nil
+	}
+	if TBCFullNode == nil {
+		log.Crit("TBCIndexer is nil!")
+	}
+
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Debug(fmt.Sprintf("btcAddrToScript returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
+	}
+
+	addressStr := string(input)
+	log.Debug("btcAddrToScript called", "address", addressStr)
+
+	addr, err := btcutil.DecodeAddress(addressStr, tbcChainParams)
+	if err != nil {
+		log.Error("In btcAddrToScript call, unable to decode address", "addressStr", addressStr)
+		return nil, err
+	}
+
+	script, err := txscript.PayToAddrScript(addr)
+	if err != nil {
+		log.Error("In btcAddrToScript call, unable to convert address to pay script", "addressStr", addressStr)
+		return nil, err
+	}
+
+	resp := make([]byte, 0)
+	resp = append(resp, script[:]...)
+	log.Debug("btcAddrToScript returning data", "returnedData", fmt.Sprintf("%x", resp))
 	if isValidBlock(blockContext) {
 		hvmQueryMap[k] = resp
 	}
@@ -540,8 +993,7 @@ func (c *btcLastHeader) RequiredGas(input []byte) uint64 {
 
 func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// No input validation
-	log.Debug("btcLastHeader called")
-	if TBCIndexer == nil {
+	if TBCFullNode == nil {
 		log.Crit("TBCIndexer is nil!")
 	}
 
@@ -549,35 +1001,48 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 	if isValidBlock(blockContext) {
 		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
-			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
-			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+			log.Debug(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
 				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
 			return cachedResult, nil
 		}
 	}
 
-	height, bestHeader, err := TBCIndexer.BlockHeaderBest(context.Background())
+	height, bestHeader, err := TBCFullNode.BlockHeaderBest(context.Background())
 
 	if err != nil {
-		log.Warn("Unable to lookup best header!")
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
+		log.Error("Unable to lookup best header!")
+		return nil, err
 	}
 
 	hash := bestHeader.BlockHash()
 	prevHash := bestHeader.PrevBlock
 	merkle := bestHeader.MerkleRoot
 
+	var hashReverse = make([]byte, 32)
+	copy(hashReverse[0:32], hash[0:32])
+	slices.Reverse(hashReverse)
+
+	var prevHashReverse = make([]byte, 32)
+	copy(prevHashReverse[0:32], prevHash[0:32])
+	slices.Reverse(prevHashReverse)
+
+	var merkleReverse = make([]byte, 32)
+	copy(merkleReverse[0:32], merkle[0:32])
+	slices.Reverse(merkleReverse)
+
+	// TODO: serialize header directly instead
 	resp := make([]byte, 4)
 	binary.BigEndian.PutUint32(resp, uint32(height))
-	resp = append(resp, hash[:]...)
+	resp = append(resp, hashReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Version))
-	resp = append(resp, prevHash[:]...)
-	resp = append(resp, merkle[:]...)
+	resp = append(resp, prevHashReverse[:]...)
+	resp = append(resp, merkleReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Timestamp.Unix()))
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Bits)
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
@@ -597,14 +1062,17 @@ func (c *btcHeaderN) RequiredGas(input []byte) uint64 {
 
 func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) != 4 {
-		return nil, nil
+		log.Debug("btcHeaderN run called with nil or != 4 input", "input", fmt.Sprintf("%x", input))
+		return nil, fmt.Errorf("btcHeaderN called with nill or != 4 input")
 	}
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
 		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
-			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -620,17 +1088,15 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		uint32(input[3]&0xFF)
 
 	log.Debug("btcHeaderN called", "height", height)
-	if TBCIndexer == nil {
+	if TBCFullNode == nil {
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	headers, err := TBCIndexer.BlockHeadersByHeight(context.Background(), uint64(height))
+	headers, err := TBCFullNode.BlockHeadersByHeight(context.Background(), uint64(height))
 
 	if err != nil || len(headers) == 0 {
 		log.Warn("Unable to lookup header!", "height", height)
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
+		return nil, nil
 	}
 
 	// TODO: Canonical check
@@ -640,12 +1106,24 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	prevHash := bestHeader.PrevBlock
 	merkle := bestHeader.MerkleRoot
 
+	var hashReverse = make([]byte, 32)
+	copy(hashReverse[0:32], hash[0:32])
+	slices.Reverse(hashReverse)
+
+	var prevHashReverse = make([]byte, 32)
+	copy(prevHashReverse[0:32], prevHash[0:32])
+	slices.Reverse(prevHashReverse)
+
+	var merkleReverse = make([]byte, 32)
+	copy(merkleReverse[0:32], merkle[0:32])
+	slices.Reverse(merkleReverse)
+
 	resp := make([]byte, 4)
 	binary.BigEndian.PutUint32(resp, uint32(height))
-	resp = append(resp, hash[:]...)
+	resp = append(resp, hashReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Version))
-	resp = append(resp, prevHash[:]...)
-	resp = append(resp, merkle[:]...)
+	resp = append(resp, prevHashReverse[:]...)
+	resp = append(resp, merkleReverse[:]...)
 	resp = binary.BigEndian.AppendUint32(resp, uint32(bestHeader.Timestamp.Unix()))
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Bits)
 	resp = binary.BigEndian.AppendUint32(resp, bestHeader.Nonce)
@@ -665,7 +1143,7 @@ func (c *btcUtxosAddrList) RequiredGas(input []byte) uint64 {
 
 func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// TODO: Move to variable, check addr min length + 4 bytes
-	if len(input) < 27 {
+	if len(input) < 28 {
 		return nil, nil
 	}
 
@@ -673,7 +1151,9 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 	if isValidBlock(blockContext) {
 		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
-			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -696,19 +1176,15 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 
 	log.Debug("btcUtxosAddrList run called", "addr", addr, "pg", pg, "pgSize", pgSize)
 
-	if TBCIndexer == nil {
+	if TBCFullNode == nil {
 		log.Crit("No TBC indexer available, cannot perform hVM precompile call!")
 	}
 
-	// TODO: Correct Context
-	utxos, err := TBCIndexer.UtxosByAddress(context.Background(), addr, uint64(pg), uint64(pgSize))
+	utxos, err := TBCFullNode.UtxosByAddress(context.Background(), addr, uint64(pg), uint64(pgSize))
 
 	if err != nil {
-		// TODO: Error handling
-		log.Crit("Unable to process UTXOs of address %s!", addr)
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
+		log.Warn("Unable to lookup UTXOs for address!", "addr", addr)
+		return nil, nil
 	}
 
 	resp := make([]byte, 1)
@@ -749,7 +1225,9 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	if isValidBlock(blockContext) {
 		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
-			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -774,27 +1252,27 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	includeInputScriptSig := bitflag1&(0x01) != 0
 
 	bitflag2 := input[33]
-	includeInputSeq := bitflag1&(0x01<<7) != 0
+	includeInputSeq := bitflag2&(0x01<<7) != 0
 	includeOutputs := bitflag2&(0x01<<6) != 0
 	includeOutputScript := bitflag2&(0x01<<5) != 0
 	includeOutputAddress := bitflag2&(0x01<<4) != 0
-	includeOpReturnOutputs := bitflag2&(0x01<<3) != 0
+	includeUnspendableOutputs := bitflag2&(0x01<<3) != 0
 	includeOutputSpent := bitflag2&(0x01<<2) != 0
 	includeOutputSpentBy := bitflag2&(0x01<<1) != 0
 	// One unused bit for future, possibly meta-protocol info like Ordinals
 
 	bitflag3 := input[34] // Gives size limits for data which could get unexpectedly expensive to return
 	// Two free bits here
-	maxInputsExponent := bitflag3 & (0x07 << 3) // bits xxXXXxxx used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 inputs
-	maxOutputsExponent := bitflag3 & (0x07)     // bits xxxxxXXX used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 outputs
+	maxInputsExponent := (bitflag3 & (0x07 << 3)) >> 3 // bits xxXXXxxx used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 inputs
+	maxOutputsExponent := bitflag3 & (0x07)            // bits xxxxxXXX used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 outputs
 
 	maxInputs := 0x01 << maxInputsExponent
 	maxOutputs := 0x01 << maxOutputsExponent
 
 	bitflag4 := input[35]
 	// Four free bits here
-	maxInputScriptSigSizeExponent := bitflag4 & (0x03 << 2) // bits xxxxXXxx used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
-	maxOutputScriptSizeExponent := bitflag4 & (0x03)        // bits xxxxxxXX used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
+	maxInputScriptSigSizeExponent := (bitflag4 & (0x03 << 2)) >> 2 // bits xxxxXXxx used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
+	maxOutputScriptSizeExponent := bitflag4 & (0x03)               // bits xxxxxxXX used as 2^(4+X), b00=2^(4+0)=16, b01=2^(4+1)=32, ... up to 128 bytes
 
 	maxInputScriptSigSize := 0x01 << (4 + maxInputScriptSigSizeExponent)
 	maxOutputScriptSize := 0x01 << (4 + maxOutputScriptSizeExponent)
@@ -805,36 +1283,22 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		"includeInputSource", includeInputSource, "includeInputScriptSig", includeInputScriptSig,
 		"includeInputSeq", includeInputSeq, "includeInputAddress", includeOutputs,
 		"includeOutputScript", includeOutputScript, "includeOutputAddress", includeOutputAddress,
-		"includeOpReturnOutputs", includeOpReturnOutputs, "includeOutputSpent", includeOutputSpent,
+		"includeUnspendableOutputs", includeUnspendableOutputs, "includeOutputSpent", includeOutputSpent,
 		"includeOutputSpentBy", includeOutputSpentBy, "maxInputsExponent", maxInputsExponent,
 		"maxOutputsExponent", maxOutputsExponent, "maxInputScriptSigSizeExponent", maxInputScriptSigSizeExponent,
 		"maxOutputScriptSizeExponent", maxOutputScriptSizeExponent, "maxInputs", maxInputs, "maxOutputs", maxOutputs,
 		"maxInputScriptSigSize", maxInputScriptSigSize, "maxOutputScriptSize", maxOutputScriptSize)
 
-	txidMade := [32]byte(txid)
-
-	tx, err := TBCIndexer.TxById(context.Background(), txidMade)
+	ch := chainhash.Hash{}
+	err := ch.SetBytes(txid)
 	if err != nil {
-		// TODO: Error handling
-		log.Warn("Unable to lookup Tx conformations by Txid!", "txid", input)
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
+		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	if err != nil {
-		// TODO: Error handling
-		log.Warn("Unable to lookup Tx by Txid!", "txid", txid)
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
-	}
-
-	if tx == nil {
-		// TODO: Error handling
-		resp := make([]byte, 0)
-		hvmQueryMap[k] = resp
-		return resp, nil
+	tx, block, err := TBCFullNode.TxByTxId(context.Background(), &ch)
+	if err != nil || tx == nil {
+		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
+		return nil, nil
 	}
 
 	resp := make([]byte, 0)
@@ -843,16 +1307,12 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		// TODO: Not yet implemented
 	}
 
+	// TODO: Canonical check
 	if includeContainingBlock {
-		blocks, err := TBCIndexer.DB().BlocksByTxId(context.Background(), txidMade)
-		if err != nil || blocks == nil || len(blocks) == 0 {
-			// TODO: Error handling
-			resp := make([]byte, 0)
-			hvmQueryMap[k] = resp
-			return resp, nil
-		}
-
-		resp = append(resp, blocks[0][:]...)
+		blockHash := make([]byte, 0)
+		blockHash = append(blockHash, block[:]...)
+		slices.Reverse(blockHash)
+		resp = append(resp, blockHash...)
 	}
 
 	if includeVersion {
@@ -860,9 +1320,8 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	}
 
 	if includeSizes {
-		// resp = binary.BigEndian.AppendUint32(resp, tx.Serialize())
-		// resp = binary.BigEndian.AppendUint32(resp, tx.VSize)
-		// TODO
+		resp = binary.BigEndian.AppendUint32(resp, uint32(tx.SerializeSize()))
+		resp = binary.BigEndian.AppendUint32(resp, uint32(tx.SerializeSizeStripped()))
 	}
 
 	if includeLockTime {
@@ -870,19 +1329,28 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	}
 
 	if includeInputs {
-		resp = append(resp, byte(len(tx.TxIn))) // TODO: Check no more inputs than allowed
-		for _, in := range tx.TxIn {
+		resp = binary.BigEndian.AppendUint16(resp, uint16(len(tx.TxIn)))
+		for count, in := range tx.TxIn {
+			if count >= maxInputs {
+				// Caller needs to check # of inputs compared to claimed length to detect inputs were chopped
+				break
+			}
 			// Always include input value - Review if this is desired behavior because of extra lookup cost
 			prevIn := in.PreviousOutPoint
-			sourceTx, err := TBCIndexer.TxById(context.Background(), tbcd.NewTxId(prevIn.Hash))
-
-			value := sourceTx.TxOut[prevIn.Index].Value
+			pih := chainhash.Hash{}
+			err := pih.SetBytes(prevIn.Hash[:])
+			if err != nil {
+				log.Warn("Unable to lookup Tx by Txid; unable to convert txid %x to chainhash!", "txid", txid)
+				return nil, nil
+			}
+			sourceTx, _, err := TBCFullNode.TxByTxId(context.Background(), &pih)
 
 			if err != nil {
-				resp := make([]byte, 0)
-				hvmQueryMap[k] = resp
-				return resp, nil
+				log.Warn("unable to lookup input transaction",
+					"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
+				return nil, nil
 			}
+			value := sourceTx.TxOut[prevIn.Index].Value
 
 			resp = binary.BigEndian.AppendUint64(resp, uint64(value))
 			if includeInputSource {
@@ -892,9 +1360,13 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				resp = binary.BigEndian.AppendUint16(resp, uint16(prevIn.Index)) // TODO: Check outputs cannot exceed 2^16-1
 			}
 			if includeInputScriptSig {
-				// TODO: chop to max size and decide on size encoding
+				choppedInputScript := make([]byte, 0)
+				choppedInputScript = append(choppedInputScript, in.SignatureScript...)
+				if len(choppedInputScript) > maxInputScriptSigSize {
+					choppedInputScript = choppedInputScript[0:maxInputScriptSigSize]
+				}
 				resp = binary.BigEndian.AppendUint16(resp, uint16(len(in.SignatureScript)))
-				resp = append(resp, in.SignatureScript...)
+				resp = append(resp, choppedInputScript...)
 			}
 			//
 			// TODO: respect max inputs setting
@@ -913,21 +1385,30 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		}
 
 		outLen := len(tx.TxOut)
-		if !includeOpReturnOutputs {
+		if !includeUnspendableOutputs {
 			outLen -= unspendable
 		}
 
-		resp = append(resp, byte(outLen)) // TODO: Check no more outputs than allowed
+		count := 0
+		resp = binary.BigEndian.AppendUint16(resp, uint16(outLen))
 		for idx, out := range tx.TxOut {
-			// Always include output value
+			if count >= maxOutputs {
+				// Caller needs to check # of outputs compared to claimed length to detect outputs were chopped
+				break
+			}
+			unspendable := txscript.IsUnspendable(out.PkScript)
+			if unspendable && !includeUnspendableOutputs {
+				continue
+			}
 			resp = binary.BigEndian.AppendUint64(resp, uint64(out.Value))
 			if includeOutputScript {
-				unspendable := txscript.IsUnspendable(out.PkScript)
-				if unspendable && !includeOpReturnOutputs {
-					continue
+				choppedOutputScript := make([]byte, 0)
+				choppedOutputScript = append(choppedOutputScript, out.PkScript...)
+				if len(choppedOutputScript) > maxOutputScriptSize {
+					choppedOutputScript = choppedOutputScript[0:maxOutputScriptSize]
 				}
-				resp = append(resp, byte(len(out.PkScript))) // TODO: Length check and truncate
-				resp = append(resp, out.PkScript...)
+				resp = binary.BigEndian.AppendUint16(resp, uint16(len(out.PkScript)))
+				resp = append(resp, choppedOutputScript...)
 			}
 			if includeOutputAddress {
 				// TODO
@@ -936,16 +1417,20 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				// resp = append(resp, addrBytes...) // TODO: right now this is just ASCII->Bytes, consider changing to Base58 decode? Could be flag option
 			}
 			if includeOutputSpent {
-				op := tbcd.NewOutpoint(txidMade, uint32(idx))
-				sh, _ := TBCIndexer.DB().ScriptHashByOutpoint(context.Background(), op)
+				spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), &ch, uint32(idx))
 
-				spent := 0
-				if sh == nil {
-					// Could not look up Outpoint in UTXO table, therefore spent
-					spent = 1
+				if err != nil {
+					log.Warn("Unable to lookup output spend status", "txid", txid)
+					return nil, nil
 				}
 
-				resp = append(resp, byte(spent))
+				spent := byte(0)
+				if spentBool {
+					// Could not look up Outpoint in UTXO table, therefore spent
+					spent = byte(1)
+				}
+
+				resp = append(resp, spent)
 				if includeOutputSpentBy {
 					// If not spent, do not include spender TxID
 					if spent == 1 {
@@ -956,6 +1441,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 					}
 				}
 			}
+			count++
 		}
 	}
 

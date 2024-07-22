@@ -869,6 +869,7 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 			txs.Pop()
 			continue
 		}
+
 		// Transaction seems to fit, pull it up from the pool
 		tx := ltx.Resolve()
 		if tx == nil {
@@ -876,6 +877,17 @@ func (w *worker) commitTransactions(env *environment, txs *transactionsByPriceAn
 			txs.Pop()
 			continue
 		}
+
+		// Ensure transaction isn't a Bitcoin Attributes Deposited or PoP Payout tx, since they should never come from mempool
+		if tx.IsBtcAttributesDepositedTx() {
+			log.Error("Rejected a Bitcoin Attributes Deposited transaction that was in the mempool.")
+			txs.Pop()
+		}
+		if tx.IsPopPayoutTx() {
+			log.Error("Rejected a PoP Payout transaction that was in the mempool.")
+			txs.Pop()
+		}
+
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance is the transaction pool.
 		from, _ := types.Sender(env.signer, tx)
@@ -1122,6 +1134,27 @@ func (w *worker) generateWork(genParams *generateParams) *newPayloadResult {
 
 	// forced transactions done, fill rest of block with transactions
 	if !genParams.noTxs {
+		// First, check whether a new Bitcoin Attributes Deposited tx should be included.
+		// This is a redundant check since GetBitcoinAttributesForNextBlock will return nil with no error if hVM is not enabled/activated.
+		if w.eth.BlockChain().IsHvmEnabled() && w.chainConfig.IsHvm0(genParams.timestamp) {
+			btcAttrDepTx, err := w.eth.BlockChain().GetBitcoinAttributesForNextBlock(work.header.Time)
+			if err != nil {
+				log.Error("Failed to create a Bitcoin Attributes Deposited transaction in generateWork()", "err", err)
+			}
+			if btcAttrDepTx != nil {
+				cast := types.NewTx(btcAttrDepTx)
+				from, _ := types.Sender(work.signer, cast)
+				work.state.SetTxContext(cast.Hash(), work.tcount)
+				_, err := w.commitTransaction(work, cast)
+				if err != nil {
+					return &newPayloadResult{err: fmt.Errorf("failed to force-include Bitcoin Attributes Deposited tx: %s type: %d sender: %s nonce: %d, err: %w", cast.Hash(), cast.Type(), from, cast.Nonce(), err)}
+				}
+				work.tcount++
+			}
+		} else {
+			log.Info("worker not generating a Bitcoin Attributes Deposited transaction")
+		}
+
 		// use shared interrupt if present
 		interrupt := genParams.interrupt
 		if interrupt == nil {
@@ -1131,7 +1164,7 @@ func (w *worker) generateWork(genParams *generateParams) *newPayloadResult {
 			interrupt.Store(commitInterruptTimeout)
 		})
 
-		err := w.fillTransactions(interrupt, work)
+		err = w.fillTransactions(interrupt, work)
 		timer.Stop() // don't need timeout interruption any more
 		if errors.Is(err, errBlockInterruptedByTimeout) {
 			log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(w.newpayloadTimeout))
