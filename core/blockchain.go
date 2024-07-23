@@ -1431,7 +1431,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	fullCursorHash := fullTipHeader.BlockHash()
 
 	log.Info(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for the next block after "+
-		"%s % %d, lightweight TBC node consensus tip is %s @ %d, full TBC node consensus tip is %s @ %d",
+		"%s %d, lightweight TBC node consensus tip is %s @ %d, full TBC node consensus tip is %s @ %d",
 		lastTip.Hash().String(), lastTip.Number.Uint64(), lightCursorHash[:], lightCursorHeight,
 		fullCursorHash[:], fullCursorHeight))
 
@@ -1871,7 +1871,7 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 		// Upstream id is genesis, so this should be the first hVM block
 		currentHead = bc.GetHeaderByHash(newHead.ParentHash)
 		currentHeadHash = currentHead.Hash()
-		if !bc.chainConfig.IsHvm0(currentHead.Time) {
+		if bc.chainConfig.IsHvm0(currentHead.Time) {
 			log.Crit(fmt.Sprintf("When updating hVM state transition for block %s @ %d, the upstream id is the "+
 				" hVMGenesisUpstreamId, but the parent at time %d should have hVM Phase 0 activated!",
 				newHead.Hash().String(), newHead.Number.Uint64(), currentHead.Time))
@@ -2027,7 +2027,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 			headBlockGauge.Update(int64(newHeadBlock.NumberU64()))
 
 			log.Info(fmt.Sprintf("Updating hVM header consensus in setHeadBeyondRoot updateFn to %s @ %d",
-				newHeadBlock.Header().Hash(), newHeadBlock.Number().Uint64()))
+				newHeadBlock.Header().Hash().String(), newHeadBlock.Number().Uint64()))
 			err := bc.updateHvmHeaderConsensus(newHeadBlock.Header())
 			if err != nil {
 				log.Crit(fmt.Sprintf("Unable to udpate hVM header consensus in setHeadBeyondRoot updateFn to %s @ %d",
@@ -3142,7 +3142,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				isHvmActivated = true
 				indexedState = vm.GetTBCFullNodeSyncStatus()
 				if block.NumberU64() != 0 {
-					log.Info("Block != 0, getting parent by hash %s", block.ParentHash())
+					log.Info(fmt.Sprintf("Block != 0, getting parent by hash %s", block.ParentHash()))
 					parent = bc.GetHeaderByHash(block.ParentHash())
 					if !bc.chainConfig.IsHvm0(parent.Time) {
 						// Parent is not hVM0, meaning this block is first activation
