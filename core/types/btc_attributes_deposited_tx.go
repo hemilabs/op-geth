@@ -79,7 +79,7 @@ func (tx *BtcAttributesDepositedTx) rawSignatureValues() (v, r, s *big.Int) {
 }
 
 func (tx *BtcAttributesDepositedTx) setSignatureValues(chainID, v, r, s *big.Int) {
-	// this is a noop for pop transactions
+	// this is a noop for btc attr deposited transactions
 }
 
 func (tx *BtcAttributesDepositedTx) encode(b *bytes.Buffer) error {

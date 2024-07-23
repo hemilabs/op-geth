@@ -293,10 +293,10 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			case <-ctx.Context.Done():
 				log.Crit("context done")
 			}
-
-			log.Info("TBC initial sync completed", "headerHeight", syncInfo.BlockHeader.Height,
-				"utxoIndexHeight", syncInfo.Utxo.Height, "txIndexHeight", syncInfo.Tx.Height)
 		}
+
+		log.Info("TBC initial sync completed", "headerHeight", syncInfo.BlockHeader.Height,
+			"utxoIndexHeight", syncInfo.Utxo.Height, "txIndexHeight", syncInfo.Tx.Height)
 	}
 
 	// Create gauge with geth system and build information

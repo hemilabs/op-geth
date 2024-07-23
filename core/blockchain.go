@@ -513,6 +513,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 	if cacheConfig == nil {
 		cacheConfig = defaultCacheConfig
 	}
+
 	// Open trie database with provided config
 	triedb := trie.NewDatabase(db, cacheConfig.triedbConfig())
 
@@ -549,6 +550,8 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		blockCache:    lru.NewCache[common.Hash, *types.Block](blockCacheLimit),
 		txLookupCache: lru.NewCache[common.Hash, txLookup](txLookupCacheLimit),
 		futureBlocks:  lru.NewCache[common.Hash, *types.Block](maxFutureBlocks),
+		tempBlocks:    make(map[string]*types.Block),
+		tempHeaders:   make(map[string]*types.Header),
 		engine:        engine,
 		vmConfig:      vmConfig,
 	}
@@ -1836,6 +1839,11 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 	log.Info(fmt.Sprintf("updateHvmHeaderConsensus called with new head: %s @ %d",
 		newHead.Hash().String(), newHead.Number.Uint64()))
 
+	if !bc.chainConfig.IsHvm0(newHead.Time) {
+		log.Info(fmt.Sprintf("New head %s @ %d does not have hVM Phase 0 active yet.", newHead.Hash().String(), newHead.Number.Uint64()))
+		return nil
+	}
+
 	// We store the EVM block which was last applied to update hVM
 	// independently in order to gracefully handle updates to EVM
 	// blockchain state that occurred without TBC's knowledge.
@@ -1856,8 +1864,23 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 		return nil
 	}
 
+	var currentHead *types.Header
 	currentHeadHash := common.BytesToHash(currentHeadHashRaw[:])
-	currentHead := bc.GetHeaderByHash(currentHeadHash)
+
+	if bytes.Equal(currentHeadHashRaw[:], hVMGenesisUpstreamId[:]) {
+		// Upstream id is genesis, so this should be the first hVM block
+		currentHead = bc.GetHeaderByHash(newHead.ParentHash)
+		currentHeadHash = currentHead.Hash()
+		if !bc.chainConfig.IsHvm0(currentHead.Time) {
+			log.Crit(fmt.Sprintf("When updating hVM state transition for block %s @ %d, the upstream id is the "+
+				" hVMGenesisUpstreamId, but the parent at time %d should have hVM Phase 0 activated!",
+				newHead.Hash().String(), newHead.Number.Uint64(), currentHead.Time))
+		}
+	} else {
+		currentHead = bc.GetHeaderByHash(currentHeadHash)
+	}
+
+	log.Info(fmt.Sprintf("updateHvmHeaderConsensus found current head hash: %x"), currentHeadHashRaw[:])
 
 	// Get common ancestor between newHead and currentHead
 	ancestor, err := bc.findCommonAncestor(newHead, currentHead)
@@ -3109,6 +3132,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 		var indexedState *tbc.SyncInfo // Original state of TBC Full Node to revert to when necessary
 		isHvmActivated := false
 		isFirstHvmBlock := false
+		log.Info("Processing block %s @ %d", block.Hash().String(), block.NumberU64())
 		if bc.hvmEnabled {
 			var parent *types.Header
 
@@ -3118,6 +3142,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				isHvmActivated = true
 				indexedState = vm.GetTBCFullNodeSyncStatus()
 				if block.NumberU64() != 0 {
+					log.Info("Block != 0, getting parent by hash %s", block.ParentHash())
 					parent = bc.GetHeaderByHash(block.ParentHash())
 					if !bc.chainConfig.IsHvm0(parent.Time) {
 						// Parent is not hVM0, meaning this block is first activation
@@ -3163,7 +3188,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 			// including reversing down a fork and up a new branch to the EVM header we specify, but moving the
 			// geometry here gives us more control here to know why an error occurred and in the future use various
 			// recovery mechanisms depending on the issue.
-			if !isFirstHvmBlock {
+			if isHvmActivated && !isFirstHvmBlock {
 				if tbcHeader.Hash().Cmp(parent.Hash()) != 0 {
 					log.Info(fmt.Sprintf("Lightweight TBC at block %s @ %d, moving to parent %s @ %d",
 						tbcHeader.Hash().String(), tbcHeader.Number.Uint64(),
@@ -3182,7 +3207,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 			// Do an extra sanity check that lightweight TBC node is in the correct state.
 			// Incorrect state represents either data corruption or an issue with the reorg logic.
 			// TODO on incorrect state attempt automated recovery of lightweight TBC state instead of log.Crit() exit
-			if !isFirstHvmBlock {
+			if isHvmActivated && !isFirstHvmBlock {
 				log.Info(fmt.Sprintf("Verifying before applying block %s @ %d, lightweight TBC's state is "+
 					"correctly set to direct parent %s @ %d", block.Hash().String(), block.NumberU64(),
 					parent.Hash().String(), parent.Number.Uint64()))
@@ -3205,72 +3230,74 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				}
 			}
 
-			// Process this block's hVM updates
-			err := bc.updateHvmHeaderConsensus(block.Header())
-			if err != nil {
-				// TODO: ban block instead
-				log.Crit(fmt.Sprintf("TBC lightweight node unable to update lightweight TBC node to block "+
-					"to process %s @ %d", block.Header().Hash().String(), block.Header().Number.Uint64()))
-			}
-
-			// Update TBC Full Node's indexing to represent lightweight view minus 2 BTC blocks
-			lightTipHeight, lightTipHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
-			if err != nil {
-				log.Crit(fmt.Sprintf("when processing block %s @ %d, an error occurred getting lightweight"+
-					" TBC's best block", block.Hash().String(), block.NumberU64()))
-			}
-			lightTipHash := lightTipHeader.BlockHash()
-
-			cursorHeight, cursorHeader := lightTipHeight, lightTipHeader
-			cursorHash := cursorHeader.BlockHash()
-			log.Info("Lightweight TBC is at canonical BTC block %s @ %d", cursorHash[:], cursorHeight)
-			// walk back hVMIndexerTipLag blocks from tip
-			// On initial init when we have less than hVMIndexerTipLag previous blocks (right after
-			// hVM0 phase transition), correct indexer behavior is to remain at the genesis-configured
-			// height until walking backwards the specified number of lag blocks doesn't surpass
-			// configured genesis.
-			if cursorHeight-hVMIndexerTipLag > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
-				for i := 0; i < hVMIndexerTipLag; i++ {
-					head, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
-					if err != nil {
-						log.Crit(fmt.Sprintf("when processing block %s @ %d, an error occurred walking back "+
-							"Bitcoin headers from lightweight TBC tip %x @ %d, unable to get header %x @ %d",
-							block.Hash().String(), block.NumberU64(), lightTipHash[:], lightTipHeight,
-							cursorHeader.PrevBlock[:], cursorHeight-1))
-					}
-					cursorHeader, cursorHeight = head, height // Storing them temporarily for verbose logging
-					cursorHash = cursorHeader.BlockHash()
+			if isHvmActivated {
+				// Process this block's hVM updates
+				err := bc.updateHvmHeaderConsensus(block.Header())
+				if err != nil {
+					// TODO: ban block instead
+					log.Crit(fmt.Sprintf("TBC lightweight node unable to update lightweight TBC node to block "+
+						"to process %s @ %d", block.Header().Hash().String(), block.Header().Number.Uint64()))
 				}
-			}
 
-			// Check that the TBC Full Node has sufficient chain knowledge to sync to this height.
-			// TODO: More intelligent handling of this in the future - adding to queue and processing later
-			// rather than busy-waiting here
-			available, err := vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
-			if err != nil {
-				log.Crit(fmt.Sprintf("when processing block %s @ %d, got an unexpected error determining if "+
-					"TBC Full Node hash blocks available to index up to Bitcoin block %x", block.Hash().String(),
-					block.NumberU64(), cursorHash[:]))
-			}
-			for !available {
-				available, err = vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
+				// Update TBC Full Node's indexing to represent lightweight view minus 2 BTC blocks
+				lightTipHeight, lightTipHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
+				if err != nil {
+					log.Crit(fmt.Sprintf("when processing block %s @ %d, an error occurred getting lightweight"+
+						" TBC's best block", block.Hash().String(), block.NumberU64()))
+				}
+				lightTipHash := lightTipHeader.BlockHash()
+
+				cursorHeight, cursorHeader := lightTipHeight, lightTipHeader
+				cursorHash := cursorHeader.BlockHash()
+				log.Info("Lightweight TBC is at canonical BTC block %s @ %d", cursorHash[:], cursorHeight)
+				// walk back hVMIndexerTipLag blocks from tip
+				// On initial init when we have less than hVMIndexerTipLag previous blocks (right after
+				// hVM0 phase transition), correct indexer behavior is to remain at the genesis-configured
+				// height until walking backwards the specified number of lag blocks doesn't surpass
+				// configured genesis.
+				if cursorHeight-hVMIndexerTipLag > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
+					for i := 0; i < hVMIndexerTipLag; i++ {
+						head, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
+						if err != nil {
+							log.Crit(fmt.Sprintf("when processing block %s @ %d, an error occurred walking back "+
+								"Bitcoin headers from lightweight TBC tip %x @ %d, unable to get header %x @ %d",
+								block.Hash().String(), block.NumberU64(), lightTipHash[:], lightTipHeight,
+								cursorHeader.PrevBlock[:], cursorHeight-1))
+						}
+						cursorHeader, cursorHeight = head, height // Storing them temporarily for verbose logging
+						cursorHash = cursorHeader.BlockHash()
+					}
+				}
+
+				// Check that the TBC Full Node has sufficient chain knowledge to sync to this height.
+				// TODO: More intelligent handling of this in the future - adding to queue and processing later
+				// rather than busy-waiting here
+				available, err := vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
 				if err != nil {
 					log.Crit(fmt.Sprintf("when processing block %s @ %d, got an unexpected error determining if "+
 						"TBC Full Node hash blocks available to index up to Bitcoin block %x", block.Hash().String(),
 						block.NumberU64(), cursorHash[:]))
 				}
-				log.Info("when processing block %s @ %d, TBC Full Node does not yet have all full blocks "+
-					"up to Bitcoin block %x which is required to progress EVM state, waiting...", block.Hash().String(),
-					block.NumberU64(), cursorHash[:])
-				time.Sleep(1 * time.Second)
-			}
+				for !available {
+					available, err = vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
+					if err != nil {
+						log.Crit(fmt.Sprintf("when processing block %s @ %d, got an unexpected error determining if "+
+							"TBC Full Node hash blocks available to index up to Bitcoin block %x", block.Hash().String(),
+							block.NumberU64(), cursorHash[:]))
+					}
+					log.Info("when processing block %s @ %d, TBC Full Node does not yet have all full blocks "+
+						"up to Bitcoin block %x which is required to progress EVM state, waiting...", block.Hash().String(),
+						block.NumberU64(), cursorHash[:])
+					time.Sleep(1 * time.Second)
+				}
 
-			// This single indexer function handles any reorgs required to move the TBC full node to the specified index
-			err = vm.TBCIndexToHeader(cursorHeader)
-			if err != nil {
-				// TODO: Recovery?
-				log.Crit(fmt.Sprintf("Unable to move TBC Full Node indexes to BTC block %x @ %d",
-					cursorHash[:], cursorHeight), "err", err)
+				// This single indexer function handles any reorgs required to move the TBC full node to the specified index
+				err = vm.TBCIndexToHeader(cursorHeader)
+				if err != nil {
+					// TODO: Recovery?
+					log.Crit(fmt.Sprintf("Unable to move TBC Full Node indexes to BTC block %x @ %d",
+						cursorHash[:], cursorHeight), "err", err)
+				}
 			}
 		}
 

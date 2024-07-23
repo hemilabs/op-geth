@@ -233,7 +233,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 	}
 	if config.OverrideHemiHvm0 != nil {
 		overrides.OverrideHemiHvm0 = config.OverrideHemiHvm0
-		log.Info("Creating new blockchain with hVM0 override set to: %d", overrides.OverrideHemiHvm0)
+		log.Info("Creating new blockchain with hVM0 override set to: %d", *overrides.OverrideHemiHvm0)
 	} else {
 		log.Info("Creating new blockchain, hVM0 override not set.")
 	}

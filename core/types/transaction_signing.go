@@ -352,6 +352,8 @@ func (s eip2930Signer) Sender(tx *Transaction) (common.Address, error) {
 		V = new(big.Int).Add(V, big.NewInt(27))
 	case PopPayoutTxType:
 		return PoPPayoutSenderAddress, nil
+	case BtcAttributesDepositedTxType:
+		return BtcAttributesDepositedSenderAddress, nil
 	default:
 		return common.Address{}, ErrTxTypeNotSupported
 	}
