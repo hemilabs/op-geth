@@ -898,7 +898,7 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		log.Warn("Unable to lookup tx confirmations by Txid; unable to convert txid %x to chainhash!", "txid", txid, "err", err)
 	}
 
-	_, blockHash, err := TBCFullNode.TxByTxId(context.Background(), &txHash)
+	_, blockHash, err := TBCFullNode.TxById(context.Background(), &txHash)
 	if err != nil {
 		log.Error("Unable to lookup transaction confirmations by txid", "txid", txid, "err", err)
 		return nil, err
@@ -1295,7 +1295,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, block, err := TBCFullNode.TxByTxId(context.Background(), &ch)
+	tx, block, err := TBCFullNode.TxById(context.Background(), &ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -1343,7 +1343,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				log.Warn("Unable to lookup Tx by Txid; unable to convert txid %x to chainhash!", "txid", txid)
 				return nil, nil
 			}
-			sourceTx, _, err := TBCFullNode.TxByTxId(context.Background(), &pih)
+			sourceTx, _, err := TBCFullNode.TxById(context.Background(), &pih)
 
 			if err != nil {
 				log.Warn("unable to lookup input transaction",
