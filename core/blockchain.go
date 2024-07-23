@@ -897,7 +897,7 @@ func (bc *BlockChain) findCommonAncestor(a *types.Header, b *types.Header) (*typ
 	lowHeight := lowCursor.Number.Uint64()
 
 	// Cursor is the higher header, walk it back to lowHeight
-	for i := highCursor.Number.Uint64(); i >= lowHeight; i-- {
+	for i := highCursor.Number.Uint64(); i > lowHeight; i-- {
 		highCursor = bc.GetHeader(highCursor.ParentHash, i-1)
 	}
 
@@ -1274,7 +1274,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		}
 
 		lbHash := lbh.Hash[:]
-		if !bytes.Equal(lbHash, lastHeader[:]) {
+		if !bytes.Equal(lbh.Header[:], lastHeader[:]) {
 			// Indicates a bug in TBC, as TBC didn't add all the headers we passed in
 			log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which "+
 				"contains %d headers ending in %x, but after adding those headers to lightweight TBC, TBC's last "+
@@ -1868,8 +1868,9 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 	currentHeadHash := common.BytesToHash(currentHeadHashRaw[:])
 
 	if bytes.Equal(currentHeadHashRaw[:], hVMGenesisUpstreamId[:]) {
+		log.Info(fmt.Sprintf("Current head from lightweight TBC upstream ID is the hVM Genssis Upstream ID"))
 		// Upstream id is genesis, so this should be the first hVM block
-		currentHead = bc.GetHeaderByHash(newHead.ParentHash)
+		currentHead = bc.getHeaderFromDiskOrHoldingPen(newHead.ParentHash)
 		currentHeadHash = currentHead.Hash()
 		if bc.chainConfig.IsHvm0(currentHead.Time) {
 			log.Crit(fmt.Sprintf("When updating hVM state transition for block %s @ %d, the upstream id is the "+
@@ -1877,10 +1878,18 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 				newHead.Hash().String(), newHead.Number.Uint64(), currentHead.Time))
 		}
 	} else {
-		currentHead = bc.GetHeaderByHash(currentHeadHash)
+		log.Info(fmt.Sprintf("Getting header %x from disk or holding pen", currentHeadHash[:]))
+		currentHead = bc.getHeaderFromDiskOrHoldingPen(currentHeadHash)
 	}
 
-	log.Info(fmt.Sprintf("updateHvmHeaderConsensus found current head hash: %x"), currentHeadHashRaw[:])
+	if currentHead == nil {
+		log.Error(fmt.Sprintf("currentHead is nil, but should have been %x", currentHeadHash[:]))
+	} else {
+		log.Info(fmt.Sprintf("Going to look for ancestor of %d @ %s and %d @ %s", newHead.Hash().String(),
+			newHead.Number.Uint64(), currentHead.Hash().String(), currentHead.Number.Uint64()))
+	}
+
+	log.Info(fmt.Sprintf("updateHvmHeaderConsensus found current head hash: %x", currentHeadHashRaw[:]))
 
 	// Get common ancestor between newHead and currentHead
 	ancestor, err := bc.findCommonAncestor(newHead, currentHead)
@@ -1905,7 +1914,6 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 				newHead.Hash().String(), newHead.Number.Uint64()), "err", err)
 		}
 		log.Info(fmt.Sprintf("Successfully applied hVM header state transition for single block %s @ %d"))
-		return nil
 	} else if bytes.Equal(currentHead.Hash().Bytes(), ancestor.Hash().Bytes()) {
 		// If currentHead is the ancestor, then we are walking directly forwards.
 		err := bc.walkHvmHeaderConsensusForward(currentHead, newHead)
@@ -1937,6 +1945,21 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 			// TODO: depending on error either recover hVM state from genesis or mark blocks invalid
 			log.Crit("Unable to walk hVM consensus backwards", "err", err)
 		}
+	}
+
+	// Now make sure TBC indexer represents this final state
+	canonHeight, canonHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
+	if err != nil {
+		canonHeaderHash := canonHeader.BlockHash()
+		log.Crit(fmt.Sprintf("Unable to progress TBC indexers to represent the canonical state of the lightweight "+
+			"header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight), "err", err)
+	}
+	err = vm.TBCIndexToHeader(canonHeader)
+	if err != nil {
+		canonHeaderHash := canonHeader.BlockHash()
+		log.Crit(fmt.Sprintf("Encountered an error progressing TBC indexers to represent the canonical state of "+
+			"the lightweight header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight),
+			"err", err)
 	}
 
 	return nil
