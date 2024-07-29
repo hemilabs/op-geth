@@ -425,6 +425,7 @@ func TBCRestoreIndexersToPoint(point *tbc.SyncInfo) error {
 // unwinding and winding if the move from current indexer state to new
 // target state involves a reorganization.
 func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
+	log.Info("TBCIndexToHashHight called with target", "target", targetHH.String())
 	// Check for indexer desync and attempt to fix.
 	err := fixMismatchedIndexesIfRequired()
 	if err != nil {

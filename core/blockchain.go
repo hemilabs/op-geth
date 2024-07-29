@@ -1279,12 +1279,12 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 			log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which "+
 				"contains %d headers ending in %x, but after adding those headers to lightweight TBC, TBC's last "+
 				"added block was %x", header.Hash().String(), header.Number.Uint64(), headersToAdd, lastHeader[:],
-				lbHash[:]))
+				lbHash.String()))
 		}
 
 		log.Info(fmt.Sprintf("Successfully added %d bitcoin headers from the Bitcoin Attributes Deposited tx "+
 			"from block %s @ %d, current canonical tip is %x, former tip was %x @ %d, insertType=%d", headersToAdd,
-			header.Hash().String(), header.Number.Uint64(), lbHash[:], prevTipHash[:], prevHeight, it))
+			header.Hash().String(), header.Number.Uint64(), lbHash.String(), prevTipHash[:], prevHeight, it))
 		return nil
 	} else {
 		// No headers to add, make sure that claimed canonical in BTC Attributes Deposited matches TBC's current
@@ -1636,8 +1636,11 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	}
 
 	// Trim headersToAdd to the maximum number of headers we are allowed to include.
-	if len(headersToAdd) > types.MaximumBtcHeadersInTx {
-		headersToAdd = headersToAdd[0:types.MaximumBtcHeadersInTx]
+	// if len(headersToAdd) > types.MaximumBtcHeadersInTx {
+	// 	headersToAdd = headersToAdd[0:types.MaximumBtcHeadersInTx]
+	// }
+	if len(headersToAdd) > 1 {
+		headersToAdd = headersToAdd[0:1] // Temporarily limit to 1 at generation level, not validation level
 	}
 
 	// Serialize headers to bytes
@@ -1954,6 +1957,9 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 		log.Crit(fmt.Sprintf("Unable to progress TBC indexers to represent the canonical state of the lightweight "+
 			"header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight), "err", err)
 	}
+	chbh := canonHeader.BlockHash()
+	log.Info("updateHvmHeaderConsensus moving TBC indexer to %x for block %s @ %d", chbh[:],
+		newHead.Hash().String(), newHead.Number.Uint64())
 	err = vm.TBCIndexToHeader(canonHeader)
 	if err != nil {
 		canonHeaderHash := canonHeader.BlockHash()
@@ -3272,7 +3278,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 
 				cursorHeight, cursorHeader := lightTipHeight, lightTipHeader
 				cursorHash := cursorHeader.BlockHash()
-				log.Info("Lightweight TBC is at canonical BTC block %s @ %d", cursorHash[:], cursorHeight)
+				log.Info(fmt.Sprintf("Lightweight TBC is at canonical BTC block %s @ %d", cursorHash[:], cursorHeight))
 				// walk back hVMIndexerTipLag blocks from tip
 				// On initial init when we have less than hVMIndexerTipLag previous blocks (right after
 				// hVM0 phase transition), correct indexer behavior is to remain at the genesis-configured
@@ -3315,6 +3321,9 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				}
 
 				// This single indexer function handles any reorgs required to move the TBC full node to the specified index
+				chbh := cursorHeader.BlockHash()
+				log.Info(fmt.Sprintf("insertChain Moving TBC indexer to header %x for block %s @ %d",
+					chbh[:], block.Hash().String(), block.NumberU64()))
 				err = vm.TBCIndexToHeader(cursorHeader)
 				if err != nil {
 					// TODO: Recovery?
@@ -3381,13 +3390,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				}
 			}
 			if indexedState != nil {
-				err := vm.TBCRestoreIndexersToPoint(indexedState)
-				if err != nil {
-					// TODO: Recovery of TBC full node?
-					log.Crit(fmt.Sprintf("Unable to restore TBC full node to previous indexed state "+
-						"of UTXO Indexer=%x@%d, Tx Indexer=%x@%d", indexedState.Utxo.Hash[:], indexedState.Utxo.Height,
-						indexedState.Tx.Hash[:], indexedState.Tx.Height))
-				}
+				// TODO: temporarily disabled, make sure that setting canonical block always does this.
+				// err := vm.TBCRestoreIndexersToPoint(indexedState)
+				// if err != nil {
+				// 	// TODO: Recovery of TBC full node?
+				//	log.Crit(fmt.Sprintf("Unable to restore TBC full node to previous indexed state "+
+				//		"of UTXO Indexer=%x@%d, Tx Indexer=%x@%d", indexedState.Utxo.Hash[:], indexedState.Utxo.Height,
+				//		indexedState.Tx.Hash[:], indexedState.Tx.Height))
+				//}
 			}
 			err = bc.writeBlockWithState(block, receipts, statedb)
 		} else {

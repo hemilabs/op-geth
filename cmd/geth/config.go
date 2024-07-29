@@ -270,6 +270,11 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			if err != nil {
 				log.Crit(fmt.Sprintf("could not get BlockHeaderBest: %v", err))
 			}
+			if bh > genesisHeight {
+				blockhash := bhb.BlockHash()
+				log.Info(fmt.Sprintf("TBC full node already indexed beyond genesis height to %x @ %d, continuing...", blockhash[:], bh))
+				break
+			}
 
 			targetHash := bhb.BlockHash()
 			if bh > genesisHeight {
