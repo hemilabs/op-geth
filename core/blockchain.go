@@ -1929,7 +1929,7 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 	currentHeadHash := common.BytesToHash(currentHeadHashRaw[:])
 
 	if bytes.Equal(currentHeadHashRaw[:], hVMGenesisUpstreamId[:]) {
-		log.Info(fmt.Sprintf("Current head from lightweight TBC upstream ID is the hVM Genssis Upstream ID"))
+		log.Info(fmt.Sprintf("Current head from lightweight TBC upstream ID is the hVM Genesis Upstream ID"))
 		// Upstream id is genesis, so this should be the first hVM block
 		currentHead = bc.getHeaderFromDiskOrHoldingPen(newHead.ParentHash)
 		currentHeadHash = currentHead.Hash()
@@ -2009,22 +2009,27 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 	}
 
 	// Now make sure TBC indexer represents this final state
-	canonHeight, canonHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
+	err = bc.updateFullTBCToLightweight()
 	if err != nil {
-		canonHeaderHash := canonHeader.BlockHash()
-		log.Crit(fmt.Sprintf("Unable to progress TBC indexers to represent the canonical state of the lightweight "+
-			"header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight), "err", err)
+		log.Crit("Unable to update full TBC node according to lightweight", "err", err)
+		return err
 	}
-	chbh := canonHeader.BlockHash()
-	log.Info("updateHvmHeaderConsensus moving TBC indexer to %x for block %s @ %d", chbh[:],
-		newHead.Hash().String(), newHead.Number.Uint64())
-	err = vm.TBCIndexToHeader(canonHeader)
-	if err != nil {
-		canonHeaderHash := canonHeader.BlockHash()
-		log.Crit(fmt.Sprintf("Encountered an error progressing TBC indexers to represent the canonical state of "+
-			"the lightweight header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight),
-			"err", err)
-	}
+	// canonHeight, canonHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
+	// if err != nil {
+	// 	canonHeaderHash := canonHeader.BlockHash()
+	// 	log.Crit(fmt.Sprintf("Unable to progress TBC indexers to represent the canonical state of the lightweight "+
+	// 		"header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight), "err", err)
+	// }
+	// chbh := canonHeader.BlockHash()
+	// log.Info("updateHvmHeaderConsensus moving TBC indexer to %x for block %s @ %d", chbh[:],
+	// 	newHead.Hash().String(), newHead.Number.Uint64())
+	// err = vm.TBCIndexToHeader(canonHeader)
+	// if err != nil {
+	// 	canonHeaderHash := canonHeader.BlockHash()
+	// 	log.Crit(fmt.Sprintf("Encountered an error progressing TBC indexers to represent the canonical state of "+
+	// 		"the lightweight header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight),
+	// 		"err", err)
+	// }
 
 	return nil
 }
