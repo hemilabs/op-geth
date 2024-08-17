@@ -394,8 +394,8 @@ func (bc *BlockChain) performFullHvmHeaderStateRestore() {
 
 	// Walk cursor forward until we get to our tip, assumes GetBlockByNumber correctly returns
 	// blocks on the canonical chain which will eventually reach the tip returned by bc.CurrentBlock() above
-	log.Info("Performing full hVM header state restore starting at block %s @ %d",
-		cursor.Hash().String(), cursor.Number.Uint64())
+	log.Info(fmt.Sprintf("Performing full hVM header state restore starting at block %s @ %d",
+		cursor.Hash().String(), cursor.Number.Uint64()))
 
 	for {
 		// Print out progress so we know restore is progressing
@@ -476,8 +476,8 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 	potentialHeader := bc.GetHeaderByHash(potentialBlockHash)
 	if potentialHeader != nil {
 		// TBC has already been progressed with EVM blocks prior
-		log.Info("Setup hVM's header-only TBC node, it is currently at state representing block %s @ %d",
-			potentialHeader.Hash().String, potentialHeader.Number.Uint64())
+		log.Info(fmt.Sprintf("Setup hVM's header-only TBC node, it is currently at state representing block %s @ %d",
+			potentialHeader.Hash().String, potentialHeader.Number.Uint64()))
 	} else {
 		// TBC's stateId doesn't correspond to a known block.
 		// It is either in an invalid state, or it's in genesis configuration.
@@ -2360,12 +2360,12 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	bc.currentBlock.Store(block.Header())
 	headBlockGauge.Update(int64(block.NumberU64()))
 
-	log.Info("Updating hVM header consensus to block %s @ %d in writeHeadBlock()",
-		block.Hash().String(), block.Number().Uint64())
+	log.Info(fmt.Sprintf("Updating hVM header consensus to block %s @ %d in writeHeadBlock()",
+		block.Hash().String(), block.Number().Uint64()))
 	err := bc.updateHvmHeaderConsensus(block.Header())
 	if err != nil {
-		log.Crit("Unable to update hVM header consensus to block %s @ %d in writeHeadBlock()",
-			block.Hash().String(), block.Number().Uint64(), "err", err)
+		log.Crit(fmt.Sprintf("Unable to update hVM header consensus to block %s @ %d in writeHeadBlock()",
+			block.Hash().String(), block.Number().Uint64()), "err", err)
 	}
 }
 
@@ -2888,14 +2888,14 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	// Set new head.
 	if status == CanonStatTy {
 		bc.writeHeadBlock(block)
-		log.Info("Updating hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
-			block.Hash().String(), block.Number().Uint64())
+		log.Info(fmt.Sprintf("Updating hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
+			block.Hash().String(), block.Number().Uint64()))
 		// Update lightweight TBC header view of Bitcoin to account for this new tip
 		err := bc.updateHvmHeaderConsensus(block.Header())
 		if err != nil {
 			// TODO: Recovery of lightweight TBC
-			log.Crit("Unable to update hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
-				block.Hash().String(), block.Number().Uint64(), "err", err)
+			log.Crit(fmt.Sprintf("Unable to update hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
+				block.Hash().String(), block.Number().Uint64()), "err", err)
 		}
 		err = bc.updateFullTBCToLightweight()
 		if err != nil {
@@ -3240,7 +3240,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 		var indexedState *tbc.SyncInfo // Original state of TBC Full Node to revert to when necessary
 		isHvmActivated := false
 		isFirstHvmBlock := false
-		log.Info("Processing block %s @ %d", block.Hash().String(), block.NumberU64())
+		log.Info(fmt.Sprintf("Processing block %s @ %d", block.Hash().String(), block.NumberU64()))
 		if bc.hvmEnabled {
 			var parent *types.Header
 
@@ -3931,12 +3931,12 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	}
 	bc.writeHeadBlock(head)
 
-	log.Info("Updating hVM header consensus to block %s @ %d in SetCanonical()",
-		head.Hash().String(), head.Number().Uint64())
+	log.Info(fmt.Sprintf("Updating hVM header consensus to block %s @ %d in SetCanonical()",
+		head.Hash().String(), head.Number().Uint64()))
 	err := bc.updateHvmHeaderConsensus(head.Header())
 	if err != nil {
-		log.Crit("Unable to update hVM header consensus to block %s @ %d in SetCanonical()",
-			head.Hash().String(), head.Number().Uint64(), "err", err)
+		log.Crit(fmt.Sprintf("Unable to update hVM header consensus to block %s @ %d in SetCanonical()",
+			head.Hash().String(), head.Number().Uint64()), "err", err)
 	}
 
 	// Emit events
