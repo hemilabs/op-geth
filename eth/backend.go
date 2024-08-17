@@ -253,6 +253,8 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		tbcCfg.EffectiveGenesisBlock = genesisHeader
 		tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
 		tbcCfg.LevelDBHome = config.HvmHeaderDataDir
+		tbcCfg.BlockCache = 0
+		tbcCfg.BlockheaderCache = 0
 
 		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
 		tbcCfg.Network = "testnet3"
