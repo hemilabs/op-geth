@@ -1431,9 +1431,9 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	fullCursorHash := fullTipHeader.BlockHash()
 
 	log.Info(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for the next block after "+
-		"%s %d, lightweight TBC node consensus tip is %s @ %d, full TBC node consensus tip is %s @ %d",
-		lastTip.Hash().String(), lastTip.Number.Uint64(), lightCursorHash[:], lightCursorHeight,
-		fullCursorHash[:], fullCursorHeight))
+		"%s @ %d, lightweight TBC node consensus tip is %s @ %d, full TBC node consensus tip is %s @ %d",
+		lastTip.Hash().String(), lastTip.Number.Uint64(), lightCursorHash.String(), lightCursorHeight,
+		fullCursorHash.String(), fullCursorHeight))
 
 	// Walk back the light cursor until we get to the same height if it's ahead
 	for lightCursorHeight > fullCursorHeight {

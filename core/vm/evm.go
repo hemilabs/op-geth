@@ -17,6 +17,7 @@
 package vm
 
 import (
+	"golang.org/x/exp/maps"
 	"math/big"
 	"sync/atomic"
 
@@ -43,17 +44,19 @@ type (
 
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	var precompiles map[common.Address]PrecompiledContract
+
+	// TODO MAX: Better logic for avoiding clone
 	switch {
 	case evm.chainRules.IsCancun:
-		precompiles = PrecompiledContractsCancun
+		precompiles = maps.Clone(PrecompiledContractsCancun)
 	case evm.chainRules.IsBerlin:
-		precompiles = PrecompiledContractsBerlin
+		precompiles = maps.Clone(PrecompiledContractsBerlin)
 	case evm.chainRules.IsIstanbul:
-		precompiles = PrecompiledContractsIstanbul
+		precompiles = maps.Clone(PrecompiledContractsIstanbul)
 	case evm.chainRules.IsByzantium:
-		precompiles = PrecompiledContractsByzantium
+		precompiles = maps.Clone(PrecompiledContractsByzantium)
 	default:
-		precompiles = PrecompiledContractsHomestead
+		precompiles = maps.Clone(PrecompiledContractsHomestead)
 	}
 
 	if evm.chainRules.IsHvm0 {

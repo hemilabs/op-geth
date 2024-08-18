@@ -58,6 +58,7 @@ type PrecompiledContract interface {
 type hVMQueryKey [32]byte
 
 var TBCFullNode *tbc.Server
+var TBCHeaderNode *tbc.Server
 var tbcChainParams *chaincfg.Params
 
 // TODO: Cache this on-disk at some point, will need to persist restarts to correctly provide execution traces for old txs
@@ -578,7 +579,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 
 	// Walk backwards until our cursor matches the ancestor
 	for !bytes.Equal(cursorHash[:], ancestorToTargetHash[:]) {
-		log.Info(fmt.Sprintf("Cursor of %x does not match ancestorToTarget of %x", cursorHash.String(), ancestorToTargetHash.String()))
+		log.Info(fmt.Sprintf("Cursor of %s does not match ancestorToTarget of %s", cursorHash.String(), ancestorToTargetHash.String()))
 		available, err := TBCFullNode.FullBlockAvailable(ctx, &cursorHash)
 		if err != nil {
 			return false, err
