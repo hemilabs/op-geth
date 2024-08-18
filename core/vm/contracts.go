@@ -507,12 +507,15 @@ func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.Ha
 // whether all blocks required to index after walking back to that common ancestor are available.
 //
 // If TBC's UTXO and Tx indexers are not in the same state, this function will determine whether all blocks
-// are available based on the commnon ancestor of the misaligned indexer tips (such that reconciling the
-// indexer tips and then moving to the specified endingHeader would have all required blocks.
+// are available based on the common ancestor of the misaligned indexer tips (such that reconciling the
+// indexer tips and then moving to the specified endingHeader would have all required blocks).
 func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHeader) (bool, error) {
 	syncInfo := TBCFullNode.Synced(ctx)
 	utxoSync := syncInfo.Utxo
 	txSync := syncInfo.Tx
+
+	log.Info(fmt.Sprintf("TBCBlocksAvailableToHeader called with endingHeader=%s, UTXOs synced to: "+
+		"%s and Txs synced to: %s", endingHeader.BlockHash().String(), utxoSync.Hash.String(), txSync.Hash.String()))
 
 	// When both indexers are at the same header, this will be that header.
 	// If the indexers are at different positions, this will be the common
@@ -525,6 +528,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		}
 		return false, err
 	}
+	log.Info(fmt.Sprintf("CommonIndexTip=%s", commonIndexTip.BlockHash().String()))
 	tipHH, err := hashHeightForHeader(ctx, commonIndexTip)
 	if err != nil {
 		if errors.As(err, &database.ErrNotFound) {
@@ -548,6 +552,8 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		}
 		return false, err
 	}
+	log.Info(fmt.Sprintf("AncestorToTarget=%s", ancestorToTarget.BlockHash().String()))
+
 	ancestorToTargetHash := ancestorToTarget.BlockHash()
 	_, ancestorHeight, err := TBCFullNode.BlockHeaderByHash(ctx, &ancestorToTargetHash)
 	if err != nil {
@@ -572,6 +578,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 
 	// Walk backwards until our cursor matches the ancestor
 	for !bytes.Equal(cursorHash[:], ancestorToTargetHash[:]) {
+		log.Info(fmt.Sprintf("Cursor of %x does not match ancestorToTarget of %x", cursorHash.String(), ancestorToTargetHash.String()))
 		available, err := TBCFullNode.FullBlockAvailable(ctx, &cursorHash)
 		if err != nil {
 			return false, err
@@ -595,7 +602,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 				" %x looking for %x, walked to height=%d but ancestorHeight=%d", endingHash[:],
 				ancestorToTargetHash[:], height, ancestorHeight)
 		}
-		cursorHash = cursor.PrevBlock
+		cursorHash = cursor.BlockHash()
 	}
 
 	// Above for loop exited meaning all blocks from the target back to common ancestor with
