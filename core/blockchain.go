@@ -1974,7 +1974,8 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 			log.Crit(fmt.Sprintf("Encountered an error applying hVM header state transition for block %s @ %d",
 				newHead.Hash().String(), newHead.Number.Uint64()), "err", err)
 		}
-		log.Info(fmt.Sprintf("Successfully applied hVM header state transition for single block %s @ %d"))
+		log.Info(fmt.Sprintf("Successfully applied hVM header state transition for single block %s @ %d",
+			newHead.Hash().String(), newHead.Number.Uint64()))
 	} else if bytes.Equal(currentHead.Hash().Bytes(), ancestor.Hash().Bytes()) {
 		// If currentHead is the ancestor, then we are walking directly forwards.
 		err := bc.walkHvmHeaderConsensusForward(currentHead, newHead)
