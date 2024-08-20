@@ -1212,6 +1212,8 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		log.Crit(fmt.Sprintf("when processing block %s @ %d, unable to retrieve tip from lightweight TBC!",
 			header.Hash().String(), header.Number.Uint64()), "err", err)
 	}
+	log.Info(fmt.Sprintf("before processing BTC headers from block %s @ %d, the lightweight TBC node's tip "+
+		"is %s @ %d", header.Hash().String(), header.Number.Uint64(), prevTip.BlockHash().String(), prevHeight))
 
 	prevTipHash := prevTip.BlockHash()
 
