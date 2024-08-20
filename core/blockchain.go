@@ -1233,7 +1233,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		// BTC Attributes Deposited transaction communicates at least one new header, store the last one for reference
 		lastHeader = &btcAttrDep.Headers[headersToAdd-1]
 
-		it, lbh, cbh, err := bc.tbcHeaderNode.AddExternalHeaders(
+		it, cbh, lbh, err := bc.tbcHeaderNode.AddExternalHeaders(
 			context2.Background(), btcAttrDep.Headers, &stateTransitionTargetHash)
 		if err != nil {
 			// TODO: Bubble this error up to cause a block rejection instead
