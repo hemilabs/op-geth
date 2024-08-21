@@ -439,10 +439,13 @@ func (bc *BlockChain) performFullHvmHeaderStateRestore() {
 func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 	log.Info("Resetting hVM header TBC node to genesis")
 	if bc.tbcHeaderNode != nil {
+		log.Info("Header-only TBC instance running, tearing down...")
 		err := bc.tbcHeaderNode.ExternalHeaderTearDown()
 		if err != nil {
 			log.Crit("resetHvmHeaderNodeToGenesis failed when calling ExternalHeaderTearDown on TBC", "err", err)
 		}
+	} else {
+		log.Info("Header-only TBC instance is not running, nothing to tear down.")
 	}
 
 	dataDir := bc.tbcHeaderNodeConfig.LevelDBHome
@@ -450,6 +453,13 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 		log.Crit(fmt.Sprintf("ResetHvmHeaderNodeToGenesis unable to delete external header mode TBC "+
 			"data directory %s", dataDir))
 	}
+
+	if _, err := os.Open(dataDir); os.IsNotExist(err) {
+		log.Info(fmt.Sprintf("The data directory %s does not exist", dataDir))
+	} else {
+		log.Info(fmt.Sprintf("The data directory %s exists", dataDir))
+	}
+
 	log.Info("Deleted hVM header TBC node data directory", "dataDir", dataDir)
 
 	bc.initHvmHeaderNode(bc.tbcHeaderNodeConfig)
