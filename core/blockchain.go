@@ -496,8 +496,9 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 			}
 		} else {
 			// TBC is in an invalid state
-			// TODO: Attempt a full restore automatically
-			log.Crit(fmt.Sprintf("Header-only TBC is in an invalid state on startup with a stateId of %x", stateId))
+			log.Info(fmt.Sprintf("The hVM header-only TBC node has an invaid state on startup; statId=%x, "+
+				"attempting full restore from hVM activation height", stateId))
+			bc.performFullHvmHeaderStateRestore()
 		}
 	}
 
@@ -1968,7 +1969,7 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 		newHead.Number.Uint64(), ancestor.Hash().String(), ancestor.Number.Uint64()))
 
 	// If currentHead is direct parent, then just apply state change from newHead
-	if newHead.ParentHash.Cmp(ancestor.Hash()) == 0 {
+	if newHead.ParentHash.Cmp(currentHead.Hash()) == 0 {
 		err := bc.applyHvmHeaderConsensusUpdate(newHead)
 		if err != nil {
 			// TODO: This is where we should invalidate the block OR attempt to recover hVM state from genesis
