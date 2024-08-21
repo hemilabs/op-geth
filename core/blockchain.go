@@ -452,10 +452,10 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 	}
 	log.Info("Deleted hVM header TBC node data directory", "dataDir", dataDir)
 
-	bc.SetupHvmHeaderNode(bc.tbcHeaderNodeConfig)
+	bc.initHvmHeaderNode(bc.tbcHeaderNodeConfig)
 }
 
-func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
+func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	if config.ExternalHeaderMode != true {
 		log.Crit("SetupHvmHeaderNode called with a TBC config that does not have ExternalHeaderMode set")
 	}
@@ -469,15 +469,22 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 		log.Crit("SetupHvmHeaderNode unable to run ExternalHeaderSetup on TBC", "err", err)
 	}
 
-	// Get the current state ID
-	stateId, err := tbcHeaderNode.UpstreamStateId(context2.Background())
-
-	potentialBlockHash := common.BytesToHash(stateId[:])
-	potentialHeader := bc.GetHeaderByHash(potentialBlockHash)
-
 	bc.tbcHeaderNode = tbcHeaderNode
 	bc.tbcHeaderNodeConfig = config
 	bc.hvmEnabled = true
+}
+
+func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
+	bc.initHvmHeaderNode(config)
+
+	// Get the current state ID
+	stateId, err := bc.tbcHeaderNode.UpstreamStateId(context2.Background())
+	if err != nil {
+		log.Crit("Unable to get upstream state ID from TBC header node", "err", err)
+	}
+
+	potentialBlockHash := common.BytesToHash(stateId[:])
+	potentialHeader := bc.GetHeaderByHash(potentialBlockHash)
 
 	if potentialHeader != nil {
 		// TBC has already been progressed with EVM blocks prior
@@ -487,15 +494,17 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 		// TBC's stateId doesn't correspond to a known block.
 		// It is either in an invalid state, or it's in genesis configuration.
 
-		_, bestHeader, err := tbcHeaderNode.BlockHeaderBest(context2.Background())
+		_, bestHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
 		if err != nil {
 			log.Crit("SetupHvmHeaderNode unable to get Best header on TBC", "err", err)
 		}
 		bestHeaderHash := bestHeader.BlockHash()
 		genesisHash := config.EffectiveGenesisBlock.BlockHash()
+
+		// TODO: Decide whether this check for genesis belongs in init instead of setup
 		if bytes.Equal(bestHeaderHash[:], genesisHash[:]) {
 			// TBC is in genesis state, set its state id to the genesis id
-			err := tbcHeaderNode.SetUpstreamStateId(context2.Background(), &hVMGenesisUpstreamId)
+			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &hVMGenesisUpstreamId)
 			if err != nil {
 				log.Crit("SetupHvmHeaderNode unable to set upstream state id", "err", err)
 			}
