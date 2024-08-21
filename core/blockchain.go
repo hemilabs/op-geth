@@ -29,6 +29,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
@@ -449,6 +450,10 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 	}
 
 	dataDir := bc.tbcHeaderNodeConfig.LevelDBHome
+
+	path, _ := filepath.Abs(dataDir)
+	log.Info(fmt.Sprintf("Full path: %s", path))
+
 	if err := os.RemoveAll(dataDir); err != nil {
 		log.Crit(fmt.Sprintf("ResetHvmHeaderNodeToGenesis unable to delete external header mode TBC "+
 			"data directory %s", dataDir))
@@ -463,20 +468,24 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 	log.Info("Deleted hVM header TBC node data directory", "dataDir", dataDir)
 
 	bc.initHvmHeaderNode(bc.tbcHeaderNodeConfig)
+	err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &hVMGenesisUpstreamId)
+	if err != nil {
+		log.Crit("When resetting hVM header-only node to genesis, unable to set upstream state id to genesis state id")
+	}
 }
 
 func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	if config.ExternalHeaderMode != true {
-		log.Crit("SetupHvmHeaderNode called with a TBC config that does not have ExternalHeaderMode set")
+		log.Crit("initHvmHeaderNode called with a TBC config that does not have ExternalHeaderMode set")
 	}
 
 	tbcHeaderNode, err := tbc.NewServer(config)
 	if err != nil {
-		log.Crit("SetupHvmHeaderNode unable to create new TBC server", "err", err)
+		log.Crit("initHvmHeaderNode unable to create new TBC server", "err", err)
 	}
 	err = tbcHeaderNode.ExternalHeaderSetup(context2.Background())
 	if err != nil {
-		log.Crit("SetupHvmHeaderNode unable to run ExternalHeaderSetup on TBC", "err", err)
+		log.Crit("initHvmHeaderNode unable to run ExternalHeaderSetup on TBC", "err", err)
 	}
 
 	bc.tbcHeaderNode = tbcHeaderNode
