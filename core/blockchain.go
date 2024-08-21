@@ -474,6 +474,11 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 
 	potentialBlockHash := common.BytesToHash(stateId[:])
 	potentialHeader := bc.GetHeaderByHash(potentialBlockHash)
+
+	bc.tbcHeaderNode = tbcHeaderNode
+	bc.tbcHeaderNodeConfig = config
+	bc.hvmEnabled = true
+
 	if potentialHeader != nil {
 		// TBC has already been progressed with EVM blocks prior
 		log.Info(fmt.Sprintf("Setup hVM's header-only TBC node, it is currently at state representing block %s @ %d",
@@ -501,10 +506,6 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 			bc.performFullHvmHeaderStateRestore()
 		}
 	}
-
-	bc.tbcHeaderNode = tbcHeaderNode
-	bc.tbcHeaderNodeConfig = config
-	bc.hvmEnabled = true
 }
 
 // NewBlockChain returns a fully initialised block chain using information
