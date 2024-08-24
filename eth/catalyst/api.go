@@ -227,8 +227,9 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	api.forkchoiceLock.Lock()
 	defer api.forkchoiceLock.Unlock()
 
-	log.Info("Engine API request received", "method", "ForkchoiceUpdated", "head", update.HeadBlockHash, "finalized", update.FinalizedBlockHash, "safe", update.SafeBlockHash)
+	log.Trace("Engine API request received", "method", "ForkchoiceUpdated", "head", update.HeadBlockHash, "finalized", update.FinalizedBlockHash, "safe", update.SafeBlockHash)
 	log.Info(fmt.Sprintf("forkchoiceUpdated, payloadAttributes=%v", payloadAttributes))
+	log.Info(fmt.Sprintf("Engine API forkchoice updated, head=%s, finalized=%s, safe=%s", update.HeadBlockHash.String(), update.FinalizedBlockHash.String(), update.SafeBlockHash.String()))
 
 	if update.HeadBlockHash == (common.Hash{}) {
 		log.Warn("Forkchoice requested update to zero hash")
@@ -243,6 +244,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	// need to either trigger a sync, or to reject this forkchoice update for a
 	// reason.
 	block := api.eth.BlockChain().GetBlockByHash(update.HeadBlockHash)
+	log.Info(fmt.Sprintf("ForkchoiceUpdated command requests we set head to %s @ %d", block.Hash().String(), block.NumberU64()))
 	if block == nil {
 		// If this block was previously invalidated, keep rejecting it here too
 		if res := api.checkInvalidAncestor(update.HeadBlockHash, update.HeadBlockHash); res != nil {
