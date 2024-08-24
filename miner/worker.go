@@ -1132,6 +1132,8 @@ func (w *worker) generateWork(genParams *generateParams) *newPayloadResult {
 		work.tcount++
 	}
 
+	log.Info(fmt.Sprintf("In generateWork, genParams.noTxs = %t and txcount=%d", genParams.noTxs, len(genParams.txs)))
+
 	// forced transactions done, fill rest of block with transactions
 	if !genParams.noTxs {
 		// First, check whether a new Bitcoin Attributes Deposited tx should be included.

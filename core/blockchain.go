@@ -1756,7 +1756,7 @@ func (bc *BlockChain) headersBetweenBlocks(ancestor *types.Header, head *types.H
 
 	cursor := head
 	path[headIndex-ancestorIndex] = cursor
-	for index := headIndex - ancestorIndex - 1; index >= 0; index-- {
+	for index := int32(headIndex - ancestorIndex - 1); index >= 0; index-- {
 		// Don't overwrite cursor so we can print error correctly
 		cursorTmp := bc.getHeaderFromDiskOrHoldingPen(cursor.ParentHash)
 		if cursorTmp == nil {
