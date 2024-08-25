@@ -1349,6 +1349,13 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	}
 	defer bc.chainmu.Unlock()
 
+	// Don't generate a Bitcoin Attributes deposited transaction unless we're building for a recent block.
+	// XXX: Move this upstream?
+	if timestamp-uint64(time.Now().Unix()) > 60*60 {
+		// No error, but no BTC Attributes Dep tx
+		return nil, nil
+	}
+
 	if !bc.hvmEnabled {
 		// hVM not enabled, nothing to do
 		return nil, nil
