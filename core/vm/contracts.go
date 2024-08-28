@@ -1252,6 +1252,8 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	copy(txid[0:32], input[0:32])
 	slices.Reverse(txid)
 
+	log.Info(fmt.Sprintf("Looking up txid %x", txid))
+
 	bitflag1 := input[32]
 	includeTxHash := bitflag1&(0x01<<7) != 0
 	includeContainingBlock := bitflag1&(0x01<<6) != 0
@@ -1288,7 +1290,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	maxInputScriptSigSize := 0x01 << (4 + maxInputScriptSigSizeExponent)
 	maxOutputScriptSize := 0x01 << (4 + maxOutputScriptSizeExponent)
 
-	log.Debug("btcTxByTxid called", "includeTxHash", includeTxHash,
+	log.Info("btcTxByTxid called", "includeTxHash", includeTxHash,
 		"includeContainingBlock", includeContainingBlock, "includeVersion", includeVersion,
 		"includeSizes", includeSizes, "includeLockTime", includeLockTime, "includeInputs", includeInputs,
 		"includeInputSource", includeInputSource, "includeInputScriptSig", includeInputScriptSig,
@@ -1427,11 +1429,15 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				// resp = append(resp, byte(len(addrBytes)))
 				// resp = append(resp, addrBytes...) // TODO: right now this is just ASCII->Bytes, consider changing to Base58 decode? Could be flag option
 			}
+
+			// XXX re-enable this
+			includeOutputSpent = false
+
 			if includeOutputSpent {
 				spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), &ch, uint32(idx))
 
 				if err != nil {
-					log.Warn("Unable to lookup output spend status", "txid", txid)
+					log.Warn("Unable to lookup output spend status", "txid", txid, "err", err)
 					return nil, nil
 				}
 
@@ -1456,7 +1462,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		}
 	}
 
-	log.Debug("btcTxByTxid returning data", "returnedData", fmt.Sprintf("%x", resp))
+	log.Info("btcTxByTxid returning data", "returnedData", fmt.Sprintf("%x", resp))
 	if isValidBlock(blockContext) {
 		hvmQueryMap[k] = resp
 	}

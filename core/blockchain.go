@@ -1448,6 +1448,8 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// Note this is looking at what block headers the TBC full node knows about, so is unrelated to
 	// where the full node is indexed to.
 	if bytes.Equal(lightTipHash[:], fullTipHash[:]) {
+		log.Info(fmt.Sprintf("lightTipHash %s == fullTipHash %s, not generating Bitcoin Attributes Deposited "+
+			"transaction", lightTipHash.String(), fullTipHash.String()))
 		// Both TBC nodes have same consensus tip, nothing to do
 		return nil, nil
 	}
@@ -1678,8 +1680,8 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// if len(headersToAdd) > types.MaximumBtcHeadersInTx {
 	// 	headersToAdd = headersToAdd[0:types.MaximumBtcHeadersInTx]
 	// }
-	if len(headersToAdd) > 1 {
-		headersToAdd = headersToAdd[0:1] // Temporarily limit to 1 at generation level, not validation level
+	if len(headersToAdd) > 3 {
+		headersToAdd = headersToAdd[0:3] // Temporarily limit to 3 at generation level, not validation level
 	}
 
 	// Serialize headers to bytes
