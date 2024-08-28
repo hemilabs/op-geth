@@ -1430,15 +1430,13 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				// resp = append(resp, addrBytes...) // TODO: right now this is just ASCII->Bytes, consider changing to Base58 decode? Could be flag option
 			}
 
-			// XXX re-enable this
-			includeOutputSpent = false
-
 			if includeOutputSpent {
 				spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), &ch, uint32(idx))
 
 				if err != nil {
 					log.Warn("Unable to lookup output spend status", "txid", txid, "err", err)
-					return nil, nil
+					// return nil, nil
+					spentBool = false
 				}
 
 				spent := byte(0)
