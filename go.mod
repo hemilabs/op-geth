@@ -41,7 +41,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/graph-gophers/graphql-go v1.3.0
 	github.com/hashicorp/go-bexpr v0.1.10
-	github.com/hemilabs/heminetwork v0.1.3-0.20240618145952-8f50444115c7
+	github.com/hemilabs/heminetwork v0.2.5-0.20240909065407-34b10f93498d
 	github.com/holiman/billy v0.0.0-20230718173358-1c7e68d277a7
 	github.com/holiman/bloomfilter/v2 v2.0.3
 	github.com/holiman/uint256 v1.2.4
@@ -152,7 +152,7 @@ require (
 	golang.org/x/net v0.21.0 // indirect
 	google.golang.org/protobuf v1.33.0 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
-	nhooyr.io/websocket v1.8.10 // indirect
+	nhooyr.io/websocket v1.8.11 // indirect
 	rsc.io/tmplfunc v0.0.3 // indirect
 )
 

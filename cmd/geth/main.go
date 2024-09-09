@@ -54,7 +54,7 @@ import (
 
 const (
 	clientIdentifier     = "geth" // Client identifier to advertise over the network
-	defaultTbcInitHeight = 2585811
+	defaultTbcInitHeight = 860400
 )
 
 var (
