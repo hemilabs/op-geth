@@ -22,6 +22,7 @@ import (
 	context2 "context"
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/database/tbcd"
@@ -1101,10 +1102,18 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		log.Crit(fmt.Sprintf("when unapplying hVM changes from block %s @ %d, unable to serialize "+
 			"tip from lightweight TBC!", header.Hash().String(), header.Number.Uint64()), "err", err)
 	}
-	expectedPreviousTipBytes := [80]byte(expectedPreviousTipBuf.Bytes())
+
+	reconstitutedHeaders, err := unflattenBTCHeaders(btcAttrDep.Headers)
+	if err != nil {
+		// This is a critical failure as the headers should be valid if the hVM consensus update we are
+		// unapplying was able to be applied in the first place
+		log.Crit(fmt.Sprintf("when unapplying hVM changes for block %s @ %d, unable to unflatten "+
+			"one of the BTC headers from the block", header.Hash().String(), header.Number.Uint64()),
+			"err", err)
+	}
 
 	rt, lastHeader, err := bc.tbcHeaderNode.RemoveExternalHeaders(
-		context2.Background(), btcAttrDep.Headers, expectedPreviousTipBytes, &stateTransitionTargetHash)
+		context2.Background(), reconstitutedHeaders, expectedPreviousTip, &stateTransitionTargetHash)
 	if err != nil {
 		// This is a critical failure, not related to block validity
 		// TODO: TBC recovery from genesis
@@ -1247,24 +1256,22 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 
 	prevTipHash := prevTip.BlockHash()
 
-	var prevTipBuf bytes.Buffer
-	err = prevTip.Serialize(&prevTipBuf)
-	if err != nil {
-		// This is a critical failure, not related to block validity
-		// TODO: Same recovery mode mentioned above
-		log.Crit(fmt.Sprintf("when processing block %s @ %d, unable to serialize tip from lightweight TBC!",
-			header.Hash().String(), header.Number.Uint64()), "err", err)
-	}
-	prevTipBytes := [80]byte(prevTipBuf.Bytes())
-
 	headersToAdd := len(btcAttrDep.Headers)
 	var lastHeader *[80]byte
 	if headersToAdd > 0 {
 		// BTC Attributes Deposited transaction communicates at least one new header, store the last one for reference
 		lastHeader = &btcAttrDep.Headers[headersToAdd-1]
 
-		it, cbh, lbh, err := bc.tbcHeaderNode.AddExternalHeaders(
-			context2.Background(), btcAttrDep.Headers, &stateTransitionTargetHash)
+		reconstitutedHeaders, err := unflattenBTCHeaders(btcAttrDep.Headers)
+		if err != nil {
+			// TODO: Bubble this error up to cause a block rejection instead
+			log.Crit(fmt.Sprintf("when unapplying hVM changes for block %s @ %d, unable to unflatten "+
+				"one of the BTC headers from the block", header.Hash().String(), header.Number.Uint64()),
+				"err", err)
+		}
+
+		it, cbh, lbh, _, err := bc.tbcHeaderNode.AddExternalHeaders(
+			context2.Background(), reconstitutedHeaders, &stateTransitionTargetHash)
 		if err != nil {
 			// TODO: Bubble this error up to cause a block rejection instead
 			log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which contains"+
@@ -1288,7 +1295,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 			// Remove the added headers and set the canonical tip and previous upstream state id back to
 			// what it was prior to the invalid addition
 			rt, removalParent, err := bc.tbcHeaderNode.RemoveExternalHeaders(
-				context2.Background(), btcAttrDep.Headers, prevTipBytes, previousStateTransitionHash)
+				context2.Background(), reconstitutedHeaders, prevTip, previousStateTransitionHash)
 
 			if err != nil {
 				// TODO: Recovery
@@ -1684,6 +1691,33 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		headersToAdd = headersToAdd[0:3] // Temporarily limit to 3 at generation level, not validation level
 	}
 
+	// Walk up headersToAdd, and truncate blocks that TBC Full Node does not have complete information for
+	for i := 0; i < len(headersToAdd); i++ {
+		hashToCheck := headersToAdd[i].BlockHash()
+		headerAvailable, err := vm.TBCFullNode.FullBlockAvailable(context2.Background(), &hashToCheck)
+		if err != nil {
+			log.Crit(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for the next block after "+
+				"%s @ %d, but TBC full node was unable to determine whether the full block for hash %s is available",
+				lastTip.Hash().String(), lastTip.Number.Uint64(), hashToCheck.String()), "err", err)
+		}
+
+		if !headerAvailable {
+			// Header is not available; if this is the first block then return nothing, otherwise truncate
+			if i == 0 {
+				// No blocks to add
+				return nil, nil
+			} else {
+				log.Info(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for the next block "+
+					"after %s @ %d, and TBC Full Node does not have the full block for %s, so removing from headers "+
+					"to add to hVM's lightweight view", lastTip.Hash().String(), lastTip.Number.Uint64(),
+					hashToCheck.String()))
+
+				headersToAdd = headersToAdd[0 : i-1]
+				break
+			}
+		}
+	}
+
 	// Serialize headers to bytes
 	headersToAddSerialized, err := types.SerializeHeadersToArray(headersToAdd)
 	if err != nil {
@@ -1697,7 +1731,23 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// if there is a split tip or if we are handling a BTC reorg that is more than
 	// MaximumBtcHeadersInTx deep and requires multiple Bitcoin Attributes Deposited transactions
 	// to communicate enough headers for it to be considered canonical by our lightweight view.
-	_, canonical, _, err := bc.tbcHeaderNode.AddExternalHeaders(context2.Background(), *headersToAddSerialized, &hVMDummyUpstreamId)
+
+	// Convert []wire.BlockHeader to []*wire.BlockHeader
+	// TODO: Review this, should we use []*wire.BlockHeader the entire time to be consistent?
+	headersToAddPtr := make([]*wire.BlockHeader, len(headersToAdd))
+	for i := 0; i < len(headersToAdd); i++ {
+		headersToAddPtr[i] = &headersToAdd[i]
+	}
+
+	msgHeaders := &wire.MsgHeaders{
+		Headers: headersToAddPtr,
+	}
+
+	_, canonical, _, _, err := bc.tbcHeaderNode.AddExternalHeaders(
+		context2.Background(),
+		msgHeaders,
+		&hVMDummyUpstreamId)
+
 	if err != nil {
 		first := headersToAdd[0].BlockHash()
 		last := headersToAdd[len(headersToAdd)-1].BlockHash()
@@ -1708,12 +1758,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	}
 
 	// Revert lightweight TBC's view back to what it was before we started.
-	priorTip, err := types.SerializeHeader(*lightTipHeader)
-	if err != nil {
-		log.Crit(fmt.Sprintf("Unable to serialize header for block %x while creating Bitcoin Attributes "+
-			"Deposited transaction", lightTipHash[:]), "err", err)
-	}
-	rt, prevHeader, err := bc.tbcHeaderNode.RemoveExternalHeaders(context2.Background(), *headersToAddSerialized, *priorTip, originalTbcUpstreamId)
+	rt, prevHeader, err := bc.tbcHeaderNode.RemoveExternalHeaders(context2.Background(), msgHeaders, lightTipHeader, originalTbcUpstreamId)
 	if err != nil {
 		first := headersToAdd[0].BlockHash()
 		last := headersToAdd[len(headersToAdd)-1].BlockHash()
@@ -1879,13 +1924,22 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 	cursorHeight, cursorHeader := lightTipHeight, lightTipHeader
 	cursorHash := cursorHeader.BlockHash()
 
+	// Special case to fix an issue with testnet3 difficulty bomb - when difficulty is low, give a longer tip lag
+	// TODO: Review logic before updating public testnet
+	effectiveHVMIndexerTipLag := uint64(hVMIndexerTipLag)
+	lowDiffThreshold := blockchain.CalcWork(436469756) // = 0x1a03fffc = difficulty of 4194304
+	tipDiff := blockchain.CalcWork(cursorHeader.Bits)
+	if tipDiff.Cmp(lowDiffThreshold) <= 0 {
+		effectiveHVMIndexerTipLag = 100 // Lag 100 blocks during low difficulty
+	}
+
 	// walk back hVMIndexerTipLag blocks from tip
 	// On initial init when we have less than hVMIndexerTipLag previous blocks (right after
 	// hVM0 phase transition), correct indexer behavior is to remain at the genesis-configured
 	// height until walking backwards the specified number of lag blocks doesn't surpass
 	// configured genesis.
-	if cursorHeight-hVMIndexerTipLag > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
-		for i := 0; i < hVMIndexerTipLag; i++ {
+	if cursorHeight-effectiveHVMIndexerTipLag > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
+		for i := uint64(0); i < effectiveHVMIndexerTipLag; i++ {
 			head, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
 			if err != nil {
 				log.Crit(fmt.Sprintf("an error occurred walking back Bitcoin headers from lightweight "+
@@ -4127,4 +4181,31 @@ func (bc *BlockChain) SetTrieFlushInterval(interval time.Duration) {
 // GetTrieFlushInterval gets the in-memory tries flush interval
 func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
+}
+
+func unflattenBTCHeaders(rawHeaders [][types.BitcoinHeaderLengthBytes]byte) (*wire.MsgHeaders, error) {
+	parsedHeaders := make([]*wire.BlockHeader, len(rawHeaders))
+	for i := 0; i < len(rawHeaders); i++ {
+		parsedHeader, err := bytes2Header(rawHeaders[i])
+		if err != nil {
+			log.Error(fmt.Sprintf("Error decoding Bitcoin header %x", rawHeaders[i][:]), "err", err)
+			return nil, err
+		}
+		parsedHeaders[i] = parsedHeader
+	}
+
+	msgHeaders := &wire.MsgHeaders{
+		Headers: parsedHeaders,
+	}
+
+	return msgHeaders, nil
+}
+
+func bytes2Header(header [80]byte) (*wire.BlockHeader, error) {
+	var bh wire.BlockHeader
+	err := bh.Deserialize(bytes.NewReader(header[:]))
+	if err != nil {
+		return nil, fmt.Errorf("deserialize block header: %w", err)
+	}
+	return &bh, nil
 }
