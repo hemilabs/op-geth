@@ -259,6 +259,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
 		tbcCfg.Network = "testnet3"
 
+		log.Info(fmt.Sprintf("Setting up hVM Header node with effectiveGenesisBlock=%s, genesisHeightOffset=%d, levelDBHome=%s, network=%s",
+			tbcCfg.EffectiveGenesisBlock.BlockHash().String(), tbcCfg.GenesisHeightOffset, tbcCfg.LevelDBHome, tbcCfg.Network))
+
 		eth.blockchain.SetupHvmHeaderNode(tbcCfg)
 	}
 	if err != nil {

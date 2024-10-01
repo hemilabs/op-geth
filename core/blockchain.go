@@ -489,6 +489,14 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 		log.Crit("initHvmHeaderNode unable to run ExternalHeaderSetup on TBC", "err", err)
 	}
 
+	height, header, err := tbcHeaderNode.BlockHeaderBest(context2.Background())
+	if err != nil {
+		log.Crit("initHvmHeaderNode unable to get best block header after initialization!", "err", err)
+	}
+
+	log.Info(fmt.Sprintf("After hVM external header node initialization, best header =s %s @ %d",
+		header.BlockHash().String(), height))
+
 	bc.tbcHeaderNode = tbcHeaderNode
 	bc.tbcHeaderNodeConfig = config
 	bc.hvmEnabled = true
