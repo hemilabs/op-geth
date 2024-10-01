@@ -70,8 +70,8 @@ var Defaults = Config{
 	RPCTxFeeCap:        1, // 1 ether
 	// TODO: Move hVM defaults somewhere else on a per-network basis
 	HvmEnabled:       true,
-	HvmGenesisHeader: "000000208da20778fef67076d6537157d4a95b0644b747b7a1505b11d6bba7f9000000005f784e2edbce65149bd37ab6472271dcb11559ed6de78391e7aa5f8a96155a5c78f9f966ffff001d0ac65ef7",
-	HvmGenesisHeight: 3008101,
+	HvmGenesisHeader: "00000020998d17a1f72d3e26255539bbc7562be72db661e133a80c4ccda0693300000000f9080627aa1a5298c06c0b8690760c35db9450ca5d1ec54aac7d123ea67db4145898fb66ffff001dc1f5957b",
+	HvmGenesisHeight: 3008497,
 	HvmHeaderDataDir: "~/.tbcdheaders", // TODO: put this in configured geth data directory
 
 }
