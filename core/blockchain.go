@@ -1933,6 +1933,9 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 		effectiveHVMIndexerTipLag = 100 // Lag 100 blocks during low difficulty
 	}
 
+	log.Info(fmt.Sprintf("effectiveHVMIndexerTipLag: %d", effectiveHVMIndexerTipLag))
+	log.Info(fmt.Sprintf("lightTipHeight=%d, lightTipHeader=%s", lightTipHeight, lightTipHeader.BlockHash().String()))
+
 	// walk back hVMIndexerTipLag blocks from tip
 	// On initial init when we have less than hVMIndexerTipLag previous blocks (right after
 	// hVM0 phase transition), correct indexer behavior is to remain at the genesis-configured
@@ -1950,6 +1953,9 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 			cursorHash = cursorHeader.BlockHash()
 		}
 	}
+
+	log.Info(fmt.Sprintf("After walking back from lightweight tip to determine full node indexer target,"+
+		" cursorHeight=%d, cursorHeader=%s", cursorHeight, cursorHeader.BlockHash().String()))
 
 	// Check that the TBC Full Node has sufficient chain knowledge to sync to this height.
 	// TODO: More intelligent handling of this in the future - adding to queue and processing later
@@ -1970,6 +1976,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 	}
 
 	// This single indexer function handles any reorgs required to move the TBC full node to the specified index
+	log.Info(fmt.Sprintf("Moving TBC Full Node indexes to BTC block %s", cursorHeader.BlockHash().String()))
 	err = vm.TBCIndexToHeader(cursorHeader)
 	if err != nil {
 		// TODO: Recovery?
