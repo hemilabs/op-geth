@@ -117,6 +117,8 @@ var (
 		0x44, 0x55, 0x4D, 0x4D, 0x59, 0x42, 0x4C, 0x4F, 0x43, 0x4B, // DUMMYBLOCK
 		0x44, 0x55, 0x4D, 0x4D, 0x59, 0x42, 0x4C, 0x4F, 0x43, 0x4B, // DUMMYBLOCK
 		0x0C, 0x0B, 0x0A, 0x09, 0x08, 0x07}
+
+	emptyArray = [32]byte{}
 )
 
 // Used for communicating chain geometry when finding common ancestor between blocks for hVM state transition
@@ -1073,13 +1075,15 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		}
 		cursor = bc.getBlockFromDiskOrHoldingPen(cursor.ParentHash())
 	}
-	if bytes.Equal(expectedPreviousTipHash[:], []byte{}) {
+	if bytes.Equal(expectedPreviousTipHash[:], emptyArray[:]) {
 		genHash := bc.tbcHeaderNodeConfig.EffectiveGenesisBlock.BlockHash()
 		copy(expectedPreviousTipHash[0:32], genHash[0:32])
-		log.Info("when unapplying hVM changes for block %s @ %d, got to block %s @ %d with timestamp "+
+		log.Info(fmt.Sprintf("when unapplying hVM changes for block %s @ %d, got to block %s @ %d with timestamp "+
 			"%d which is before the hVM Phase 0 activation timestamp %d, so previous canonical tip should be "+
 			"the genesis block %x", header.Hash().String(), header.Number.Uint64(), cursor.Hash().String(),
-			cursor.NumberU64(), cursor.Time, bc.chainConfig.Hvm0Time, genHash[:])
+			cursor.NumberU64(), cursor.Time, bc.chainConfig.Hvm0Time, genHash[:]))
+	} else {
+		log.Info(fmt.Sprintf("expectedPreviousTipHash=%x, is not zeroed", expectedPreviousTipHash[:]))
 	}
 
 	// Get the actual header represented by the previous canonical tip hash
