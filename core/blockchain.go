@@ -1926,7 +1926,7 @@ func (bc *BlockChain) walkHvmHeaderConsensusBack(currentHead *types.Header, newH
 }
 
 func (bc *BlockChain) updateFullTBCToLightweight() error {
-	// Update TBC Full Node's indexing to represent lightweight view minus 2 BTC blocks
+	// Update TBC Full Node's indexing to represent lightweight view minus 2 (unless testnet3 diff bomb) BTC blocks
 	lightTipHeight, lightTipHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
 	if err != nil {
 		return err
@@ -1939,10 +1939,73 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 	// Special case to fix an issue with testnet3 difficulty bomb - when difficulty is low, give a longer tip lag
 	// TODO: Review logic before updating public testnet
 	effectiveHVMIndexerTipLag := uint64(hVMIndexerTipLag)
-	lowDiffThreshold := blockchain.CalcWork(436469756) // = 0x1a03fffc = difficulty of 4194304
+
+	// 0x1a03fffc = difficulty of 4194304
+	// Chosen as reasonable testnet3 difficulty above which block production should not be easy enough for
+	// large reorgs to normally occur.
+	lowDiffThreshold := blockchain.CalcWork(436469756)
+
 	tipDiff := blockchain.CalcWork(cursorHeader.Bits)
 	if tipDiff.Cmp(lowDiffThreshold) <= 0 {
-		effectiveHVMIndexerTipLag = 100 // Lag 100 blocks during low difficulty
+		prevTipDiffLow := false
+		var prevHeader *wire.BlockHeader
+		if cursorHeight > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
+			// Grab previous block's difficulty.
+			prevHeader, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
+			if err != nil {
+				return err
+			}
+
+			prevHeaderDiff := blockchain.CalcWork(prevHeader.Bits)
+			if prevHeaderDiff.Cmp(lowDiffThreshold) <= 0 {
+				prevTipDiffLow = true
+			}
+		}
+
+		// If there are two blocks in a row with too low of a difficulty, set higher lag
+		if prevTipDiffLow {
+			// We are in a difficulty bomb scenario.
+			// Generally we want to lag 100 blocks behind tip here to be safe against reorgs, but we don't
+			// want to artificially index backwards before the start of the difficulty bomb, so walk backwards
+			// in Bitcoin chain until we are either 100 blocks back, *or* we hit a block above the low
+			// difficulty threshold.
+
+			lookbackCursor := prevHeader
+
+			// lookbackCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &prevHeader.PrevBlock)
+
+			// We are starting two blocks behind cursor (looking at previous-to-previous)
+			// This is not based on the setting of hVMIndexerTipLag, but rather how far back we must be starting
+			// in the walkback to find the beginning of the difficulty bomb (if recent)
+			effectiveHVMIndexerTipLag = 2
+
+			for lookback := int64(effectiveHVMIndexerTipLag); lookback <= 100; lookback++ {
+				lookbackHeight := int64(cursorHeight) - lookback
+				if lookbackHeight < 0 {
+					// Can't look before the genesis block
+					break
+				}
+
+				tempCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &lookbackCursor.PrevBlock)
+				if err != nil {
+					return err
+				}
+
+				tempDiff := blockchain.CalcWork(tempCursor.Bits)
+				if tempDiff.Cmp(lowDiffThreshold) > 0 {
+					// Walked back to a block whose difficulty is not below the threshold
+					break
+				} else {
+					// cursor difficulty is still below threshold, keep going
+					lookbackCursor = tempCursor
+					effectiveHVMIndexerTipLag = uint64(lookback)
+				}
+			}
+
+			if effectiveHVMIndexerTipLag < hVMIndexerTipLag {
+				effectiveHVMIndexerTipLag = hVMIndexerTipLag
+			}
+		}
 	}
 
 	log.Info(fmt.Sprintf("effectiveHVMIndexerTipLag: %d", effectiveHVMIndexerTipLag))
