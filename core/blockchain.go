@@ -1724,7 +1724,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 					"to add to hVM's lightweight view", lastTip.Hash().String(), lastTip.Number.Uint64(),
 					hashToCheck.String()))
 
-				headersToAdd = headersToAdd[0 : i-1]
+				headersToAdd = headersToAdd[0:i]
 				break
 			}
 		}
