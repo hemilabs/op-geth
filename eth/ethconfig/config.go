@@ -71,7 +71,7 @@ var Defaults = Config{
 	// TODO: Move hVM defaults somewhere else on a per-network basis
 	HvmEnabled:       true,
 	HvmGenesisHeader: "00c04e31fa0fd85fb481fb327a57df20f347f364c011df902d225abbe2000000000000003a52f41a24affe84fde4f0a6c650b0904804ce74b80c5ec1f92f98b45ce9bff68f2e0767f0ff0f1a26b0a59c",
-	HvmGenesisHeight: 3100806,
+	HvmGenesisHeight: 3100807,
 	HvmHeaderDataDir: "~/.tbcdheaders", // TODO: put this in configured geth data directory
 
 }
