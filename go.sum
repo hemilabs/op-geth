@@ -344,6 +344,8 @@ github.com/hemilabs/heminetwork v0.4.4-0.20240926055212-b97bc1eadade h1:ORiPZqFU
 github.com/hemilabs/heminetwork v0.4.4-0.20240926055212-b97bc1eadade/go.mod h1:anRuOjQ1vsMj5P4yiF0GD6pC31ZZyTrfDYtboRHohw4=
 github.com/hemilabs/heminetwork v0.4.4-0.20241001223321-424db7f083a9 h1:04KnqA6EtO2aDE3I2eAyJSMJYMYVVZqsxrQn1n54HSk=
 github.com/hemilabs/heminetwork v0.4.4-0.20241001223321-424db7f083a9/go.mod h1:anRuOjQ1vsMj5P4yiF0GD6pC31ZZyTrfDYtboRHohw4=
+github.com/hemilabs/heminetwork v0.4.4-0.20241010011311-60ec5590d279 h1:YGPIYeSXqredwDvZmsMIt0KWB38d8rmbdfq4kHV2u7I=
+github.com/hemilabs/heminetwork v0.4.4-0.20241010011311-60ec5590d279/go.mod h1:anRuOjQ1vsMj5P4yiF0GD6pC31ZZyTrfDYtboRHohw4=
 github.com/hemilabs/heminetwork v0.4.5-0.20241010000853-102f8a90d498 h1:Y4Dltni5mPp87Ai2CfcB53UEV9kQmaZgfYXDc0eOOK8=
 github.com/hemilabs/heminetwork v0.4.5-0.20241010000853-102f8a90d498/go.mod h1:anRuOjQ1vsMj5P4yiF0GD6pC31ZZyTrfDYtboRHohw4=
 github.com/holiman/billy v0.0.0-20230718173358-1c7e68d277a7 h1:3JQNjnMRil1yD0IfZKHF9GxxWKDJGj8I0IqOUol//sw=
