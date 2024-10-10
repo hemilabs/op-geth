@@ -1986,6 +1986,12 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 					break
 				}
 
+				if lookbackHeight < int64(bc.tbcHeaderNodeConfig.GenesisHeightOffset) {
+					log.Info(fmt.Sprintf("lookbackHeight of %d takes us lower than GenesisHeightOffset %d, "+
+						"not looking further back", lookbackHeight, bc.tbcHeaderNodeConfig.GenesisHeightOffset))
+					break
+				}
+
 				tempCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &lookbackCursor.PrevBlock)
 				if err != nil {
 					return err
