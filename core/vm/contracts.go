@@ -78,8 +78,9 @@ func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 // TODO: Remove this function or rework restart logic to be more reliable
 func RestartTBCFullNode(ctx context.Context) error {
 	TBCFullNodeCtxCancel()
-	time.Sleep(1000 * time.Millisecond)
+	time.Sleep(5000 * time.Millisecond)
 	err := SetupTBCFullNode(ctx, TBCFullNodeConfig)
+	time.Sleep(5000 * time.Millisecond)
 	return err
 }
 
