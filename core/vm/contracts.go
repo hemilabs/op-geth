@@ -57,6 +57,10 @@ type PrecompiledContract interface {
 
 type hVMQueryKey [32]byte
 
+// Temp: storing config here so we can restart TBC full node. TODO: Either remove this or store somewhere better.
+var TBCFullNodeConfig *tbc.Config
+var TBCFullNodeCtxCancel context.CancelFunc
+
 var TBCFullNode *tbc.Server
 var TBCHeaderNode *tbc.Server
 var tbcChainParams *chaincfg.Params
@@ -71,8 +75,17 @@ func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 	return &syncInfo
 }
 
+// TODO: Remove this function or rework restart logic to be more reliable
+func RestartTBCFullNode(ctx context.Context) error {
+	TBCFullNodeCtxCancel()
+	err := SetupTBCFullNode(ctx, TBCFullNodeConfig)
+	return err
+}
+
 // SetupTBCFullNode Sets up the TBC full node that will be available for precompiles
 func SetupTBCFullNode(ctx context.Context, cfg *tbc.Config) error {
+	tbcFullNodeContext, cancel := context.WithCancel(ctx)
+
 	switch cfg.Network {
 	case "mainnet":
 		tbcChainParams = &chaincfg.MainNetParams
@@ -91,13 +104,17 @@ func SetupTBCFullNode(ctx context.Context, cfg *tbc.Config) error {
 	}
 
 	go func() {
-		err := tbcNode.Run(ctx)
+		err := tbcNode.Run(tbcFullNodeContext)
 		if err != nil && err != context.Canceled {
 			panic(err)
 		}
 	}()
 
 	TBCFullNode = tbcNode
+
+	// TODO temp fix remove
+	TBCFullNodeConfig = cfg
+	TBCFullNodeCtxCancel = cancel
 
 	return nil
 }

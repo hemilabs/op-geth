@@ -298,6 +298,9 @@ type BlockChain struct {
 	tbcHeaderNode       *tbc.Server
 	tbcHeaderNodeConfig *tbc.Config
 
+	// Temporary workaround to allow restarting TBC Full Node when its not progressing
+	fullBlockFailureCount uint32
+
 	// A temporary holding pen for blocks that are being considered but not yet
 	// written to disk to allow hVM consensus update functions to access these
 	// to extract the geometry changes they represent.
@@ -1692,6 +1695,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// It's possible that all headers were already known by lightweight TBC if it is
 	// fully aware of the alternate chain in a chain-split scenario.
 	if len(headersToAdd) == 0 {
+		log.Info("No headers to add found!")
 		return nil, nil
 	}
 
@@ -1704,6 +1708,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	}
 
 	// Walk up headersToAdd, and truncate blocks that TBC Full Node does not have complete information for
+	blockNotAvailable := false // TODO: Temp, remove
 	for i := 0; i < len(headersToAdd); i++ {
 		hashToCheck := headersToAdd[i].BlockHash()
 		headerAvailable, err := vm.TBCFullNode.FullBlockAvailable(context2.Background(), &hashToCheck)
@@ -1714,6 +1719,21 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		}
 
 		if !headerAvailable {
+			blockNotAvailable = true
+			log.Warn(fmt.Sprintf("TBC does not have full block available for %s!", hashToCheck.String()))
+
+			// Temp workaround, TODO remove
+			bc.fullBlockFailureCount++
+			// If we have
+			if bc.fullBlockFailureCount > 5 {
+				bc.fullBlockFailureCount = 0
+				log.Info("Restarting TBC full node when generating Bitcoin Attributes")
+				err := vm.RestartTBCFullNode(context2.Background())
+				if err != nil {
+					log.Error("Unable to restart TBC full node!", "err", err)
+				}
+			}
+
 			// Header is not available; if this is the first block then return nothing, otherwise truncate
 			if i == 0 {
 				// No blocks to add
@@ -1728,6 +1748,11 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 				break
 			}
 		}
+	}
+
+	// TODO temp remove, if all blocks were found reset the failure counter
+	if !blockNotAvailable {
+		bc.fullBlockFailureCount = 0
 	}
 
 	// Serialize headers to bytes
@@ -2046,14 +2071,34 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 		return err
 	}
 
+	// TODO temp remove, if all blocks are available reset failure counter
+	if available {
+		bc.fullBlockFailureCount = 0
+	}
+
+	lastRestart := time.Now().UnixMilli()
 	for !available {
+		// Temp workaround, TODO remove
+		bc.fullBlockFailureCount++
+		// After a restart give it 120 seconds before restarting again to give time to P2P connect and attempt to download blocks
+		if bc.fullBlockFailureCount > 50 && time.Now().UnixMilli()-120000 > lastRestart {
+			bc.fullBlockFailureCount = 0
+			log.Info("Restarting TBC full node while udating TBC full node based on lightweight tip")
+			err := vm.RestartTBCFullNode(context2.Background())
+			lastRestart = time.Now().UnixMilli()
+			if err != nil {
+				log.Error("Unable to restart TBC full node!", "err", err)
+			}
+		}
+
+		log.Info(fmt.Sprintf("TBC Full Node does not yet have all full blocks up to Bitcoin block %s "+
+			" which is required to index up to according to lightweight TBC node", cursorHash.String()))
+		time.Sleep(250 * time.Millisecond)
+
 		available, err = vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
 		if err != nil {
 			return err
 		}
-		log.Info(fmt.Sprintf("TBC Full Node does not yet have all full blocks up to Bitcoin block %s "+
-			" which is required to index up to according to lightweight TBC node", cursorHash.String()))
-		time.Sleep(250 * time.Millisecond)
 	}
 
 	// This single indexer function handles any reorgs required to move the TBC full node to the specified index
