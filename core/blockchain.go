@@ -1708,15 +1708,16 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		headersToAdd = headersToAdd[0:3] // Temporarily limit to 3 at generation level, not validation level
 	}
 
-	bc.tempRestartTestTriggerCount++
-	if bc.tempRestartTestTriggerCount >= 12 {
-		log.Info("Testing restart of TBC full node!")
-		err := vm.RestartTBCFullNode(context2.Background())
-		if err != nil {
-			log.Error("Unable to restart TBC full node!", "err", err)
-		}
-		log.Info("Restarted TBC full node!")
-	}
+	/*
+		bc.tempRestartTestTriggerCount++
+		if bc.tempRestartTestTriggerCount >= 12 {
+			log.Info("Testing restart of TBC full node!")
+			err := vm.RestartTBCFullNode(context2.Background())
+			if err != nil {
+				log.Error("Unable to restart TBC full node!", "err", err)
+			}
+			log.Info("Restarted TBC full node!")
+		} */
 
 	// Walk up headersToAdd, and truncate blocks that TBC Full Node does not have complete information for
 	blockNotAvailable := false // TODO: Temp, remove
@@ -1736,7 +1737,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 			// Temp workaround, TODO remove
 			bc.fullBlockFailureCount++
 			// If we have
-			if bc.fullBlockFailureCount > 5 {
+			if bc.fullBlockFailureCount > 50 {
 				bc.fullBlockFailureCount = 0
 				log.Info("Restarting TBC full node when generating Bitcoin Attributes")
 				err := vm.RestartTBCFullNode(context2.Background())
