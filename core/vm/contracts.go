@@ -29,6 +29,7 @@ import (
 	"github.com/hemilabs/heminetwork/database"
 	"math/big"
 	"reflect"
+	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -78,6 +79,7 @@ func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 func RestartTBCFullNode(ctx context.Context) error {
 	TBCFullNodeCtxCancel()
 	err := SetupTBCFullNode(ctx, TBCFullNodeConfig)
+	time.Sleep(1000 * time.Millisecond)
 	return err
 }
 
