@@ -62,7 +62,6 @@ var TBCFullNodeConfig *tbc.Config
 var TBCFullNodeCtxCancel context.CancelFunc
 
 var TBCFullNode *tbc.Server
-var TBCHeaderNode *tbc.Server
 var tbcChainParams *chaincfg.Params
 
 // TODO: Cache this on-disk at some point, will need to persist restarts to correctly provide execution traces for old txs

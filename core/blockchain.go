@@ -299,7 +299,8 @@ type BlockChain struct {
 	tbcHeaderNodeConfig *tbc.Config
 
 	// Temporary workaround to allow restarting TBC Full Node when its not progressing
-	fullBlockFailureCount uint32
+	fullBlockFailureCount       uint32
+	tempRestartTestTriggerCount uint32
 
 	// A temporary holding pen for blocks that are being considered but not yet
 	// written to disk to allow hVM consensus update functions to access these
@@ -1705,6 +1706,16 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// }
 	if len(headersToAdd) > 3 {
 		headersToAdd = headersToAdd[0:3] // Temporarily limit to 3 at generation level, not validation level
+	}
+
+	bc.tempRestartTestTriggerCount++
+	if bc.tempRestartTestTriggerCount >= 12 {
+		log.Info("Testing restart of TBC full node!")
+		err := vm.RestartTBCFullNode(context2.Background())
+		if err != nil {
+			log.Error("Unable to restart TBC full node!", "err", err)
+		}
+		log.Info("Restarted TBC full node!")
 	}
 
 	// Walk up headersToAdd, and truncate blocks that TBC Full Node does not have complete information for
