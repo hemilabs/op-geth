@@ -156,8 +156,8 @@ func hashEquals(a chainhash.Hash, b chainhash.Hash) bool {
 // in headers was an ancestor of the other
 // TODO: Refactor this, also could return height to make some upstream uses easier
 func findCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader, bool, error) {
-	if a.Hash.IsEqual(b.Hash) {
-		header, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), a.Hash)
+	if a.Hash.IsEqual(&b.Hash) {
+		header, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), &a.Hash)
 		if err != nil {
 			return nil, false, err
 		}
@@ -173,12 +173,12 @@ func findCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 		lowerHash = b.Hash
 	}
 
-	highCursorHeader, highCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), higherHash)
+	highCursorHeader, highCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &higherHash)
 	if err != nil {
 		return nil, false, err
 	}
 
-	lowCursorHeader, lowCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), lowerHash)
+	lowCursorHeader, lowCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &lowerHash)
 	if err != nil {
 		return nil, false, err
 	}
@@ -228,7 +228,7 @@ func moveTxIndexerToHeader(header *wire.BlockHeader) error {
 			headerHash[:]), "err", err)
 	}
 
-	if hashEquals(*tIndexInfo.Hash, header.BlockHash()) {
+	if hashEquals(tIndexInfo.Hash, header.BlockHash()) {
 		// already done
 		return nil
 	}
@@ -242,7 +242,7 @@ func moveTxIndexerToHeader(header *wire.BlockHeader) error {
 
 	targetHH := &tbc.HashHeight{
 		Height: targetHeight,
-		Hash:   &targetHash,
+		Hash:   targetHash,
 	}
 
 	ancestor, isFork, err := findCommonAncestor(tIndexInfo, targetHH)
@@ -255,7 +255,7 @@ func moveTxIndexerToHeader(header *wire.BlockHeader) error {
 
 	if !isFork {
 		// Tx indexer only needs to move in one direction, and TxIndexer will figure out which
-		err = TBCFullNode.TxIndexer(context.Background(), targetHH.Hash)
+		err = TBCFullNode.TxIndexer(context.Background(), &targetHH.Hash)
 		if err != nil {
 			log.Error("Unable to move Tx indexer from current hash %x to requested hash %x",
 				tIndexInfo.Hash[:], targetHH.Hash[:])
@@ -270,7 +270,7 @@ func moveTxIndexerToHeader(header *wire.BlockHeader) error {
 			return err
 		}
 		// We unwound to common ancestor, now need to wind forward
-		err = TBCFullNode.TxIndexer(context.Background(), targetHH.Hash)
+		err = TBCFullNode.TxIndexer(context.Background(), &targetHH.Hash)
 		if err != nil {
 			log.Error("While indexing over a fork, unable to wind Tx indexer from current hash "+
 				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
@@ -296,7 +296,7 @@ func moveUtxoIndexerToHeader(header *wire.BlockHeader) error {
 			headerHash[:]), "err", err)
 	}
 
-	if hashEquals(*uIndexInfo.Hash, header.BlockHash()) {
+	if hashEquals(uIndexInfo.Hash, header.BlockHash()) {
 		// already done
 		return nil
 	}
@@ -310,7 +310,7 @@ func moveUtxoIndexerToHeader(header *wire.BlockHeader) error {
 
 	targetHH := &tbc.HashHeight{
 		Height: targetHeight,
-		Hash:   &targetHash,
+		Hash:   targetHash,
 	}
 
 	ancestor, isFork, err := findCommonAncestor(uIndexInfo, targetHH)
@@ -323,7 +323,7 @@ func moveUtxoIndexerToHeader(header *wire.BlockHeader) error {
 
 	if !isFork {
 		// UTXO indexer only needs to move in one direction, and UtxoIndexer will figure out which
-		err = TBCFullNode.UtxoIndexer(context.Background(), targetHH.Hash)
+		err = TBCFullNode.UtxoIndexer(context.Background(), &targetHH.Hash)
 		if err != nil {
 			log.Error("Unable to move UTXO indexer from current hash %x to requested hash %x",
 				uIndexInfo.Hash[:], targetHH.Hash[:])
@@ -338,7 +338,7 @@ func moveUtxoIndexerToHeader(header *wire.BlockHeader) error {
 			return err
 		}
 		// We unwound to common ancestor, now need to wind forward
-		err = TBCFullNode.UtxoIndexer(context.Background(), targetHH.Hash)
+		err = TBCFullNode.UtxoIndexer(context.Background(), &targetHH.Hash)
 		if err != nil {
 			log.Error("While indexing over a fork, unable to wind UTXO indexer from current hash "+
 				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
@@ -363,7 +363,7 @@ func fixMismatchedIndexesIfRequired() error {
 		log.Crit("Unable to get TxIndexHash", "err", err)
 	}
 
-	if !hashEquals(*uIndexInfo.Hash, *tIndexInfo.Hash) {
+	if !hashEquals(uIndexInfo.Hash, tIndexInfo.Hash) {
 		// Find the common ancestor
 		ancestor, _, err := findCommonAncestor(uIndexInfo, tIndexInfo)
 		if err != nil {
@@ -406,7 +406,7 @@ func TBCIndexToHeader(header *wire.BlockHeader) error {
 	bh := header.BlockHash()
 
 	hh := tbc.HashHeight{
-		Hash:   &bh,
+		Hash:   bh,
 		Height: targetHeight,
 	}
 
@@ -420,7 +420,7 @@ func TBCIndexToHeader(header *wire.BlockHeader) error {
 // states if specified by the passed-in Syncinfo.
 func TBCRestoreIndexersToPoint(point *tbc.SyncInfo) error {
 	utxoPoint := point.Utxo
-	utxoHeader, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), utxoPoint.Hash)
+	utxoHeader, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), &utxoPoint.Hash)
 	if err != nil {
 		return err
 	}
@@ -430,7 +430,7 @@ func TBCRestoreIndexersToPoint(point *tbc.SyncInfo) error {
 	}
 
 	txPoint := point.Tx
-	txHeader, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), txPoint.Hash)
+	txHeader, _, err := TBCFullNode.BlockHeaderByHash(context.Background(), &txPoint.Hash)
 	if err != nil {
 		return err
 	}
@@ -463,7 +463,7 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 		log.Crit("Unable to move TBC full node indexers to block %x; unable to get TxIndexHash", "err", err)
 	}
 
-	if hashEquals(*tIndexInfo.Hash, *targetHash) {
+	if hashEquals(tIndexInfo.Hash, targetHash) {
 		// already done
 		return nil
 	}
@@ -478,7 +478,7 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 
 	if !isFork {
 		// Indexers only needs to move in one direction, and the indexer will figure out which
-		err = TBCFullNode.SyncIndexersToHash(context.Background(), targetHH.Hash)
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), &targetHH.Hash)
 		if err != nil {
 			log.Error("Unable to move indexers from current hash %x to requested hash %x",
 				tIndexInfo.Hash[:], targetHH.Hash[:])
@@ -493,7 +493,7 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 			return err
 		}
 		// We unwound to common ancestor, now need to wind forward
-		err = TBCFullNode.SyncIndexersToHash(context.Background(), targetHH.Hash)
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), &targetHH.Hash)
 		if err != nil {
 			log.Error("While indexing over a fork, unable to wind indexers from current hash "+
 				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
@@ -511,7 +511,7 @@ func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.Ha
 		return nil, err
 	}
 
-	return &tbc.HashHeight{Hash: &hash, Height: height}, nil
+	return &tbc.HashHeight{Hash: hash, Height: height}, nil
 }
 
 // TBCBlocksAvailableToHeader Checks whether the TBC full node has all of the blocks required to index to the
@@ -928,13 +928,13 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		log.Warn("Unable to lookup tx confirmations by Txid; unable to convert txid %x to chainhash!", "txid", txid, "err", err)
 	}
 
-	_, blockHash, err := TBCFullNode.TxById(context.Background(), &txHash)
+	blockHash, err := TBCFullNode.BlockHashByTxId(context.Background(), &txHash)
 	if err != nil {
 		log.Error("Unable to lookup transaction confirmations by txid", "txid", txid, "err", err)
 		return nil, err
 	}
 
-	// TODO: Canonical check, needs upstream TBC modification.
+	// TODO: Ensure TBC can only return a block hash which is on the canonical chain
 	// For now hVM has an edge case where confirmation value from a forked chain could be returned.
 
 	_, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), blockHash)
@@ -1327,9 +1327,15 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, block, err := TBCFullNode.TxById(context.Background(), &ch)
+	tx, err := TBCFullNode.TxById(context.Background(), &ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
+		return nil, nil
+	}
+
+	block, err := TBCFullNode.BlockHashByTxId(context.Background(), &ch)
+	if err != nil || block == nil {
+		log.Error("Unable to lookup block containing tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
 	}
 
@@ -1375,8 +1381,8 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				log.Warn("Unable to lookup Tx by Txid; unable to convert txid %x to chainhash!", "txid", txid)
 				return nil, nil
 			}
-			sourceTx, _, err := TBCFullNode.TxById(context.Background(), &pih)
 
+			sourceTx, err := TBCFullNode.TxById(context.Background(), &pih)
 			if err != nil {
 				log.Warn("unable to lookup input transaction",
 					"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
