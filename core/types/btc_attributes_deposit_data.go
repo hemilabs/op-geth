@@ -14,7 +14,7 @@ import (
 
 const (
 	BtcAttributesDepositedFuncSignature = "updateHvmState(bytes32,bytes[])"
-	MaximumBtcHeadersInTx               = 6
+	MaximumBtcHeadersInTx               = 30
 	SmartContractArgumentByteLen        = 32 // Each argument to smart contract is padded to 32 bytes
 
 	// Based on function sig + canonical tip + empty byte[] (pos + 0 len = 64)

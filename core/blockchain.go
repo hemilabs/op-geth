@@ -1704,8 +1704,8 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// if len(headersToAdd) > types.MaximumBtcHeadersInTx {
 	// 	headersToAdd = headersToAdd[0:types.MaximumBtcHeadersInTx]
 	// }
-	if len(headersToAdd) > 3 {
-		headersToAdd = headersToAdd[0:3] // Temporarily limit to 3 at generation level, not validation level
+	if len(headersToAdd) > 24 {
+		headersToAdd = headersToAdd[0:24] // Temporarily limit to 24 at generation level, not validation level
 	}
 
 	/*
