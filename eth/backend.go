@@ -255,6 +255,7 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 		tbcCfg.LevelDBHome = config.HvmHeaderDataDir
 		tbcCfg.BlockCache = 0
 		tbcCfg.BlockheaderCache = 0
+		tbcCfg.MempoolEnabled = false
 
 		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
 		tbcCfg.Network = "testnet3"
