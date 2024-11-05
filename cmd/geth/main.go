@@ -384,8 +384,6 @@ func geth(ctx *cli.Context) error {
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
 	// TODO MAX: TBC init taken from here
 
-	debug.Memsize.Add("node", stack)
-
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
 
