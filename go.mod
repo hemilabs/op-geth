@@ -1,8 +1,8 @@
 module github.com/ethereum/go-ethereum
 
-go 1.22.2
+go 1.23
 
-toolchain go1.22.3
+toolchain go1.23.2
 
 require (
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.2.0
@@ -42,7 +42,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/graph-gophers/graphql-go v1.3.0
 	github.com/hashicorp/go-bexpr v0.1.10
-	github.com/hemilabs/heminetwork v0.4.4-0.20241010011311-60ec5590d279
+	github.com/hemilabs/heminetwork v0.5.1-0.20241105053654-95f213be8ea4
 	github.com/holiman/billy v0.0.0-20230718173358-1c7e68d277a7
 	github.com/holiman/bloomfilter/v2 v2.0.3
 	github.com/holiman/uint256 v1.3.1
