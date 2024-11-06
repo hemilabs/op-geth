@@ -1734,6 +1734,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		if !headerAvailable {
 			blockNotAvailable = true
 			log.Warn(fmt.Sprintf("TBC does not have full block available for %s!", hashToCheck.String()))
+			vm.TBCAttemptBlockRefetch(context2.Background(), &headersToAdd[i])
 
 			// Temp workaround, TODO remove
 			bc.fullBlockFailureCount++
