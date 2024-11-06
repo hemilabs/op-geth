@@ -2084,9 +2084,9 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 	}
 
 	// TODO temp remove, if all blocks are available reset failure counter
-	if available {
-		bc.fullBlockFailureCount = 0
-	}
+	// if available {
+	// 	bc.fullBlockFailureCount = 0
+	// }
 
 	lastRestart := time.Now().UnixMilli()
 	for !available {
@@ -2095,7 +2095,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 		// After a restart give it 120 seconds before restarting again to give time to P2P connect and attempt to download blocks
 		if bc.fullBlockFailureCount > 50 && time.Now().UnixMilli()-120000 > lastRestart {
 			bc.fullBlockFailureCount = 0
-			log.Info("Restarting TBC full node while udating TBC full node based on lightweight tip")
+			log.Info("Restarting TBC full node while updating TBC full node based on lightweight tip")
 			err := vm.RestartTBCFullNode(context2.Background())
 			lastRestart = time.Now().UnixMilli()
 			if err != nil {
