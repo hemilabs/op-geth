@@ -1725,9 +1725,10 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		hashToCheck := headersToAdd[i].BlockHash()
 		headerAvailable, err := vm.TBCFullNode.FullBlockAvailable(context2.Background(), &hashToCheck)
 		if err != nil {
-			log.Crit(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for the next block after "+
+			log.Warn(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for the next block after "+
 				"%s @ %d, but TBC full node was unable to determine whether the full block for hash %s is available",
 				lastTip.Hash().String(), lastTip.Number.Uint64(), hashToCheck.String()), "err", err)
+			headerAvailable = false
 		}
 
 		if !headerAvailable {
