@@ -514,6 +514,12 @@ func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.Ha
 	return &tbc.HashHeight{Hash: hash, Height: height}, nil
 }
 
+func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
+	bh := header.BlockHash()
+	log.Info(fmt.Sprintf("Attempting to refetch block %s for TBC full node over P2P", bh.String()))
+	TBCFullNode.DownloadBlockFromRandomPeers(ctx, &bh, 8)
+}
+
 // TBCBlocksAvailableToHeader Checks whether the TBC full node has all of the blocks required to index to the
 // specified header from its current location.
 //
@@ -601,23 +607,30 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		log.Info(fmt.Sprintf("Cursor of %s does not match ancestorToTarget of %s", cursorHash.String(), ancestorToTargetHash.String()))
 		available, err := TBCFullNode.FullBlockAvailable(ctx, &cursorHash)
 		if err != nil {
+			log.Warn(fmt.Sprintf("Got error while getting full block for cursor %s", cursorHash.String()), "err", err)
+			TBCAttemptBlockRefetch(ctx, cursor)
 			return false, err
 		}
 		if !available {
+			log.Warn(fmt.Sprintf("Full block for cursor %s not available but no error returned", cursorHash.String()))
+			TBCAttemptBlockRefetch(ctx, cursor)
 			return false, nil
 		}
 
 		cursor, height, err = TBCFullNode.BlockHeaderByHash(ctx, &cursor.PrevBlock)
 		if err != nil {
 			if errors.As(err, &database.ErrNotFound) {
+				log.Warn(fmt.Sprintf("Unable to get block header for cursor's previous block %s, got database not found error", cursor.PrevBlock.String()), "err", err)
 				return false, nil
 			}
+			log.Warn(fmt.Sprintf("Unable to get block header for cursor's previous block %s, got error other than database not found", cursor.PrevBlock.String()), "err", err)
 			return false, err
 		}
 		if height < ancestorHeight {
 			// Somehow walking backwards got to a lower block than the ancestor we are looking for.
 			// Should never happen, would imply that the current indexed tip and target are not
 			// on the same chain graph
+			log.Error(fmt.Sprintf(""))
 			return false, fmt.Errorf("TBCBlocksAvailableToHeader failed walking backwards from"+
 				" %x looking for %x, walked to height=%d but ancestorHeight=%d", endingHash[:],
 				ancestorToTargetHash[:], height, ancestorHeight)
