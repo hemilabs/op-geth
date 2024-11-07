@@ -1707,6 +1707,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	if len(headersToAdd) > 24 {
 		headersToAdd = headersToAdd[0:24] // Temporarily limit to 24 at generation level, not validation level
 	}
+	log.Info(fmt.Sprintf("Headers to add while generating Bitcoin Attributes Deposited transaction: %d", headersToAdd))
 
 	/*
 		bc.tempRestartTestTriggerCount++
