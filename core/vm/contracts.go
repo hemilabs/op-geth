@@ -516,8 +516,8 @@ func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.Ha
 
 func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 	bh := header.BlockHash()
-	log.Info(fmt.Sprintf("Attempting to refetch block %s for TBC full node over P2P", bh.String()))
-	TBCFullNode.DownloadBlockFromRandomPeers(ctx, &bh, 8)
+	log.Info(fmt.Sprintf("(would be) Attempting to refetch block %s for TBC full node over P2P", bh.String()))
+	// TBCFullNode.DownloadBlockFromRandomPeers(ctx, &bh, 8)
 }
 
 // TBCBlocksAvailableToHeader Checks whether the TBC full node has all of the blocks required to index to the
@@ -1223,7 +1223,11 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 		log.Crit("No TBC indexer available, cannot perform hVM precompile call!")
 	}
 
+	log.Info("addr: %s, page: %d, pageSize: %d", addr, pg, pgSize)
+
 	utxos, err := TBCFullNode.UtxosByAddress(context.Background(), addr, uint64(pg), uint64(pgSize))
+
+	log.Info("utxos length: %d", len(utxos))
 
 	if err != nil {
 		log.Warn("Unable to lookup UTXOs for address!", "addr", addr)
