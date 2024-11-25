@@ -169,6 +169,8 @@ const (
 	BtcAddrBal       uint64 = 50000
 	BtcUtxosAddrList uint64 = 100000
 	BtcTxByTxid      uint64 = 25000
+	BtcInputByTxid   uint64 = 15000
+	BtcOutputByTxid  uint64 = 15000
 	BtcTxConf        uint64 = 5000
 	BtcLastHeader    uint64 = 5000
 	BtcHeaderN       uint64 = 6000

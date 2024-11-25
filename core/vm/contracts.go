@@ -516,8 +516,8 @@ func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.Ha
 
 func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 	bh := header.BlockHash()
-	log.Info(fmt.Sprintf("(would be) Attempting to refetch block %s for TBC full node over P2P", bh.String()))
-	// TBCFullNode.DownloadBlockFromRandomPeers(ctx, &bh, 8)
+	log.Info(fmt.Sprintf("Attempting to refetch block %s for TBC full node over P2P", bh.String()))
+	TBCFullNode.DownloadBlockFromRandomPeers(ctx, &bh, 8)
 }
 
 // TBCBlocksAvailableToHeader Checks whether the TBC full node has all of the blocks required to index to the
@@ -730,6 +730,8 @@ var hvmContractsToAddress = map[reflect.Type][]byte{
 	reflect.TypeOf(&btcLastHeader{}):      {0x44},
 	reflect.TypeOf(&btcHeaderN{}):         {0x45},
 	reflect.TypeOf(&btcAddrToScript{}):    {0x46},
+	reflect.TypeOf(&btcInputByTxid{}):     {0x47},
+	reflect.TypeOf(&btcOutputByTxid{}):    {0x48},
 }
 
 var PrecompiledContractsHvm0 = map[common.Address]PrecompiledContract{
@@ -1252,6 +1254,194 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 	if isValidBlock(blockContext) {
 		hvmQueryMap[k] = resp
 	}
+	return resp, nil
+}
+
+type btcInputByTxid struct{}
+
+func (c *btcInputByTxid) RequiredGas(input []byte) uint64 {
+	// TODO: Gas based on returned size and/or enabled fields
+	return params.BtcInputByTxid
+}
+
+func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error) {
+	// TODO: Move to variable
+	if len(input) != 34 { // 4 bytes bitflag, 32 bytes txid. TODO: Allow 32-byte input (just TxID) and assume some default bitflag values?
+		return nil, nil
+	}
+
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
+	}
+
+	var txid = make([]byte, 32)
+	copy(txid[0:32], input[0:32])
+	slices.Reverse(txid)
+
+	txidEnd := len(input) - 2
+	inputIdx := (uint32(input[txidEnd+1]&0xFF) << 8) |
+		uint32(input[txidEnd+2]&0xFF)
+
+	log.Info(fmt.Sprintf("Looking up input %d for txid %x", inputIdx, txid))
+
+	ch := chainhash.Hash{}
+	err := ch.SetBytes(txid)
+	if err != nil {
+		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
+	}
+
+	tx, err := TBCFullNode.TxById(context.Background(), &ch)
+	if err != nil || tx == nil {
+		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
+		return nil, nil
+	}
+
+	if inputIdx >= uint32(len(tx.TxIn)) {
+		log.Warn(fmt.Sprintf("hVM call requested input %d but tx %x only has %d inputs", inputIdx, txid, len(tx.TxIn)))
+		return nil, nil
+	}
+	resp := make([]byte, 0)
+
+	in := tx.TxIn[inputIdx]
+
+	prevIn := in.PreviousOutPoint
+	pih := chainhash.Hash{}
+	err = pih.SetBytes(prevIn.Hash[:])
+	if err != nil {
+		log.Warn("Unable to lookup Tx by Txid; unable to convert txid %x to chainhash!", "txid", txid)
+		return nil, nil
+	}
+
+	sourceTx, err := TBCFullNode.TxById(context.Background(), &pih)
+	if err != nil {
+		log.Warn("unable to lookup input transaction",
+			"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
+		return nil, nil
+	}
+	value := sourceTx.TxOut[prevIn.Index].Value
+
+	resp = binary.BigEndian.AppendUint64(resp, uint64(value))
+
+	prevInHash := prevIn.Hash
+	slices.Reverse(prevInHash[:])
+	resp = append(resp, prevInHash[:]...)
+	resp = binary.BigEndian.AppendUint16(resp, uint16(prevIn.Index))
+
+	maxInputScriptSigSize := 128
+
+	choppedInputScript := make([]byte, 0)
+	choppedInputScript = append(choppedInputScript, in.SignatureScript...)
+	if len(choppedInputScript) > maxInputScriptSigSize {
+		choppedInputScript = choppedInputScript[0:maxInputScriptSigSize]
+	}
+	resp = binary.BigEndian.AppendUint16(resp, uint16(len(in.SignatureScript)))
+	resp = append(resp, choppedInputScript...)
+	resp = binary.BigEndian.AppendUint32(resp, in.Sequence)
+
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
+
+	return resp, nil
+}
+
+type btcOutputByTxid struct{}
+
+func (c *btcOutputByTxid) RequiredGas(input []byte) uint64 {
+	// TODO: Gas based on returned size and/or enabled fields
+	return params.BtcOutputByTxid
+}
+
+func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error) {
+	// TODO: Move to variable
+	if len(input) != 34 { // 4 bytes bitflag, 32 bytes txid. TODO: Allow 32-byte input (just TxID) and assume some default bitflag values?
+		return nil, nil
+	}
+
+	var k hVMQueryKey
+	if isValidBlock(blockContext) {
+		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		if err != nil {
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
+		}
+		cachedResult, exists := hvmQueryMap[k]
+		if exists {
+			log.Info(fmt.Sprintf("btcTxConfirmations returning cached result for query of "+
+				"%x in context %x, cached result=%x", input, blockContext, cachedResult))
+			return cachedResult, nil
+		}
+	}
+
+	var txid = make([]byte, 32)
+	copy(txid[0:32], input[0:32])
+	slices.Reverse(txid)
+
+	txidEnd := len(input) - 2
+	outputIdx := (uint32(input[txidEnd+1]&0xFF) << 8) |
+		uint32(input[txidEnd+2]&0xFF)
+
+	log.Info(fmt.Sprintf("Looking up output %d for txid %x", outputIdx, txid))
+
+	ch := chainhash.Hash{}
+	err := ch.SetBytes(txid)
+	if err != nil {
+		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
+	}
+
+	tx, err := TBCFullNode.TxById(context.Background(), &ch)
+	if err != nil || tx == nil {
+		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
+		return nil, nil
+	}
+
+	if outputIdx >= uint32(len(tx.TxOut)) {
+		log.Warn(fmt.Sprintf("hVM call requested output %d but tx %x only has %d outputs", outputIdx, txid, len(tx.TxOut)))
+		return nil, nil
+	}
+	resp := make([]byte, 0)
+
+	out := tx.TxOut[outputIdx]
+
+	resp = binary.BigEndian.AppendUint64(resp, uint64(out.Value))
+
+	choppedOutputScript := make([]byte, 0)
+	choppedOutputScript = append(choppedOutputScript, out.PkScript...)
+	if len(choppedOutputScript) > 128 {
+		choppedOutputScript = choppedOutputScript[0:128]
+	}
+	resp = binary.BigEndian.AppendUint16(resp, uint16(len(out.PkScript)))
+	resp = append(resp, choppedOutputScript...)
+
+	spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), &ch, outputIdx)
+	if err != nil {
+		log.Warn("Unable to lookup output spend status", "txid", txid, "err", err)
+		return nil, nil
+	}
+
+	spent := byte(0)
+	if spentBool {
+		spent = byte(1)
+	}
+	resp = append(resp, spent)
+
+	if isValidBlock(blockContext) {
+		hvmQueryMap[k] = resp
+	}
+
 	return resp, nil
 }
 

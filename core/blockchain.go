@@ -25,7 +25,6 @@ import (
 	"github.com/btcsuite/btcd/blockchain"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/hemilabs/heminetwork/database/tbcd"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"io"
 	"math/big"
@@ -354,11 +353,11 @@ func (bc *BlockChain) getHvmPhase0ActivationBlock() (*types.Header, error) {
 	// Find the block where hVM Phase 0 activation occurs
 	// TODO: Make this more efficient with intelligent indexing based on timestamp
 	// instead of this simple descent.
-	// Note genesis block cannot contain a Bitcoin Attributes Deposited tx.
+	// Note: genesis block cannot contain a Bitcoin Attributes Deposited tx.
 	for cursor.Number.Uint64() > 1000 {
 		header := bc.GetHeaderByNumber(cursor.Number.Uint64() - 1000)
 		if !bc.chainConfig.IsHvm0(header.Time) {
-			// Our tip is now less than 1000 blocks above activation height, descend manually
+			// Our tip is now less than 1000 blocks above activation height, descend individually
 			break
 		}
 
@@ -413,7 +412,7 @@ func (bc *BlockChain) performFullHvmHeaderStateRestore() {
 		}
 		err := bc.applyHvmHeaderConsensusUpdate(cursor)
 		if err != nil {
-			log.Crit(fmt.Sprintf("Failed to fully restore hVM state, encountered an error processing hVM"+
+			log.Crit(fmt.Sprintf("Failed to fully restore hVM state, encountered an error processing hVM "+
 				"state updates for block %s @ %d", cursor.Hash().String(), cursor.Number.Uint64()), "err", err)
 		}
 		if cursor.Number.Uint64() < tip.Number.Uint64() {
@@ -453,13 +452,13 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 			log.Crit("resetHvmHeaderNodeToGenesis failed when calling ExternalHeaderTearDown on TBC", "err", err)
 		}
 	} else {
-		log.Info("Header-only TBC instance is not running, nothing to tear down.")
+		log.Info("Header-only TBC instance is not running, nothing to tear down. Continuing with genesis reset.")
 	}
 
 	dataDir := bc.tbcHeaderNodeConfig.LevelDBHome
 
 	path, _ := filepath.Abs(dataDir)
-	log.Info(fmt.Sprintf("Full path: %s", path))
+	log.Info(fmt.Sprintf("Deleting TBC external header mode instance data directory: %s", path))
 
 	if err := os.RemoveAll(dataDir); err != nil {
 		log.Crit(fmt.Sprintf("ResetHvmHeaderNodeToGenesis unable to delete external header mode TBC "+
@@ -467,17 +466,25 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 	}
 
 	if _, err := os.Open(dataDir); os.IsNotExist(err) {
-		log.Info(fmt.Sprintf("The data directory %s does not exist", dataDir))
+		log.Info(fmt.Sprintf("Successfully deleted external header mode TBC data directory %s", dataDir))
 	} else {
-		log.Info(fmt.Sprintf("The data directory %s exists", dataDir))
+		log.Crit(fmt.Sprintf("The data directory %s still exists after attempting to delete", dataDir))
 	}
 
 	log.Info("Deleted hVM header TBC node data directory", "dataDir", dataDir)
 
 	bc.initHvmHeaderNode(bc.tbcHeaderNodeConfig)
-	err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &hVMGenesisUpstreamId)
+
+	// Make sure after initializing, the stateId is set to the hVMGenesisUpstreamId as expected
+	stateId, err := bc.tbcHeaderNode.UpstreamStateId(context2.Background())
 	if err != nil {
-		log.Crit("When resetting hVM header-only node to genesis, unable to set upstream state id to genesis state id")
+		log.Crit("Unable to reset external header mode TBC to genesis configuration, after reset unable to "+
+			"query upstream state id", "err", err)
+	}
+	if !bytes.Equal(stateId[:], hVMGenesisUpstreamId[:]) {
+		log.Crit(fmt.Sprintf("Unable to reset external header mode TBC to genesis configuration, after reset "+
+			"the TBC instance reports an unexpected upstream state id of %x when the default of %x was expected",
+			stateId[:], hVMGenesisUpstreamId[:]))
 	}
 }
 
@@ -490,17 +497,20 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	if err != nil {
 		log.Crit("initHvmHeaderNode unable to create new TBC server", "err", err)
 	}
-	err = tbcHeaderNode.ExternalHeaderSetup(context2.Background())
+
+	// Pass in the hVMGenesisUpstreamId, which will only be set by ExternalHeaderSetup if the TBC instance
+	// has not been initialized with any headers yet.
+	err = tbcHeaderNode.ExternalHeaderSetup(context2.Background(), hVMGenesisUpstreamId[:])
 	if err != nil {
 		log.Crit("initHvmHeaderNode unable to run ExternalHeaderSetup on TBC", "err", err)
 	}
 
 	height, header, err := tbcHeaderNode.BlockHeaderBest(context2.Background())
 	if err != nil {
-		log.Crit("initHvmHeaderNode unable to get best block header after initialization!", "err", err)
+		log.Crit("initHvmHeaderNode unable to get best block header after initialization", "err", err)
 	}
 
-	log.Info(fmt.Sprintf("After hVM external header node initialization, best header =s %s @ %d",
+	log.Info(fmt.Sprintf("After hVM external header node initialization, best header = %s @ %d",
 		header.BlockHash().String(), height))
 
 	bc.tbcHeaderNode = tbcHeaderNode
@@ -517,35 +527,34 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 		log.Crit("Unable to get upstream state ID from TBC header node", "err", err)
 	}
 
-	potentialBlockHash := common.BytesToHash(stateId[:])
-	potentialHeader := bc.GetHeaderByHash(potentialBlockHash)
-
-	if potentialHeader != nil {
-		// TBC has already been progressed with EVM blocks prior
-		log.Info(fmt.Sprintf("Setup hVM's header-only TBC node, it is currently at state representing block %s @ %d",
-			potentialHeader.Hash().String, potentialHeader.Number.Uint64()))
-	} else {
-		// TBC's stateId doesn't correspond to a known block.
-		// It is either in an invalid state, or it's in genesis configuration.
-
+	if bytes.Equal(stateId[:], hVMGenesisUpstreamId[:]) {
+		// TBC claims to be in its genesis configuration, check to ensure its best header is the hVM genesis header
 		_, bestHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
 		if err != nil {
-			log.Crit("SetupHvmHeaderNode unable to get Best header on TBC", "err", err)
+			log.Crit("SetupHvmHeaderNode unable to get best block header from TBC which claims to be in genesis"+
+				" initialization state", "err", err)
 		}
+
 		bestHeaderHash := bestHeader.BlockHash()
 		genesisHash := config.EffectiveGenesisBlock.BlockHash()
 
-		// TODO: Decide whether this check for genesis belongs in init instead of setup
 		if bytes.Equal(bestHeaderHash[:], genesisHash[:]) {
-			// TBC is in genesis state, set its state id to the genesis id
-			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &hVMGenesisUpstreamId)
-			if err != nil {
-				log.Crit("SetupHvmHeaderNode unable to set upstream state id", "err", err)
-			}
+			log.Info("SetupHvmHeaderNode has determined that the external header mode TBC is in its genesis state" +
+				" and initialized correctly.")
+		}
+	} else {
+		potentialBlockHash := common.BytesToHash(stateId[:])
+		potentialHeader := bc.GetHeaderByHash(potentialBlockHash)
+
+		if potentialHeader != nil {
+			// TBC has already been progressed with EVM blocks prior, as its upstream state ID corresponds
+			// to a known block from the Hemi chain
+			log.Info(fmt.Sprintf("SetupHvmHeaderNode had determined that the external header mode TBC currently"+
+				" represents block %s @ %d", potentialHeader.Hash().String(), potentialHeader.Number.Uint64()))
 		} else {
-			// TBC is in an invalid state
-			log.Info(fmt.Sprintf("The hVM header-only TBC node has an invaid state on startup; statId=%x, "+
-				"attempting full restore from hVM activation height", stateId))
+			// TBC is in an invalid state, attempt to recover it
+			log.Info(fmt.Sprintf("The hVM header-only TBC node has an invaid state on startup; stateId=%x,"+
+				" attempting full restore from hVM activation height", stateId))
 			bc.performFullHvmHeaderStateRestore()
 		}
 	}
@@ -999,7 +1008,9 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		// so set the state transition target hash back to the genesis default
 		copy(stateTransitionTargetHash[0:32], hVMGenesisUpstreamId[0:32])
 	} else {
-		// Previous block had hVM active
+		// Previous block had hVM active, so we will set its hash as the upstream
+		// state id of the external header TBC node after reverting hVM state transition
+		// from the block to unapply
 		copy(stateTransitionTargetHash[0:32], prevBlock.Hash().Bytes()[0:32])
 	}
 
@@ -1007,8 +1018,8 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 	if err != nil {
 		// Error implies that state of Bitcoin Attributes Deposited tx in the transaction list is invalid.
 		// This should be impossible because any block which is being unapplied would have undergone the
-		// same check previously and passed.
-		// TODO: Bubble this error up and invalidate this previous block?
+		// same check previously and passed when it was originally applied.
+		// TODO: Bubble this error up and invalidate this block and restore external header TBC node from genesis to prev tip?
 		log.Crit(fmt.Sprintf("Error while extracting Bitcoin Attributes Deposited transaction to unwind "+
 			"hVM state application for block %s @ %d", header.Hash().String(), header.Number.Uint64()),
 			"err", err)
@@ -1021,7 +1032,7 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		// There is no Bitcoin Attributes Deposited transaction in this block to unapply.
 		// Even though we didn't make any changes, explicitly update TBC's state id to indicate that
 		// TBC's current state is correct for previous after removing this block. The
-		// stateTransitionTargetHash is already set to the previous block or the genesis upsteam ID
+		// stateTransitionTargetHash is already set to the previous block or the genesis upstream state ID
 		// depending on whether previous parent had hVM Phase 0 active or not.
 		if bc.chainConfig.IsHvm0(header.Time) {
 			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &stateTransitionTargetHash)
@@ -1057,7 +1068,7 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 	// Descend the Hemi chain from this height until either we find a block with a Bitcoin Attributes Deposited
 	// transaction or we get to before the hVM Phase 0 activation height to determine the correct previous
 	// tip.
-	// TODO: Get this state more efficiently from HvmState contract in EVM?
+	// TODO: Get this state more efficiently?
 	var expectedPreviousTipHash [32]byte
 	cursorNum := header.Number.Uint64() - 1
 	cursor := bc.getBlockFromDiskOrHoldingPen(header.ParentHash)
@@ -1066,7 +1077,7 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		if err != nil {
 			// Error implies that state of Bitcoin Attributes Deposited tx in the transaction list is invalid.
 			// This should be impossible because any block which is being unapplied would have undergone the
-			// same check previously and passed.
+			// same check previously in the forward direction and passed.
 			// TODO: Bubble this error up to invalidate the old block?
 			log.Crit(fmt.Sprintf("Error while extracting Bitcoin Attributes Deposited transaction from "+
 				"prior block %s @ %d when attempting to unwind hVM state application for block %s @ %d",
@@ -1080,22 +1091,26 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		cursor = bc.getBlockFromDiskOrHoldingPen(cursor.ParentHash())
 	}
 	if bytes.Equal(expectedPreviousTipHash[:], emptyArray[:]) {
+		// Walked back the chain to the hVM Phase 0 activation height and did not find any previous BTC Attr Dep
+		// transactions, so the previous state to the change we are unapplying is the genesis state
 		genHash := bc.tbcHeaderNodeConfig.EffectiveGenesisBlock.BlockHash()
 		copy(expectedPreviousTipHash[0:32], genHash[0:32])
 		log.Info(fmt.Sprintf("when unapplying hVM changes for block %s @ %d, got to block %s @ %d with timestamp "+
 			"%d which is before the hVM Phase 0 activation timestamp %d, so previous canonical tip should be "+
 			"the genesis block %x", header.Hash().String(), header.Number.Uint64(), cursor.Hash().String(),
-			cursor.NumberU64(), cursor.Time, bc.chainConfig.Hvm0Time, genHash[:]))
+			cursor.NumberU64(), cursor.Time(), bc.chainConfig.Hvm0Time, genHash[:]))
 	} else {
-		log.Info(fmt.Sprintf("expectedPreviousTipHash=%x, is not zeroed", expectedPreviousTipHash[:]))
+		log.Info(fmt.Sprintf("expectedPreviousTipHash=%x is not zeroed, so a non-genesis previous canonical "+
+			"BTC tip was found", expectedPreviousTipHash[:]))
+	}
+
+	// Convert the expected previous BTC tip hash to a chainhash
+	expectedPreviousTipHashParsed, err := chainhash.NewHash(expectedPreviousTipHash[:])
+	if err != nil {
+		log.Warn(fmt.Sprintf("Unable to create blockhash from %x", expectedPreviousTipHash[:]), "err", err)
 	}
 
 	// Get the actual header represented by the previous canonical tip hash
-	expectedPreviousTipHashParsed, err := chainhash.NewHash(expectedPreviousTipHash[:])
-	if err != nil {
-		log.Warn(fmt.Sprintf("Unable to create blockhash from %x", expectedPreviousTipHash[:]))
-	}
-
 	expectedPreviousTip, expectedPreviousTipHeight, err :=
 		bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), expectedPreviousTipHashParsed)
 
@@ -1103,10 +1118,10 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		// This should never happen, it means TBC doesn't have a header which either:
 		// 1. Should have already been added to it when this older block was originally processed, or
 		// 2. Is the genesis block TBC is configured with
-		// TODO: TBC recovery from genesis
+		// TODO: TBC recovery from genesis?
 		log.Crit(fmt.Sprintf("when unapplying hVM changes for block %s @ %d, previous canonical tip "+
 			"should be %x but TBC encountered an error when fetching that header", header.Hash().String(),
-			header.Number.Uint64(), expectedPreviousTipHash[:]))
+			header.Number.Uint64(), expectedPreviousTipHash[:]), "err", err)
 	}
 
 	// TODO: Better header to slice
@@ -1119,24 +1134,25 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 			"tip from lightweight TBC!", header.Hash().String(), header.Number.Uint64()), "err", err)
 	}
 
+	// Unflatten the BTC headers stored in the BTC Attr Dep transaction to unapply into wire.MsgHeaders
 	reconstitutedHeaders, err := unflattenBTCHeaders(btcAttrDep.Headers)
 	if err != nil {
 		// This is a critical failure as the headers should be valid if the hVM consensus update we are
-		// unapplying was able to be applied in the first place
+		// now unapplying was able to be applied in the first place in the forward direction
 		log.Crit(fmt.Sprintf("when unapplying hVM changes for block %s @ %d, unable to unflatten "+
 			"one of the BTC headers from the block", header.Hash().String(), header.Number.Uint64()),
 			"err", err)
 	}
 
 	rt, lastHeader, err := bc.tbcHeaderNode.RemoveExternalHeaders(
-		context2.Background(), reconstitutedHeaders, expectedPreviousTip, &stateTransitionTargetHash)
+		context2.Background(), reconstitutedHeaders, expectedPreviousTip, stateTransitionTargetHash[:])
 	if err != nil {
 		// This is a critical failure, not related to block validity
 		// TODO: TBC recovery from genesis
 		log.Crit(fmt.Sprintf("when unapplying hVM changes from block %s @ %d, unable to remove "+
-			"%d headers and change the canonical tip from %s @ %d to %x @ %d", header.Hash().String(),
+			"%d headers and change the canonical tip from %s @ %d to %s @ %d", header.Hash().String(),
 			header.Number.Uint64(), len(btcAttrDep.Headers), currentTipHash.String(), currentTipHeight,
-			expectedPreviousTipHash[:], expectedPreviousTipHeight), "err", err)
+			expectedPreviousTip.BlockHash().String(), expectedPreviousTipHeight), "err", err)
 	}
 	lastHeaderHash := lastHeader.BlockHash()
 
@@ -1144,7 +1160,7 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 	if err != nil {
 		// TODO: TBC recovery from genesis
 		log.Crit(fmt.Sprintf("when unapplying hVM changes from block %s @ %d, attempted to remove "+
-			"%d headers and change the canonical tip from %s @ %d to %x @ %d, but TBC reports an error "+
+			"%d headers and change the canonical tip from %s @ %d to %s @ %d, but TBC reports an error "+
 			"getting the canonical tip after state transition", header.Hash().String(),
 			header.Number.Uint64(), len(btcAttrDep.Headers), currentTipHash.String(), currentTipHeight,
 			expectedPreviousTipHash[:], expectedPreviousTipHeight), "err", err)
@@ -1155,16 +1171,17 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 	if !bytes.Equal(newTipHash[:], expectedPreviousTipHash[:]) {
 		// TODO: TBC recovery from genesis
 		log.Crit(fmt.Sprintf("when unapplying hVM changes from block %s @ %d, attempted to remove "+
-			"%d headers and change the canonical tip from %s @ %d to %x @ %d, but TBC reports that the "+
-			"canonical tip after state transition is %x @ %d which is incorrect", header.Hash().String(),
+			"%d headers and change the canonical tip from %s @ %d to %s @ %d, but TBC reports that the "+
+			"canonical tip after state transition is %s @ %d which is incorrect", header.Hash().String(),
 			header.Number.Uint64(), len(btcAttrDep.Headers), currentTipHash.String(), currentTipHeight,
-			expectedPreviousTipHash[:], expectedPreviousTipHeight, newTipHash[:], newHeight), "err", err)
+			expectedPreviousTip.BlockHash().String(), expectedPreviousTipHeight, newTipHash.String(), newHeight),
+			"err", err)
 	}
 
 	log.Info(fmt.Sprintf("successfully unapplied hVM changes from block %s @ %d, removed %d headers "+
-		"and changed the canonical tip from %s @ %d to %x @ %d, last header before removed chunk is %x, rt=%d",
+		"and changed the canonical tip from %s @ %d to %s @ %d, last header before removed chunk is %x, rt=%d",
 		header.Hash().String(), header.Number.Uint64(), len(btcAttrDep.Headers), currentTipHash.String(),
-		currentTipHeight, expectedPreviousTipHash[:], expectedPreviousTipHeight, lastHeaderHash[:], rt))
+		currentTipHeight, expectedPreviousTip.BlockHash().String(), expectedPreviousTipHeight, lastHeaderHash[:], rt))
 
 	return nil
 }
@@ -1287,7 +1304,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		}
 
 		it, cbh, lbh, _, err := bc.tbcHeaderNode.AddExternalHeaders(
-			context2.Background(), reconstitutedHeaders, &stateTransitionTargetHash)
+			context2.Background(), reconstitutedHeaders, stateTransitionTargetHash[:])
 		if err != nil {
 			// TODO: Bubble this error up to cause a block rejection instead
 			log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which contains"+
@@ -1311,7 +1328,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 			// Remove the added headers and set the canonical tip and previous upstream state id back to
 			// what it was prior to the invalid addition
 			rt, removalParent, err := bc.tbcHeaderNode.RemoveExternalHeaders(
-				context2.Background(), reconstitutedHeaders, prevTip, previousStateTransitionHash)
+				context2.Background(), reconstitutedHeaders, prevTip, previousStateTransitionHash[:])
 
 			if err != nil {
 				// TODO: Recovery
@@ -1798,7 +1815,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	_, canonical, _, _, err := bc.tbcHeaderNode.AddExternalHeaders(
 		context2.Background(),
 		msgHeaders,
-		&hVMDummyUpstreamId)
+		hVMDummyUpstreamId[:])
 
 	if err != nil {
 		first := headersToAdd[0].BlockHash()
@@ -1810,7 +1827,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	}
 
 	// Revert lightweight TBC's view back to what it was before we started.
-	rt, prevHeader, err := bc.tbcHeaderNode.RemoveExternalHeaders(context2.Background(), msgHeaders, lightTipHeader, originalTbcUpstreamId)
+	rt, prevHeader, err := bc.tbcHeaderNode.RemoveExternalHeaders(context2.Background(), msgHeaders, lightTipHeader, originalTbcUpstreamId[:])
 	if err != nil {
 		first := headersToAdd[0].BlockHash()
 		last := headersToAdd[len(headersToAdd)-1].BlockHash()
@@ -2155,12 +2172,6 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 	// snap sync of TBC state or similar.
 	currentHeadHashRaw, err := bc.tbcHeaderNode.UpstreamStateId(context2.Background())
 	log.Info(fmt.Sprintf("current upstream state id from TBC is %x", currentHeadHashRaw[:]))
-
-	if bytes.Equal(currentHeadHashRaw[:], tbcd.DefaultUpstreamStateId[:]) {
-		// TODO: Full TBC recovery from genesis
-		log.Crit("hVM's header-only TBC node reported a default upstream state id, " +
-			"indicating it was modified without a proper corresponding EVM block to identify its state.")
-	}
 
 	if bytes.Equal(currentHeadHashRaw[:], newHead.Hash().Bytes()[:]) {
 		log.Info(fmt.Sprintf("updateHvmHeaderConsensus called to update chain to new head %x but lightweight "+
