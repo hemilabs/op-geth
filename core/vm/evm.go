@@ -45,7 +45,6 @@ type (
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	var precompiles map[common.Address]PrecompiledContract
 
-	// TODO MAX: Better logic for avoiding clone
 	switch {
 	case evm.chainRules.IsCancun:
 		precompiles = maps.Clone(PrecompiledContractsCancun)

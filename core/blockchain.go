@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -118,6 +119,10 @@ var (
 		0x0C, 0x0B, 0x0A, 0x09, 0x08, 0x07}
 
 	emptyArray = [32]byte{}
+
+	// Special error thrown when blockchain state manipulation functions find that the external header mode TBC
+	// instance is in an impossible state implying data corruption or incrrect application of previous state trnsitions.
+	ErrExternalHeaderTBCInvalidState = errors.New("external header TBC instance is in an invalid state")
 )
 
 // Used for communicating chain geometry when finding common ancestor between blocks for hVM state transition
@@ -162,6 +167,11 @@ const (
 	// would move from 98 to 101.
 	// TODO: Make this configurable as part of chain parameters?
 	hVMIndexerTipLag = 2
+
+	// Chosen as reasonable testnet3 difficulty above which block production should not be easy enough for
+	// large reorgs to normally occur.
+	// 0x1a03fffc = difficulty of 4194304
+	testnet3LowDiffThresholdForTipLag = 436469756
 )
 
 // CacheConfig contains the configuration values for the trie database
@@ -1237,6 +1247,8 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		check := bc.getBlockFromDiskOrHoldingPen(prevHashSanity)
 		checkHash := check.Hash()
 		if !bytes.Equal(checkHash[:], header.ParentHash[:]) {
+			// This implies a code bug as upstream calls of this function should be guarded to
+			// only occur when the new block is the direct child of the current state
 			log.Crit(fmt.Sprintf("Applying hVM header update for block %s @ %d failed, "+
 				"previous state id is %x but parent of updated block is %s @ %d",
 				header.Hash().String(), header.Number.Uint64(), previousStateTransitionHash[:],
@@ -1247,9 +1259,9 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 	btcAttrDep, err := block.Transactions().ExtractBtcAttrData()
 	if err != nil {
 		// Error implies that state of Bitcoin Attributes Deposited tx in the transaction list is invalid
-		// TODO: Bubble this error up to cause a block rejection instead
-		log.Crit(fmt.Sprintf("Error while extracting Bitcoin Attributes Deposited transaction to process hVM state "+
+		log.Error(fmt.Sprintf("Error while extracting Bitcoin Attributes Deposited transaction to process hVM state "+
 			"application for applying block %s @ %d", header.Hash().String(), header.Number.Uint64()), "err", err)
+		return consensus.ErrInvalidHVMBlockFormat // Block will never be valid, error was extracting BTC Attr. Dep. tx
 	}
 
 	if btcAttrDep == nil {
@@ -1262,29 +1274,30 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		if bc.chainConfig.IsHvm0(header.Time) {
 			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &stateTransitionTargetHash)
 			if err != nil {
-				// TODO: Recovery mode that resets TBC header mode to genesis configuration and rebuilds it from hVM activation block
-				log.Crit(fmt.Sprintf("Error while updating the upstream state id in TBC with no corresponding "+
+				// Being unable to set the upstream state id implies possible data corruption
+				log.Error(fmt.Sprintf("Error while updating the upstream state id in TBC with no corresponding "+
 					"consensus state modifications for block %s @ %d", header.Hash().String(), header.Number.Uint64()), "err", err)
+				return consensus.ErrCorruptHVMHeaderOnlyModeState
 			}
 		}
 		return nil
 	}
 
 	if !bc.chainConfig.IsHvm0(header.Time) { // && btcAttrDep != nil per above check
-		// TODO: Bubble this error up to cause a block rejection instead
-		log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction but its timestamp "+
+		log.Error(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction but its timestamp "+
 			"%d is before the hVM Phase 0 activation height %d", header.Hash().String(), header.Number.Uint64(),
 			header.Time, *bc.chainConfig.Hvm0Time))
+		return consensus.ErrInvalidHVMBlockFormat // Block will never be valid
 	}
 
 	prevHeight, prevTip, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
 	if err != nil {
-		// This is a critical TBC failure, not related to block validity
-		// TODO: Recovery mode that resets TBC header mode to genesis configuration and rebuilds it from hVM activation block
-		log.Crit(fmt.Sprintf("when processing block %s @ %d, unable to retrieve tip from lightweight TBC!",
+		// Being unable to get the best block header implies possible data corruption
+		log.Error(fmt.Sprintf("when processing block %s @ %d, unable to retrieve tip from lightweight TBC!",
 			header.Hash().String(), header.Number.Uint64()), "err", err)
+		return consensus.ErrCorruptHVMHeaderOnlyModeState
 	}
-	log.Info(fmt.Sprintf("before processing BTC headers from block %s @ %d, the lightweight TBC node's tip "+
+	log.Debug(fmt.Sprintf("before processing BTC headers from block %s @ %d, the lightweight TBC node's tip "+
 		"is %s @ %d", header.Hash().String(), header.Number.Uint64(), prevTip.BlockHash().String(), prevHeight))
 
 	prevTipHash := prevTip.BlockHash()
@@ -1297,19 +1310,56 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 
 		reconstitutedHeaders, err := unflattenBTCHeaders(btcAttrDep.Headers)
 		if err != nil {
-			// TODO: Bubble this error up to cause a block rejection instead
-			log.Crit(fmt.Sprintf("when unapplying hVM changes for block %s @ %d, unable to unflatten "+
+			// Being unable to parse the BTC headers in the Bitcoin Attributes Deposited transaction means the
+			// transaction (and thus block) is invalid
+			log.Error(fmt.Sprintf("when applying hVM changes for block %s @ %d, unable to unflatten "+
 				"one of the BTC headers from the block", header.Hash().String(), header.Number.Uint64()),
 				"err", err)
+			return consensus.ErrInvalidHVMBlockFormat
 		}
 
 		it, cbh, lbh, _, err := bc.tbcHeaderNode.AddExternalHeaders(
 			context2.Background(), reconstitutedHeaders, stateTransitionTargetHash[:])
 		if err != nil {
-			// TODO: Bubble this error up to cause a block rejection instead
-			log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which contains"+
-				" %d Bitcoin headers, and adding these headers to the protocol's Bitcoin view caused an error",
+			// TODO: Review downstream errors and catch any that indicate some on-disk state was changed
+			log.Error(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which contains "+
+				"%d Bitcoin headers, and adding these headers to hVM's lightweight BTC consensus view caused an error",
 				header.Hash().String(), header.Number.Uint64(), len(btcAttrDep.Headers)), "err", err)
+			return consensus.ErrInvalidHVMHeaders
+		}
+
+		// Proactively check for any missing full blocks between full TBC's current indexed height and the
+		// new canonical tip that resulted from adding the new headers, and trigger a fetch from peers for
+		// any blocks that we will need in the future when the full TBC node's indexers are advanced.
+		// (bool, *[]wire.BlockHeader, *chainhash.Hash, error)
+		// Convert tbcd.BlockHeader (contains position and cumulative diff. info) to wire.BlockHeader
+		cbhWire, err := cbh.Wire()
+		if err != nil {
+			// Although this failure does not immediately prevent chain progression, the inability to convert
+			// the canonical block hash returned from TBC by adding headers to a wire indicates something has
+			// gone very wrong so exit.
+			log.Crit(fmt.Sprintf("after applying Bitcoin consensus information from block %s @ %d to "+
+				"hVM's lightweight BTC consensus view, the canonical header %s returned could not be converted "+
+				"to a wire message", header.Hash().String(), header.Number.Uint64(), cbh.Hash.String()),
+				"err", err)
+		}
+		_, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(context2.Background(), cbhWire)
+		if err != nil {
+			log.Error(fmt.Sprintf("unable to proactively check for full TBC node containing blocks to tip %s",
+				cbh.Hash.String()), "err", err)
+		}
+
+		if blocksMissing != nil {
+			if len(*blocksMissing) > 0 {
+				for _, blockMissing := range *blocksMissing {
+					// Note that it's possible the canonical tip returned by lightweight consensus is not canonical
+					// on the actual Bitcoin network and one or more blocks cannot be acquired, but as long as
+					// the reorg is smaller than the hVM indexing delay/lag it will be fine.
+					log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from peers "+
+						"so it will be available when needed for indexing", blockMissing.BlockHash().String()))
+					vm.TBCAttemptBlockRefetch(context2.Background(), &blockMissing)
+				}
+			}
 		}
 
 		cbHash := cbh.Hash[:]
@@ -1317,7 +1367,6 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		if !bytes.Equal(cbHash, btcAttrDep.CanonicalTip[:]) {
 			// Canonical tip determined by TBC based on the new headers does not match canonical tip claimed by
 			// Bitcoin Attributes Deposited transaction
-			// TODO: Bubble this error up to cause a block rejection instead
 
 			// Print out error, then remove the bad headers to return TBC to the correct state
 			log.Error(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which "+
@@ -1331,23 +1380,28 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 				context2.Background(), reconstitutedHeaders, prevTip, previousStateTransitionHash[:])
 
 			if err != nil {
-				// TODO: Recovery
-				log.Crit(fmt.Sprintf("after adding headers ending with %x from the Bitcoin Attributes "+
+				log.Error(fmt.Sprintf("after adding headers ending with %x from the Bitcoin Attributes "+
 					" Deposited transaction in block %s @ %d, unable to remove those headers from TBC's view",
 					lastHeader[:], header.Hash().String(), header.Number), "err", err)
+
+				// Unable to unapply our undesired changes, TBC lightweight node could be recovered
+				return consensus.ErrCorruptHVMHeaderOnlyModeState
 			}
 
 			removalParentHash := removalParent.BlockHash()
 
-			// TODO: Bubble this error up to cause a block rejection instead
-			log.Crit(fmt.Sprintf("successfully removed headers applied from invalid block %s @ %d, last header "+
+			log.Error(fmt.Sprintf("successfully removed headers applied from invalid block %s @ %d, last header "+
 				"before removed section is %x. Removal type: %d", header.Hash().String(), header.Number.Uint64(),
 				removalParentHash[:], rt))
+
+			// Headers this block adds to lightweight view don't result in the claimed new canonical tip
+			return consensus.ErrInvalidHVMHeaders
 		}
 
 		lbHash := lbh.Hash[:]
 		if !bytes.Equal(lbh.Header[:], lastHeader[:]) {
-			// Indicates a bug in TBC, as TBC didn't add all the headers we passed in
+			// Indicates a bug in TBC, as TBC didn't add all the headers we passed in.
+			// Unlikely this would be due to data corruption, so assume bug and exit.
 			log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which "+
 				"contains %d headers ending in %x, but after adding those headers to lightweight TBC, TBC's last "+
 				"added block was %x", header.Hash().String(), header.Number.Uint64(), headersToAdd, lastHeader[:],
@@ -1361,15 +1415,14 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 	} else {
 		// No headers to add, make sure that claimed canonical in BTC Attributes Deposited matches TBC's current
 		if !bytes.Equal(prevTipHash[:], btcAttrDep.CanonicalTip[:]) {
-			// TODO: Bubble this error up to cause a block rejection instead
-			log.Crit(fmt.Sprintf("block %s @ %d contains a Bitcoin Attributes Deposited transaction which "+
+			log.Error(fmt.Sprintf("block %s @ %d contains a Bitcoin Attributes Deposited transaction which "+
 				"does not contain any headers, but claims the canonical tip should be %x when light TBC's tip "+
 				"is %x", header.Hash().String(), header.Number.Uint64(), btcAttrDep.CanonicalTip[:], prevTipHash[:]))
+			// Block contains a BTC Attr. Dep. transaction which claims an incorrect canonical claim, reject
+			return consensus.ErrInvalidHVMHeaders
 		}
 		return nil
 	}
-	// Catch-all because we don't have returns after log.Crits which are going to be replaced with appropriate recovery action
-	return fmt.Errorf("unspecified error")
 }
 
 func (bc *BlockChain) IsHvmEnabled() bool {
@@ -1440,7 +1493,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 
 			// Attempting to generate Bitcoin Attributes Deposited transaction for the block after current tip
 			// but lightweight TBC's state isn't at the current tip, move it here manually
-			err := bc.updateHvmHeaderConsensus(lastTip)
+			err := bc.updateHvmHeaderConsensus(lastTip, false)
 			if err != nil {
 				log.Crit(fmt.Sprintf("When attempting to generate a Bitcoin Attributes Deposited transaction "+
 					"for the next block after %s @ %d, lightweight TBC represented an incorrect EVM state of %s @ %d "+
@@ -1448,7 +1501,6 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 					lastTip.Hash().String(), lastTip.Number.Uint64(), currentTbcEvmTip.Hash().String(),
 					currentTbcEvmTip.Number.Uint64()))
 			}
-			// TODO: decide whether to move TBC back to the "bad" (non-tip) state after this calculation.
 		} else {
 			log.Info(fmt.Sprintf("Lightweight TBC correctly represents block %s @ %d when attempting to "+
 				"generate a Bitcoin Attributes Deposited transaction for the next block",
@@ -1721,24 +1773,12 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// if len(headersToAdd) > types.MaximumBtcHeadersInTx {
 	// 	headersToAdd = headersToAdd[0:types.MaximumBtcHeadersInTx]
 	// }
-	if len(headersToAdd) > 24 {
-		headersToAdd = headersToAdd[0:24] // Temporarily limit to 24 at generation level, not validation level
+	if len(headersToAdd) > 6 {
+		headersToAdd = headersToAdd[0:6]
 	}
 	log.Info(fmt.Sprintf("Headers to add while generating Bitcoin Attributes Deposited transaction: %d", headersToAdd))
 
-	/*
-		bc.tempRestartTestTriggerCount++
-		if bc.tempRestartTestTriggerCount >= 12 {
-			log.Info("Testing restart of TBC full node!")
-			err := vm.RestartTBCFullNode(context2.Background())
-			if err != nil {
-				log.Error("Unable to restart TBC full node!", "err", err)
-			}
-			log.Info("Restarted TBC full node!")
-		} */
-
 	// Walk up headersToAdd, and truncate blocks that TBC Full Node does not have complete information for
-	blockNotAvailable := false // TODO: Temp, remove
 	for i := 0; i < len(headersToAdd); i++ {
 		hashToCheck := headersToAdd[i].BlockHash()
 		headerAvailable, err := vm.TBCFullNode.FullBlockAvailable(context2.Background(), &hashToCheck)
@@ -1750,21 +1790,8 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		}
 
 		if !headerAvailable {
-			blockNotAvailable = true
 			log.Warn(fmt.Sprintf("TBC does not have full block available for %s!", hashToCheck.String()))
 			vm.TBCAttemptBlockRefetch(context2.Background(), &headersToAdd[i])
-
-			// Temp workaround, TODO remove
-			bc.fullBlockFailureCount++
-			// If we have
-			if bc.fullBlockFailureCount > 50 {
-				bc.fullBlockFailureCount = 0
-				log.Info("Restarting TBC full node when generating Bitcoin Attributes")
-				err := vm.RestartTBCFullNode(context2.Background())
-				if err != nil {
-					log.Error("Unable to restart TBC full node!", "err", err)
-				}
-			}
 
 			// Header is not available; if this is the first block then return nothing, otherwise truncate
 			if i == 0 {
@@ -1780,11 +1807,6 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 				break
 			}
 		}
-	}
-
-	// TODO temp remove, if all blocks were found reset the failure counter
-	if !blockNotAvailable {
-		bc.fullBlockFailureCount = 0
 	}
 
 	// Serialize headers to bytes
@@ -1921,9 +1943,36 @@ func (bc *BlockChain) walkHvmHeaderConsensusForward(currentHead *types.Header, n
 	for index := 1; index < len(headers); index++ {
 		err := bc.applyHvmHeaderConsensusUpdate(headers[index])
 		if err != nil {
-			// TODO: Invalidate the failing block OR attempt to recover hVM state from genesis
-			return fmt.Errorf("unable to apply the hVM header state transition for block %s @ %d, err: %v",
-				headers[index].Hash().String(), headers[index].Number.Uint64(), err)
+			if errors.Is(err, consensus.ErrInvalidHVMBlockFormat) || errors.Is(err, consensus.ErrInvalidHVMHeaders) {
+				// Something is wrong with the block, report it as invalid
+				badBlock := bc.getBlockFromDiskOrHoldingPen(headers[index].Hash())
+				bc.reportBlock(badBlock, nil, err)
+				for backIndex := index - 1; backIndex >= 1; backIndex-- {
+					// Walk backwards to restore state to where it was originally
+					err := bc.unapplyHvmHeaderConsensusUpdate(headers[index])
+					if err != nil {
+						// Unable to walk consensus updates we just performed backwards, critical
+						log.Crit(fmt.Sprintf("Unable to undo hVM consensus updates when an error was encountered "+
+							"walking from %s @ %d to %s @ %d and block %s @ %d was deemed invalid",
+							currentHead.Hash().String(), currentHead.Number.Uint64(), newHead.Hash().String(),
+							newHead.Number.Uint64(), badBlock.Hash().String(), badBlock.Number().Uint64()),
+							"err", err)
+					}
+				}
+				// Return the original error
+				return err
+			} else if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				return err
+			} else {
+				// Unhandled error, for now exit on critical
+				log.Crit(fmt.Sprintf("Unhandled error occurred while walking hVM consensus forward from "+
+					"%s @ %d to %s @ %d, the hVM state transition for block %s @ %d could not be handled",
+					currentHead.Hash().String(), currentHead.Number.Uint64(), newHead.Hash().String(),
+					newHead.Number.Uint64(), headers[index].Hash().String(), headers[index].Number.Uint64()), "err", err)
+			}
+			// Impossible to reach this, but placeholder to ensure error gets returned if logic for unhandled errors
+			// is modified.
+			return err
 		}
 	}
 
@@ -1933,9 +1982,10 @@ func (bc *BlockChain) walkHvmHeaderConsensusForward(currentHead *types.Header, n
 func (bc *BlockChain) walkHvmHeaderConsensusBack(currentHead *types.Header, newHead *types.Header) error {
 	// Can't walk backwards from a block that is the same height or lower than the destination
 	if currentHead.Number.Uint64() <= newHead.Number.Uint64() {
-		return fmt.Errorf(fmt.Sprintf("Cannot walk hVM consensus backwards from "+
+		log.Error(fmt.Sprintf("Cannot walk hVM consensus backwards from "+
 			"%s @ %d to %s @ %d - bad geometry", currentHead.Hash().String(), currentHead.Number.Uint64(),
 			newHead.Hash().String(), newHead.Number.Uint64()))
+		return consensus.ErrBadTraversalGeometry
 	}
 
 	log.Info(fmt.Sprintf("walkHvmHeaderConsensusBack called to walk backwards from %s @ %d to %s @ %d",
@@ -1949,19 +1999,28 @@ func (bc *BlockChain) walkHvmHeaderConsensusBack(currentHead *types.Header, newH
 		if cursor.Number.Uint64() == newHead.Number.Uint64() {
 			// Should be impossible, this indicates that newHead is not actually
 			// a direct ancestor of currentHead and our common ancestor is incorrect
-			return fmt.Errorf("walking backwards from block %s @ %d, reached block %s @ %d but "+
+			log.Error(fmt.Sprintf("walking backwards from block %s @ %d, reached block %s @ %d but "+
 				"was expecting the block at index %d to be %s which is the new head we are unwinding to",
 				currentHead.Hash().String(), currentHead.Number.Uint64(), cursor.Hash().String(),
-				cursor.Number.Uint64(), cursor.Number.Uint64(), newHead.Hash().String())
+				cursor.Number.Uint64(), cursor.Number.Uint64(), newHead.Hash().String()))
+			return consensus.ErrBadTraversalGeometry
 		}
 
 		err := bc.unapplyHvmHeaderConsensusUpdate(cursor)
 		if err != nil {
-			log.Crit(fmt.Sprintf("Unable to unapply the hVM header %s @ %d",
-				cursor.Hash().String(), cursor.Number.Uint64()), "err", err)
+			// If we are unable to apply a previously-applied consensus update, this is critical unless
+			// due to a data corruption issue which can be recovered from
+			if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				return err
+			} else {
+				log.Crit(fmt.Sprintf("Unable to unapply the hVM header %s @ %d",
+					cursor.Hash().String(), cursor.Number.Uint64()), "err", err)
+			}
 		}
 		newCursor := bc.getHeaderFromDiskOrHoldingPen(cursor.ParentHash)
 		if newCursor == nil {
+			// Critical error as this block should have existed since it has already been applied and
+			// we are attempting to unapply it
 			log.Crit(fmt.Sprintf("Unable to get header for block %s @ %d",
 				cursor.ParentHash.String(), cursor.Number.Uint64()-1))
 		}
@@ -1974,33 +2033,18 @@ func (bc *BlockChain) walkHvmHeaderConsensusBack(currentHead *types.Header, newH
 		return err
 	}
 	if !bytes.Equal(upstreamStateId[:], newHead.Hash().Bytes()[:]) {
-		return fmt.Errorf("after walking backwards from block %s @ %d to %s @ %d, expected TBC "+
+		// If we didn't get an error but the upstream state ID is not what we expect, exit as there is
+		// likely a code bug (rather than a data corruption issue that could be repaired).
+		log.Crit(fmt.Sprintf("after walking backwards from block %s @ %d to %s @ %d, expected TBC "+
 			"upstream state id to be %s but got %x instead", currentHead.Hash().String(), currentHead.Number.Uint64(),
-			newHead.Hash().String(), newHead.Number.Uint64(), newHead.Hash().String(), upstreamStateId[:])
+			newHead.Hash().String(), newHead.Number.Uint64(), newHead.Hash().String(), upstreamStateId[:]))
 	}
 
 	return nil
 }
 
-func (bc *BlockChain) updateFullTBCToLightweight() error {
-	// Update TBC Full Node's indexing to represent lightweight view minus 2 (unless testnet3 diff bomb) BTC blocks
-	lightTipHeight, lightTipHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
-	if err != nil {
-		return err
-	}
-	lightTipHash := lightTipHeader.BlockHash()
-
-	cursorHeight, cursorHeader := lightTipHeight, lightTipHeader
-	cursorHash := cursorHeader.BlockHash()
-
-	// Special case to fix an issue with testnet3 difficulty bomb - when difficulty is low, give a longer tip lag
-	// TODO: Review logic before updating public testnet
-	effectiveHVMIndexerTipLag := uint64(hVMIndexerTipLag)
-
-	// 0x1a03fffc = difficulty of 4194304
-	// Chosen as reasonable testnet3 difficulty above which block production should not be easy enough for
-	// large reorgs to normally occur.
-	lowDiffThreshold := blockchain.CalcWork(436469756)
+func (bc *BlockChain) calculateHvmIndexerTipLagTestnet3(cursorHeader *wire.BlockHeader, cursorHeight uint64, defaultTipLag uint64) (uint64, error) {
+	lowDiffThreshold := blockchain.CalcWork(testnet3LowDiffThresholdForTipLag)
 
 	tipDiff := blockchain.CalcWork(cursorHeader.Bits)
 	if tipDiff.Cmp(lowDiffThreshold) <= 0 {
@@ -2008,9 +2052,10 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 		var prevHeader *wire.BlockHeader
 		if cursorHeight > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
 			// Grab previous block's difficulty.
+			var err error
 			prevHeader, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
 			if err != nil {
-				return err
+				return 0, err
 			}
 
 			prevHeaderDiff := blockchain.CalcWork(prevHeader.Bits)
@@ -2029,12 +2074,10 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 
 			lookbackCursor := prevHeader
 
-			// lookbackCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &prevHeader.PrevBlock)
-
 			// We are starting two blocks behind cursor (looking at previous-to-previous)
 			// This is not based on the setting of hVMIndexerTipLag, but rather how far back we must be starting
-			// in the walkback to find the beginning of the difficulty bomb (if recent)
-			effectiveHVMIndexerTipLag = 2
+			// in the walk-back to find the beginning of the difficulty bomb (if recent)
+			effectiveHVMIndexerTipLag := defaultTipLag
 
 			for lookback := int64(effectiveHVMIndexerTipLag); lookback <= 100; lookback++ {
 				lookbackHeight := int64(cursorHeight) - lookback
@@ -2051,7 +2094,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 
 				tempCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &lookbackCursor.PrevBlock)
 				if err != nil {
-					return err
+					return 0, err
 				}
 
 				tempDiff := blockchain.CalcWork(tempCursor.Bits)
@@ -2065,81 +2108,120 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 				}
 			}
 
-			if effectiveHVMIndexerTipLag < hVMIndexerTipLag {
-				effectiveHVMIndexerTipLag = hVMIndexerTipLag
+			// Should not be possible but additional sanity check
+			if effectiveHVMIndexerTipLag < defaultTipLag {
+				effectiveHVMIndexerTipLag = defaultTipLag
 			}
+
+			return effectiveHVMIndexerTipLag, nil
+		} else {
+			// This was just a single low-difficulty block which can be mined after 20 minutes of no regular-difficulty
+			// blocks on testnet3 but does not indicate a difficulty bomb, so return the default tip lag
+			return defaultTipLag, nil
+		}
+	} else {
+		return defaultTipLag, nil
+	}
+}
+
+// Update TBC Full Node's indexing to represent lightweight view minus 2 BTC blocks (or more during testnet3 diff bomb)
+func (bc *BlockChain) updateFullTBCToLightweight() error {
+	lightTipHeight, lightTipHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
+	if err != nil {
+		log.Error("Attempting to update the full TBC node's indexers based on the header-only TBC consensus "+
+			"view of Bitcoin, but unable to get the best block from the lightweight TBC node", "err", err)
+		// This likely indicates something is broken with the header-only TBC node which could be recovered
+		return consensus.ErrCorruptHVMHeaderOnlyModeState
+	}
+
+	lightTipHash := lightTipHeader.BlockHash()
+
+	cursorHeight, cursorHeader := lightTipHeight, lightTipHeader
+	cursorHash := cursorHeader.BlockHash()
+
+	effectiveHVMIndexerTipLag := uint64(hVMIndexerTipLag)
+	if vm.TBCFullNodeConfig.Network == chaincfg.TestNet3Params.Name {
+		// Special case to fix an issue with testnet3 difficulty bomb - when difficulty is low, give a longer tip lag
+		log.Debug("Chain is testnet3, checking whether a difficulty bomb is ongoing and a longer effective " +
+			"hVM indexer tip lag should be used")
+		effectiveHVMIndexerTipLag, err = bc.calculateHvmIndexerTipLagTestnet3(cursorHeader, cursorHeight, effectiveHVMIndexerTipLag)
+		if err != nil {
+			log.Error("An unexpected error was encountered when attempting to determine whether a higher "+
+				"hVM lag behind consensus tip should be used due to a difficulty bomb", "err", err)
+			return err
+		}
+
+		if effectiveHVMIndexerTipLag != hVMIndexerTipLag {
+			log.Info(fmt.Sprintf("Due to a difficulty bomb, hVM will be lagging %d blocks behind known "+
+				"consensus tip", effectiveHVMIndexerTipLag))
 		}
 	}
 
-	log.Info(fmt.Sprintf("effectiveHVMIndexerTipLag: %d", effectiveHVMIndexerTipLag))
-	log.Info(fmt.Sprintf("lightTipHeight=%d, lightTipHeader=%s", lightTipHeight, lightTipHeader.BlockHash().String()))
-
 	// walk back hVMIndexerTipLag blocks from tip
 	// On initial init when we have less than hVMIndexerTipLag previous blocks (right after
-	// hVM0 phase transition), correct indexer behavior is to remain at the genesis-configured
+	// hVM phase 0 transition), correct indexer behavior is to remain at the genesis-configured
 	// height until walking backwards the specified number of lag blocks doesn't surpass
 	// configured genesis.
 	if cursorHeight-effectiveHVMIndexerTipLag > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
 		for i := uint64(0); i < effectiveHVMIndexerTipLag; i++ {
 			head, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
 			if err != nil {
-				log.Crit(fmt.Sprintf("an error occurred walking back Bitcoin headers from lightweight "+
+				// Being unable to walk back through header-only TBC node's best block indicates data corruption
+				// which could be solved by recovering the lightweight TBC node
+				log.Error(fmt.Sprintf("an error occurred walking back Bitcoin headers from lightweight "+
 					"TBC tip %s @ %d, unable to get header %s @ %d", lightTipHash.String(), lightTipHeight,
-					cursorHeader.PrevBlock.String(), cursorHeight-1))
+					cursorHeader.PrevBlock.String(), cursorHeight-1), "err", err)
+				return consensus.ErrCorruptHVMHeaderOnlyModeState
 			}
 			cursorHeader, cursorHeight = head, height // Storing them temporarily for verbose logging
 			cursorHash = cursorHeader.BlockHash()
 		}
 	}
 
-	log.Info(fmt.Sprintf("After walking back from lightweight tip to determine full node indexer target,"+
-		" cursorHeight=%d, cursorHeader=%s", cursorHeight, cursorHeader.BlockHash().String()))
+	log.Info(fmt.Sprintf("After walking back from lightweight tip to determine full node indexer target, "+
+		"cursorHeight=%d, cursorHeader=%s", cursorHeight, cursorHeader.BlockHash().String()))
 
 	// Check that the TBC Full Node has sufficient chain knowledge to sync to this height.
-	// TODO: More intelligent handling of this in the future - adding to queue and processing later
-	// rather than busy-waiting here
-	available, err := vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
+	available, missingFullBlockHeaders, missingHeaderHash, err := vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
 	if err != nil {
 		return err
 	}
 
-	// TODO temp remove, if all blocks are available reset failure counter
-	// if available {
-	// 	bc.fullBlockFailureCount = 0
-	// }
-
-	lastRestart := time.Now().UnixMilli()
-	for !available {
-		// Temp workaround, TODO remove
-		bc.fullBlockFailureCount++
-		// After a restart give it 120 seconds before restarting again to give time to P2P connect and attempt to download blocks
-		if bc.fullBlockFailureCount > 50 && time.Now().UnixMilli()-120000 > lastRestart {
-			bc.fullBlockFailureCount = 0
-			log.Info("Restarting TBC full node while updating TBC full node based on lightweight tip")
-			err := vm.RestartTBCFullNode(context2.Background())
-			lastRestart = time.Now().UnixMilli()
-			if err != nil {
-				log.Error("Unable to restart TBC full node!", "err", err)
-			}
+	if !available {
+		log.Warn("Unable to update full TBC node to lightweight tip (minus effective lag) due to at least one missing block.")
+		if missingHeaderHash != nil {
+			// TBC Full Node does not even have knowledge of at least one header that is needed to update the Full TBC node
+			// indexers. Currently, nothing to do from the op-geth side, but TBC full node may resolve this issue eventually
+			// by continuing to sync with the Bitcoin network.
+			log.Error(fmt.Sprintf("TBC missing block header for block: %s", missingHeaderHash))
+			return consensus.ErrFullTBCMissingBTCHeader
 		}
-
-		log.Info(fmt.Sprintf("TBC Full Node does not yet have all full blocks up to Bitcoin block %s "+
-			" which is required to index up to according to lightweight TBC node", cursorHash.String()))
-		time.Sleep(250 * time.Millisecond)
-
-		available, err = vm.TBCBlocksAvailableToHeader(context2.Background(), cursorHeader)
-		if err != nil {
-			return err
+		if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 {
+			// Log all of the missing full blocks and trigger an attempt at refetching them over P2P
+			for i := 0; i < len(*missingFullBlockHeaders); i++ {
+				log.Warn(fmt.Sprintf("\tTBC missing full block: %s", (*missingFullBlockHeaders)[i].BlockHash().String()))
+				vm.TBCAttemptBlockRefetch(context2.Background(), &(*missingFullBlockHeaders)[i])
+			}
+			return consensus.ErrFullTBCMissingFullBTCBlock
+		} else {
+			// Should never get available=false but neither a missing full block or block header, so if this happens
+			// exit on crit.
+			log.Crit(fmt.Sprintf("When attempting to update full TBC node indexers to tip %s @ %d, was "+
+				"unable to determine whether any required headers or blocks were missing in full TBC node as the "+
+				"call to TBCBlocksAvailableToHeader returned available=false but did not indicate any missing headers "+
+				"or full blocks which should not be possible", cursorHeader.BlockHash().String(), cursorHeight))
 		}
 	}
 
-	// This single indexer function handles any reorgs required to move the TBC full node to the specified index
 	log.Info(fmt.Sprintf("Moving TBC Full Node indexes to BTC block %s", cursorHeader.BlockHash().String()))
+
+	// This single indexer function handles any reorgs required to move the TBC full node to the specified index.
 	err = vm.TBCIndexToHeader(cursorHeader)
 	if err != nil {
-		// TODO: Recovery?
-		log.Crit(fmt.Sprintf("Unable to move TBC Full Node indexes to BTC block %x @ %d",
-			cursorHash[:], cursorHeight), "err", err)
+		// If we attempted the indexing above, all of the data required to update the indexers is  known so any
+		//error that occurs here indicates either a bug or a data corruption issue with the full TBC node
+		log.Crit(fmt.Sprintf("Unable to move TBC Full Node indexers to BTC block %s @ %d",
+			cursorHash.String(), cursorHeight), "err", err)
 	}
 
 	return nil
@@ -2151,7 +2233,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 // external-header-mode TBC instance's Bitcoin header knowledge to
 // account for only information contained in the canonical chain ending
 // at the new head.
-func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
+func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header, updateFullNode bool) error {
 	if !bc.hvmEnabled {
 		log.Warn("updateHvmHeaderConsensus called but hVM is disabled")
 		return nil
@@ -2161,7 +2243,8 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 		newHead.Hash().String(), newHead.Number.Uint64()))
 
 	if !bc.chainConfig.IsHvm0(newHead.Time) {
-		log.Info(fmt.Sprintf("New head %s @ %d does not have hVM Phase 0 active yet.", newHead.Hash().String(), newHead.Number.Uint64()))
+		log.Info(fmt.Sprintf("New head %s @ %d does not have hVM Phase 0 active yet.",
+			newHead.Hash().String(), newHead.Number.Uint64()))
 		return nil
 	}
 
@@ -2183,39 +2266,44 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 	currentHeadHash := common.BytesToHash(currentHeadHashRaw[:])
 
 	if bytes.Equal(currentHeadHashRaw[:], hVMGenesisUpstreamId[:]) {
+		// Should only be printed at hVM activation time or if something is wrong (genesis state but not activation time)
 		log.Info(fmt.Sprintf("Current head from lightweight TBC upstream ID is the hVM Genesis Upstream ID"))
 		// Upstream id is genesis, so this should be the first hVM block
 		currentHead = bc.getHeaderFromDiskOrHoldingPen(newHead.ParentHash)
 		currentHeadHash = currentHead.Hash()
 		if bc.chainConfig.IsHvm0(currentHead.Time) {
+			// This is critical as it means hVM is in an unexpected state (upstream state ID is genesis but should not be)
 			log.Crit(fmt.Sprintf("When updating hVM state transition for block %s @ %d, the upstream id is the "+
 				" hVMGenesisUpstreamId, but the parent at time %d should have hVM Phase 0 activated!",
 				newHead.Hash().String(), newHead.Number.Uint64(), currentHead.Time))
 		}
 	} else {
-		log.Info(fmt.Sprintf("Getting header %x from disk or holding pen", currentHeadHash[:]))
+		log.Debug(fmt.Sprintf("Getting header %x from disk or holding pen", currentHeadHash[:]))
 		currentHead = bc.getHeaderFromDiskOrHoldingPen(currentHeadHash)
 	}
 
 	if currentHead == nil {
 		log.Error(fmt.Sprintf("currentHead is nil, but should have been %x", currentHeadHash[:]))
 	} else {
-		log.Info(fmt.Sprintf("Going to look for ancestor of %d @ %s and %d @ %s", newHead.Hash().String(),
+		log.Debug(fmt.Sprintf("Going to look for ancestor of %d @ %s and %d @ %s", newHead.Hash().String(),
 			newHead.Number.Uint64(), currentHead.Hash().String(), currentHead.Number.Uint64()))
 	}
 
-	log.Info(fmt.Sprintf("updateHvmHeaderConsensus found current head hash: %x", currentHeadHashRaw[:]))
+	log.Debug(fmt.Sprintf("updateHvmHeaderConsensus found current head hash: %x", currentHeadHashRaw[:]))
 
 	// Get common ancestor between newHead and currentHead
 	ancestor, err := bc.findCommonAncestor(newHead, currentHead)
 	if err != nil || ancestor == nil {
-		log.Crit(fmt.Sprintf("Unable to find common ancestor between %s @ %d and %s @ %d,"+
+		log.Error(fmt.Sprintf("Unable to find common ancestor between %s @ %d and %s @ %d,"+
 			" cannot transition hVM's header knowledge to the correct state",
 			newHead.Hash().String(), newHead.Number.Uint64(),
 			currentHead.Hash().String(), currentHead.Number.Uint64()), "err", err)
+		// We are missing at least one block in the EVM chain geometry between the requested new head and
+		// the current head which hVM currently represents state for
+		return consensus.ErrUnknownAncestor
 	}
 
-	log.Info(fmt.Sprintf("Common ancestor between %s @ %d and %s @ %d is %s @ %d",
+	log.Debug(fmt.Sprintf("Common ancestor between %s @ %d and %s @ %d is %s @ %d",
 		currentHead.Hash().String(), currentHead.Number.Uint64(), newHead.Hash().String(),
 		newHead.Number.Uint64(), ancestor.Hash().String(), ancestor.Number.Uint64()))
 
@@ -2223,10 +2311,21 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 	if newHead.ParentHash.Cmp(currentHead.Hash()) == 0 {
 		err := bc.applyHvmHeaderConsensusUpdate(newHead)
 		if err != nil {
-			// TODO: This is where we should invalidate the block OR attempt to recover hVM state from genesis
-			// depending on the nature of the error. For now, crit.
-			log.Crit(fmt.Sprintf("Encountered an error applying hVM header state transition for block %s @ %d",
-				newHead.Hash().String(), newHead.Number.Uint64()), "err", err)
+			if errors.Is(err, consensus.ErrInvalidHVMBlockFormat) || errors.Is(err, consensus.ErrInvalidHVMHeaders) {
+				// Block is invalid, ban block and bubble error up
+				badBlock := bc.getBlockFromDiskOrHoldingPen(newHead.Hash())
+				bc.reportBlock(badBlock, nil, err)
+				return err
+			} else if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				// Bubble up corruption to potentially fix upstream
+				return err
+			} else {
+				// Error is unrecognized, for now fail with crit
+				log.Crit(fmt.Sprintf("Encountered an error applying hVM header state transition for block %s @ %d",
+					newHead.Hash().String(), newHead.Number.Uint64()), "err", err)
+			}
+			// Unreachable
+			return err
 		}
 		log.Info(fmt.Sprintf("Successfully applied hVM header state transition for single block %s @ %d",
 			newHead.Hash().String(), newHead.Number.Uint64()))
@@ -2234,16 +2333,33 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 		// If currentHead is the ancestor, then we are walking directly forwards.
 		err := bc.walkHvmHeaderConsensusForward(currentHead, newHead)
 		if err != nil {
-			// TODO: depending on error either recover hVM state from genesis or mark blocks invalid
-			log.Crit("Unable to walk hVM consensus forwards", "err", err)
+			if errors.Is(err, consensus.ErrInvalidHVMBlockFormat) || errors.Is(err, consensus.ErrInvalidHVMHeaders) {
+				// The offending block has already been reported by the walk-forward function, bubble error up
+				return err
+			} else if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				// Bubble up corruption to potentially fix upstream
+				return err
+			} else {
+				// Error is unrecognized, for now fail with crit
+				log.Crit("Unable to walk hVM consensus forwards", "err", err)
+			}
+			// Unreachable
+			return err
 		}
 
 	} else if bytes.Equal(newHead.Hash().Bytes(), ancestor.Hash().Bytes()) {
 		// Otherwise if newHead is the ancestor, then we are walking directly backwards.
 		err := bc.walkHvmHeaderConsensusBack(currentHead, newHead)
 		if err != nil {
-			// TODO: depending on error either recover hVM state from genesis or mark blocks invalid
-			log.Crit("Unable to walk hVM consensus backwards", "err", err)
+			if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				// Bubble potential corruption error upstream
+				return err
+			} else {
+				// Any error that isn't possibly fixed by reconstructing lightweight TBC state is critical,
+				// as any other error walking backwards means something that was applied could not be
+				// unapplied and is likely a bug
+				log.Crit("Unable to walk hVM consensus backwards", "err", err)
+			}
 		}
 	} else {
 		// Finally if neither newHead or currentHead is the ancestor, then we are in a fork and need to walk
@@ -2252,39 +2368,42 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header) error {
 		// First, walk backwards from currentHead to common ancestor
 		err := bc.walkHvmHeaderConsensusBack(currentHead, ancestor)
 		if err != nil {
-			// TODO: depending on error either recover hVM state from genesis or mark blocks invalid
-			log.Crit("Unable to walk hVM consensus backwards", "err", err)
+			if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				// Bubble potential corruption error upstream
+				return err
+			} else {
+				// Any error that isn't possibly fixed by reconstructing lightweight TBC state is critical,
+				// as any other error walking backwards means something that was applied could not be
+				// unapplied and is likely a bug
+				log.Crit("Unable to walk hVM consensus backwards", "err", err)
+			}
 		}
 		// Then, walk forwards from the common ancestor
 		err = bc.walkHvmHeaderConsensusForward(ancestor, newHead)
 		if err != nil {
-			// TODO: depending on error either recover hVM state from genesis or mark blocks invalid
-			log.Crit("Unable to walk hVM consensus backwards", "err", err)
+			if errors.Is(err, consensus.ErrInvalidHVMBlockFormat) || errors.Is(err, consensus.ErrInvalidHVMHeaders) {
+				// The offending block has already been reported by the walk-forward function, bubble error up
+				return err
+			} else if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				// Bubble up corruption to potentially fix upstream
+				return err
+			} else {
+				// Error is unrecognized, for now fail with crit
+				log.Crit("Unable to walk hVM consensus forwards", "err", err)
+			}
+			// Unreachable
+			return err
 		}
 	}
 
-	// Now make sure TBC indexer represents this final state
-	err = bc.updateFullTBCToLightweight()
-	if err != nil {
-		log.Crit("Unable to update full TBC node according to lightweight", "err", err)
-		return err
+	if updateFullNode {
+		// Now make sure TBC indexer represents this final state
+		err = bc.updateFullTBCToLightweight()
+		if err != nil {
+			log.Crit("Unable to update full TBC node according to lightweight", "err", err)
+			return err
+		}
 	}
-	// canonHeight, canonHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
-	// if err != nil {
-	// 	canonHeaderHash := canonHeader.BlockHash()
-	// 	log.Crit(fmt.Sprintf("Unable to progress TBC indexers to represent the canonical state of the lightweight "+
-	// 		"header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight), "err", err)
-	// }
-	// chbh := canonHeader.BlockHash()
-	// log.Info("updateHvmHeaderConsensus moving TBC indexer to %x for block %s @ %d", chbh[:],
-	// 	newHead.Hash().String(), newHead.Number.Uint64())
-	// err = vm.TBCIndexToHeader(canonHeader)
-	// if err != nil {
-	// 	canonHeaderHash := canonHeader.BlockHash()
-	// 	log.Crit(fmt.Sprintf("Encountered an error progressing TBC indexers to represent the canonical state of "+
-	// 		"the lightweight header TBC node which has canonical tip %x @ %d", canonHeaderHash[:], canonHeight),
-	// 		"err", err)
-	// }
 
 	return nil
 }
@@ -2375,7 +2494,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 
 			log.Info(fmt.Sprintf("Updating hVM header consensus in setHeadBeyondRoot updateFn to %s @ %d",
 				newHeadBlock.Header().Hash().String(), newHeadBlock.Number().Uint64()))
-			err := bc.updateHvmHeaderConsensus(newHeadBlock.Header())
+			err := bc.updateHvmHeaderConsensus(newHeadBlock.Header(), true)
 			if err != nil {
 				log.Crit(fmt.Sprintf("Unable to udpate hVM header consensus in setHeadBeyondRoot updateFn to %s @ %d",
 					newHeadBlock.Header().Hash(), newHeadBlock.Number().Uint64()), "err", err)
@@ -2617,7 +2736,7 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 
 	log.Info(fmt.Sprintf("Updating hVM header consensus to block %s @ %d in writeHeadBlock()",
 		block.Hash().String(), block.Number().Uint64()))
-	err := bc.updateHvmHeaderConsensus(block.Header())
+	err := bc.updateHvmHeaderConsensus(block.Header(), true)
 	if err != nil {
 		log.Crit(fmt.Sprintf("Unable to update hVM header consensus to block %s @ %d in writeHeadBlock()",
 			block.Hash().String(), block.Number().Uint64()), "err", err)
@@ -3142,21 +3261,47 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	}
 	// Set new head.
 	if status == CanonStatTy {
-		bc.writeHeadBlock(block)
 		log.Info(fmt.Sprintf("Updating hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
 			block.Hash().String(), block.Number().Uint64()))
-		// Update lightweight TBC header view of Bitcoin to account for this new tip
-		err := bc.updateHvmHeaderConsensus(block.Header())
+
+		// Update hVM lightweight and full node view
+		err := bc.updateHvmHeaderConsensus(block.Header(), true)
 		if err != nil {
-			// TODO: Recovery of lightweight TBC
-			log.Crit(fmt.Sprintf("Unable to update hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
-				block.Hash().String(), block.Number().Uint64()), "err", err)
+			if errors.Is(err, consensus.ErrInvalidHVMBlockFormat) || errors.Is(err, consensus.ErrInvalidHVMHeaders) {
+				// Block is bad and was already banned/reported by the updateHvmHeaderConsensus function
+				log.Error(fmt.Sprintf("Block %s @ %d contains invalid hVM state transition, unable to set "+
+					"as new head", block.Hash().String(), block.Number().Uint64()), "err", err)
+
+				return NonStatTy, err
+			} else if errors.Is(err, consensus.ErrUnknownAncestor) {
+				// No route from current head to new set head was found
+				log.Error(fmt.Sprintf("Unable to update hVM header consensus to blcok %s @ %d as the geometry "+
+					"between the current head %s @ %d and the new head could be found", block.Hash().String(),
+					block.Number().Uint64(), currentBlock.Hash().String(), currentBlock.Number.Uint64()), "err", err)
+
+				return NonStatTy, err
+			} else if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+				log.Error(fmt.Sprintf("When attempting to update hVM header consensus to block %s @ %d, "+
+					"encountered an error which is suspected to be the result of corrupted header-only TBC node "+
+					"state, attempting full restore", block.Hash().String(), block.Number().Uint64()), "err", err)
+
+				// Attempt to recover hVM state
+				bc.performFullHvmHeaderStateRestore()
+
+				// Try update again
+				err := bc.updateHvmHeaderConsensus(block.Header(), true)
+				if err != nil {
+					// Still getting an error after recovery, exit with crit
+					log.Crit(fmt.Sprintf("Updating hVM header consensus to block %s @ %d still failed after "+
+						"header-only TBC node restore.", block.Hash().String(), block.Number().Uint64()), "err", err)
+				}
+			} else {
+				// Unexpected error, exit on crit
+				log.Crit(fmt.Sprintf("Encountered unexpected error when attempting to update hVM header consensus "+
+					"to block %s @ %d", block.Hash().String(), block.Number().Uint64()), "err", err)
+			}
 		}
-		err = bc.updateFullTBCToLightweight()
-		if err != nil {
-			log.Crit(fmt.Sprintf("Unable to update full TBC node indexers to reflect EVM block %s @ %d",
-				block.Hash().String(), block.NumberU64()))
-		}
+		bc.writeHeadBlock(block)
 		log.Info(fmt.Sprintf("Updated full TBC node indexers to reflect EVM block %s @ %d",
 			block.Hash().String(), block.NumberU64()))
 	} else {
@@ -3475,8 +3620,6 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 
 		// Process block using the parent state as reference point
 		pstart := time.Now()
-		// TODO:  Evaluate scenarios where very old blocks could require significant work to walk TBC correctly to validate
-		// TODO: if full-node TBC progression fails because it doesn't know of block yet, queue this EVM block for processing later
 		// Before processing a block:
 		//   1. Check whether header-only TBC node's state is at this block's parent; if it's not move it
 		//      here temporarily and store the former state to restore to once we're finished processing
@@ -3491,8 +3634,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 		//   2. If we walk header-only TBC node's state back, then walk back TBC full node's indexed tip to be 2 blocks
 		//      behind the header-only TBC node's tip after the restore
 
-		var tbcHeader *types.Header    // Original EVM tip that lightweight TBC knowledge represents to revert to when necessary
-		var indexedState *tbc.SyncInfo // Original state of TBC Full Node to revert to when necessary
+		var tbcHeader *types.Header // Original EVM tip that lightweight TBC knowledge represents to revert to when necessary
 		isHvmActivated := false
 		isFirstHvmBlock := false
 		log.Info(fmt.Sprintf("Processing block %s @ %d", block.Hash().String(), block.NumberU64()))
@@ -3500,16 +3642,15 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 			var parent *types.Header
 
 			if bc.chainConfig.IsHvm0(block.Time()) {
-				log.Info(fmt.Sprintf("For block %s @ %d, hVM is activated",
+				log.Debug(fmt.Sprintf("For block %s @ %d, hVM is activated",
 					block.Hash().String(), block.NumberU64()))
 				isHvmActivated = true
-				indexedState = vm.GetTBCFullNodeSyncStatus()
 				if block.NumberU64() != 0 {
-					log.Info(fmt.Sprintf("Block != 0, getting parent by hash %s", block.ParentHash()))
+					log.Debug(fmt.Sprintf("Block != 0, getting parent by hash %s", block.ParentHash()))
 					parent = bc.GetHeaderByHash(block.ParentHash())
 					if !bc.chainConfig.IsHvm0(parent.Time) {
 						// Parent is not hVM0, meaning this block is first activation
-						log.Info(fmt.Sprintf("Block %s @ %d is the hVM activation block",
+						log.Debug(fmt.Sprintf("Block %s @ %d is the hVM activation block",
 							block.Hash().String(), block.NumberU64()))
 						isFirstHvmBlock = true
 					}
@@ -3556,8 +3697,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 					log.Info(fmt.Sprintf("Lightweight TBC at block %s @ %d, moving to parent %s @ %d",
 						tbcHeader.Hash().String(), tbcHeader.Number.Uint64(),
 						parent.Hash().String(), parent.Number.Uint64()))
-					err := bc.updateHvmHeaderConsensus(parent)
+					err := bc.updateHvmHeaderConsensus(parent, false)
 					if err != nil {
+						// This is critical as we should always be able to walk to parent.
+						// In future we could attempt a complex TBC recovery here.
 						log.Crit(fmt.Sprintf("Unable to move lightweight TBC node to parent %s @ %d",
 							parent.Hash().String(), parent.Number.Uint64()), "err", err)
 					}
@@ -3570,13 +3713,13 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 			// Do an extra sanity check that lightweight TBC node is in the correct state, after above logic which
 			// should have moved it to the correct state based on the parent of the block we're processing.
 			// Incorrect state represents either data corruption or an issue with the reorg logic.
-			// TODO on incorrect state attempt automated recovery of lightweight TBC state instead of log.Crit() exit
 			if isHvmActivated && !isFirstHvmBlock {
 				log.Info(fmt.Sprintf("Verifying before applying block %s @ %d, lightweight TBC's state is "+
 					"correctly set to direct parent %s @ %d", block.Hash().String(), block.NumberU64(),
 					parent.Hash().String(), parent.Number.Uint64()))
 				representedBlock, err := bc.getHeaderModeTBCEVMHeader()
 				if err != nil {
+					// Critical error as this should correctly represent parent after previous code
 					log.Crit(fmt.Sprintf("Error, unable to fetch the EVM tip which lightweight TBC state "+
 						"currently represents!"), "err", err)
 				}
@@ -3595,19 +3738,36 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 			}
 
 			if isHvmActivated {
-				// Process this block's hVM updates
-				err := bc.updateHvmHeaderConsensus(block.Header())
+				// Process this block's hVM lightweight update first
+				err := bc.updateHvmHeaderConsensus(block.Header(), false)
 				if err != nil {
-					// TODO: ban block instead
-					log.Crit(fmt.Sprintf("TBC lightweight node unable to update lightweight TBC node to block "+
-						"to process %s @ %d", block.Header().Hash().String(), block.Header().Number.Uint64()))
+					// Ensure block is reported, although generally this would have been done be hVM header consensus update
+					bc.reportBlock(block, nil, err)
+					return it.index, err
 				}
 
+				// If lightweight update was successful, do full node update
 				err = bc.updateFullTBCToLightweight()
 				if err != nil {
-					log.Crit(fmt.Sprintf("when processing block %s @ %d, an error occurred getting lightweight"+
-						" TBC's best block", block.Hash().String(), block.NumberU64()))
+					// On error update lightweight TBC node to its previous state
+					revertErr := bc.updateHvmHeaderConsensus(tbcHeader, true)
+					if revertErr != nil {
+						// Critical error if we cannot restore lightweight TBC state correctly
+						log.Crit(fmt.Sprintf("unable to restore lightweight TBC node to previous state when "+
+							"inserting block %s @ %d", block.Hash().String(), block.NumberU64()))
+					}
+
+					if errors.Is(err, consensus.ErrFullTBCMissingFullBTCBlock) {
+						// This might recover, add this block as future block for later processing
+						bc.futureBlocks.Add(block.Hash(), block)
+						return it.index, err
+					} else {
+						// Another unexpected error on full TBC node update, crit for now
+						log.Crit(fmt.Sprintf("Unexpected error updating Full TBC Node to represent block %s @ %d",
+							block.Hash().String(), block.NumberU64()), "err", err)
+					}
 				}
+
 				si := vm.TBCFullNode.Synced(context2.Background())
 				log.Info(fmt.Sprintf("Lightweight TBC is at canonical BTC block %s @ %d "+
 					"(UTXOs: %s @ %d, TXs: %s @ %d)", si.BlockHeader.Hash.String(), si.BlockHeader.Height,
@@ -3662,7 +3822,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				block.NumberU64()))
 			// Because this block is not canonical, revert lightweight and full TBC nodes to former state
 			if tbcHeader != nil {
-				err := bc.updateHvmHeaderConsensus(tbcHeader)
+				err := bc.updateHvmHeaderConsensus(tbcHeader, true)
 				if err != nil {
 					// TODO: Recover lightweight TBC state from genesis
 					log.Crit(fmt.Sprintf("Unable to revert lightweight TBC node to represent state at "+
@@ -3672,20 +3832,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 						"block %s @ %d.", tbcHeader.Hash().String(), tbcHeader.Number.Uint64()))
 				}
 			}
-			if indexedState != nil {
-				// TODO: temporarily disabled, make sure that setting canonical block always does this.
-				// err := vm.TBCRestoreIndexersToPoint(indexedState)
-				// if err != nil {
-				// 	// TODO: Recovery of TBC full node?
-				//	log.Crit(fmt.Sprintf("Unable to restore TBC full node to previous indexed state "+
-				//		"of UTXO Indexer=%x@%d, Tx Indexer=%x@%d", indexedState.Utxo.Hash[:], indexedState.Utxo.Height,
-				//		indexedState.Tx.Hash[:], indexedState.Tx.Height))
-				//}
-			}
 			err = bc.writeBlockWithState(block, receipts, statedb)
+			if err != nil {
+				return it.index, err
+			}
 		} else {
 			log.Info(fmt.Sprintf("Writing block %s @ %d to disk and setting as head, leaving lightweight and "+
 				"full node TBC states progressed", block.Hash().String(), block.NumberU64()))
+			// Write block and set head will re-do hVM checks but should be quick as we left hVM in correct state
 			status, err = bc.writeBlockAndSetHead(block, receipts, logs, statedb, false)
 		}
 		followupInterrupt.Store(true)
@@ -4186,9 +4340,9 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	}
 	bc.writeHeadBlock(head)
 
-	log.Info(fmt.Sprintf("Updating hVM header consensus to block %s @ %d in SetCanonical()",
+	log.Info(fmt.Sprintf("Updating hVM state to block %s @ %d in SetCanonical()",
 		head.Hash().String(), head.Number().Uint64()))
-	err := bc.updateHvmHeaderConsensus(head.Header())
+	err := bc.updateHvmHeaderConsensus(head.Header(), true)
 	if err != nil {
 		log.Crit(fmt.Sprintf("Unable to update hVM header consensus to block %s @ %d in SetCanonical()",
 			head.Hash().String(), head.Number().Uint64()), "err", err)

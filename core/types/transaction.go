@@ -622,7 +622,7 @@ func (s Transactions) ExtractBtcAttrData() (*BtcAttributesDepositData, error) {
 	for _, tx := range s {
 		// BtcAttributesDeposited tx expected to always be at index 1 (no PoP tx present)
 		// or 2 (PoP tx present) if it exists at all, but allow it anywhere here to be
-		//compatible even if transaction ordering changes.
+		// compatible even if transaction ordering changes.
 		if tx.IsBtcAttributesDepositedTx() {
 			if extracted != nil {
 				return nil, fmt.Errorf("transactions contain more than one Bitcoin Attributes Deposited transaction")

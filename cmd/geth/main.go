@@ -369,7 +369,6 @@ func geth(ctx *cli.Context) error {
 	}
 
 	prepare(ctx)
-	// TODO MAX: Init 0
 	stack, backend := makeFullNode(ctx)
 	defer stack.Close()
 
@@ -382,8 +381,6 @@ func geth(ctx *cli.Context) error {
 // it unlocks any requested accounts, and starts the RPC/IPC interfaces and the
 // miner.
 func startNode(ctx *cli.Context, stack *node.Node, backend ethapi.Backend, isConsole bool) {
-	// TODO MAX: TBC init taken from here
-
 	// Start up the node itself
 	utils.StartNode(ctx, stack, isConsole)
 
