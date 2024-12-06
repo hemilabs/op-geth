@@ -62,7 +62,5 @@ jobs:
             VCS_REF=${{ github.sha }}
             BUILD_DATE=${{ steps.prepare.outputs.build_date }}
           tags: |
-            # hemilabs/op-geth:${{ github.ref_name }}
             hemilabs/op-geth:${{ steps.prepare.outputs.sha_short }}
-            # ghcr.io/hemilabs/op-geth:${{ github.ref_name }}
             ghcr.io/hemilabs/op-geth:${{ steps.prepare.outputs.sha_short }}
