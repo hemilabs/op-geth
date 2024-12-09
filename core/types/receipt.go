@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 	"unsafe"
@@ -400,6 +401,7 @@ func (r *Receipt) decodeTyped(b []byte) error {
 		r.BtcAttributesDepositedNonce = data.BtcAttributesDepositedNonce
 		return r.setFromRLP(receiptRLP{data.PostStateOrStatus, data.CumulativeGasUsed, data.Bloom, data.Logs})
 	default:
+		log.Info(fmt.Sprintf("Type not supported in receipt: %d", b[0]))
 		return ErrTxTypeNotSupported
 	}
 }

@@ -19,6 +19,8 @@ package types
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 
@@ -530,6 +532,7 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		}
 
 	default:
+		log.Info(fmt.Sprintf("Type not supported for tx marshalling %d", dec.Type))
 		return ErrTxTypeNotSupported
 	}
 

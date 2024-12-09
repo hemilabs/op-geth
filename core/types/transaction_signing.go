@@ -20,6 +20,7 @@ import (
 	"crypto/ecdsa"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -355,6 +356,7 @@ func (s eip2930Signer) Sender(tx *Transaction) (common.Address, error) {
 	case BtcAttributesDepositedTxType:
 		return BtcAttributesDepositedSenderAddress, nil
 	default:
+		log.Info(fmt.Sprintf("Type not supported for eip2930Signer  %d", tx.Type()))
 		return common.Address{}, ErrTxTypeNotSupported
 	}
 	if tx.ChainId().Cmp(s.chainId) != 0 {
@@ -376,6 +378,7 @@ func (s eip2930Signer) SignatureValues(tx *Transaction, sig []byte) (R, S, V *bi
 		R, S, _ = decodeSignature(sig)
 		V = big.NewInt(int64(sig[64]))
 	default:
+		log.Info(fmt.Sprintf("Type not supported for sigvalues in eip2930Signer %v", txdata))
 		return nil, nil, nil, ErrTxTypeNotSupported
 	}
 	return R, S, V, nil
@@ -438,6 +441,7 @@ var big8 = big.NewInt(8)
 
 func (s EIP155Signer) Sender(tx *Transaction) (common.Address, error) {
 	if tx.Type() != LegacyTxType {
+		log.Info(fmt.Sprintf("Type not supported for EIP155Signer %d", tx.Type()))
 		return common.Address{}, ErrTxTypeNotSupported
 	}
 	if !tx.Protected() {
@@ -456,6 +460,7 @@ func (s EIP155Signer) Sender(tx *Transaction) (common.Address, error) {
 // needs to be in the [R || S || V] format where V is 0 or 1.
 func (s EIP155Signer) SignatureValues(tx *Transaction, sig []byte) (R, S, V *big.Int, err error) {
 	if tx.Type() != LegacyTxType {
+		log.Info(fmt.Sprintf("Type not supported for sigvalues in EIP155Signer %d", tx.Type()))
 		return nil, nil, nil, ErrTxTypeNotSupported
 	}
 	R, S, V = decodeSignature(sig)
@@ -501,6 +506,7 @@ func (hs HomesteadSigner) SignatureValues(tx *Transaction, sig []byte) (r, s, v 
 
 func (hs HomesteadSigner) Sender(tx *Transaction) (common.Address, error) {
 	if tx.Type() != LegacyTxType {
+		log.Info(fmt.Sprintf("Type not supported for HomesteadSigner  %d", tx.Type()))
 		return common.Address{}, ErrTxTypeNotSupported
 	}
 	v, r, s := tx.RawSignatureValues()
@@ -522,6 +528,7 @@ func (s FrontierSigner) Equal(s2 Signer) bool {
 
 func (fs FrontierSigner) Sender(tx *Transaction) (common.Address, error) {
 	if tx.Type() != LegacyTxType {
+		log.Info(fmt.Sprintf("Type not supported for FrontierSigner %d", tx.Type()))
 		return common.Address{}, ErrTxTypeNotSupported
 	}
 	v, r, s := tx.RawSignatureValues()
@@ -532,6 +539,7 @@ func (fs FrontierSigner) Sender(tx *Transaction) (common.Address, error) {
 // needs to be in the [R || S || V] format where V is 0 or 1.
 func (fs FrontierSigner) SignatureValues(tx *Transaction, sig []byte) (r, s, v *big.Int, err error) {
 	if tx.Type() != LegacyTxType {
+		log.Info(fmt.Sprintf("Type not supported for sigvalues in FrontierSigner %d", tx.Type()))
 		return nil, nil, nil, ErrTxTypeNotSupported
 	}
 	r, s, v = decodeSignature(sig)

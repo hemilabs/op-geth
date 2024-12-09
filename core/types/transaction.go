@@ -218,6 +218,7 @@ func (tx *Transaction) decodeTyped(b []byte) (TxData, error) {
 	case BtcAttributesDepositedTxType:
 		inner = new(BtcAttributesDepositedTx)
 	default:
+		log.Info(fmt.Sprintf("Type not supported in transaction %d", b[0]))
 		return nil, ErrTxTypeNotSupported
 	}
 	err := inner.decode(b[1:])
