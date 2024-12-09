@@ -2048,6 +2048,7 @@ func (bc *BlockChain) calculateHvmIndexerTipLagTestnet3(cursorHeader *wire.Block
 
 	tipDiff := blockchain.CalcWork(cursorHeader.Bits)
 	if tipDiff.Cmp(lowDiffThreshold) <= 0 {
+		tipTimestamp := cursorHeader.Timestamp.Unix()
 		prevTipDiffLow := false
 		var prevHeader *wire.BlockHeader
 		if cursorHeight > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
@@ -2095,6 +2096,16 @@ func (bc *BlockChain) calculateHvmIndexerTipLagTestnet3(cursorHeader *wire.Block
 				tempCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &lookbackCursor.PrevBlock)
 				if err != nil {
 					return 0, err
+				}
+
+				if tempCursor.Timestamp.Unix()+(3600*3) < tipTimestamp {
+					// If we encounter a header with a timestamp more than 3 hours behind current tip,
+					// stop here to avoid overly long waits on false triggers of difficulty bomb
+					// due to low mining difficulty or mining 1-diff blocks on 20-min interval as regular
+					log.Info(fmt.Sprintf("while walking back during difficulty bomb, block %s has a timestamp "+
+						"more than 3 hours in the past, breaking at lookback=%d", tempCursor.BlockHash().String(),
+						lookback))
+					break
 				}
 
 				tempDiff := blockchain.CalcWork(tempCursor.Bits)
