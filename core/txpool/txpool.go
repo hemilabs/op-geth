@@ -348,6 +348,7 @@ func (p *TxPool) Add(txs []*types.Transaction, local bool, sync bool) []error {
 	for i, split := range splits {
 		// If the transaction was rejected by all subpools, mark it unsupported
 		if split == -1 {
+			log.Info(fmt.Sprintf("Tx type not supported in txpool"))
 			errs[i] = core.ErrTxTypeNotSupported
 			continue
 		}

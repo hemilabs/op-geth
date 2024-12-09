@@ -67,38 +67,47 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// This is for spam protection, not consensus,
 	// as the external engine-API user authenticates deposits.
 	if tx.Type() == types.DepositTxType {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction checking DepositTxType"))
 		return core.ErrTxTypeNotSupported
 	}
 	if opts.Config.IsOptimism() && tx.Type() == types.BlobTxType {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction checking BlobTxType"))
 		return core.ErrTxTypeNotSupported
 	}
 
 	// Same rule applies to the PoP transaction.
 	if tx.Type() == types.PopPayoutTxType {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction checking PopPayoutTxType"))
 		return core.ErrTxTypeNotSupported
 	}
 	// Same rule applies to the BTC Attributes Deposited transaction.
 	if tx.Type() == types.BtcAttributesDepositedTxType {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction checking BtcAttributesDepositedTxType"))
 		return core.ErrTxTypeNotSupported
 	}
 
 	// Ensure transactions not implemented by the calling pool are rejected
 	if opts.Accept&(1<<tx.Type()) == 0 {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction opts.Accept err"))
 		return fmt.Errorf("%w: tx type %v not supported by this pool", core.ErrTxTypeNotSupported, tx.Type())
 	}
 	// Before performing any expensive validations, sanity check that the tx is
 	// smaller than the maximum limit the pool can meaningfully handle
 	if tx.Size() > opts.MaxSize {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction tx.Size() error"))
 		return fmt.Errorf("%w: transaction size %v, limit %v", ErrOversizedData, tx.Size(), opts.MaxSize)
 	}
 	// Ensure only transactions that have been enabled are accepted
 	if !opts.Config.IsBerlin(head.Number) && tx.Type() != types.LegacyTxType {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction IsBerlin failure"))
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Berlin", core.ErrTxTypeNotSupported, tx.Type())
 	}
 	if !opts.Config.IsLondon(head.Number) && tx.Type() == types.DynamicFeeTxType {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction IsLondon failure"))
 		return fmt.Errorf("%w: type %d rejected, pool not yet in London", core.ErrTxTypeNotSupported, tx.Type())
 	}
 	if !opts.Config.IsCancun(head.Number, head.Time) && tx.Type() == types.BlobTxType {
+		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction IsCancon failure"))
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Cancun", core.ErrTxTypeNotSupported, tx.Type())
 	}
 	// Check whether the init code size has been exceeded
