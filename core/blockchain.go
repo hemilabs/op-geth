@@ -3837,10 +3837,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				current := bc.currentBlock.Load()
 				currentHash := current.Hash()
 				parentToNewHash := block.ParentHash()
+				log.Info(fmt.Sprintf("Processed block: %s, current: %s, parentToBlock: %s", block.Hash().String(),
+					current.Hash().String(), parentToNewHash.String()))
 				if bytes.Equal(parentToNewHash[:], currentHash[:]) {
 					log.Info(fmt.Sprintf("Inserting block %s @ %d which is direct child of current block, "+
 						"not reverting hVM progression", block.Hash().String(), block.NumberU64()))
 				} else {
+					log.Info(fmt.Sprintf("parentToNewHash %s != block.ParentHash %s, walking back hVM indexers",
+						parentToNewHash.String(), currentHash.String()))
 					err := bc.updateHvmHeaderConsensus(tbcHeader, true)
 					if err != nil {
 						// TODO: Recover lightweight TBC state from genesis
@@ -3851,6 +3855,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 							"block %s @ %d.", tbcHeader.Hash().String(), tbcHeader.Number.Uint64()))
 					}
 				}
+			} else {
+				log.Info("tbcHeader is nil")
 			}
 			err = bc.writeBlockWithState(block, receipts, statedb)
 			if err != nil {
