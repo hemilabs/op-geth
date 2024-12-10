@@ -3833,14 +3833,23 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				block.NumberU64()))
 			// Because this block is not canonical, revert lightweight and full TBC nodes to former state
 			if tbcHeader != nil {
-				err := bc.updateHvmHeaderConsensus(tbcHeader, true)
-				if err != nil {
-					// TODO: Recover lightweight TBC state from genesis
-					log.Crit(fmt.Sprintf("Unable to revert lightweight TBC node to represent state at "+
-						"block %s @ %d.", tbcHeader.Hash().String(), tbcHeader.Number.Uint64()), "err", err)
+				// Special case: if this block builds on the previous canonical block, then do not revert hVM state
+				current := bc.currentBlock.Load()
+				currentHash := current.Hash()
+				parentToNewHash := block.ParentHash()
+				if bytes.Equal(parentToNewHash[:], currentHash[:]) {
+					log.Info(fmt.Sprintf("Inserting block %s @ %d which is direct child of current block, "+
+						"not reverting hVM progression", block.Hash().String(), block.NumberU64()))
 				} else {
-					log.Info(fmt.Sprintf("Successfully reverted lightweight TBC node to represent state at "+
-						"block %s @ %d.", tbcHeader.Hash().String(), tbcHeader.Number.Uint64()))
+					err := bc.updateHvmHeaderConsensus(tbcHeader, true)
+					if err != nil {
+						// TODO: Recover lightweight TBC state from genesis
+						log.Crit(fmt.Sprintf("Unable to revert lightweight TBC node to represent state at "+
+							"block %s @ %d.", tbcHeader.Hash().String(), tbcHeader.Number.Uint64()), "err", err)
+					} else {
+						log.Info(fmt.Sprintf("Successfully reverted lightweight TBC node to represent state at "+
+							"block %s @ %d.", tbcHeader.Hash().String(), tbcHeader.Number.Uint64()))
+					}
 				}
 			}
 			err = bc.writeBlockWithState(block, receipts, statedb)
