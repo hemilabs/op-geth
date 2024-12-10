@@ -821,7 +821,7 @@ var hvmContractsToAddress = map[reflect.Type][]byte{
 	reflect.TypeOf(&btcAddrToScript{}):      {0x46},
 	reflect.TypeOf(&btcInputByTxid{}):       {0x47},
 	reflect.TypeOf(&btcOutputByTxid{}):      {0x48},
-	reflect.TypeOf(&btcTxGetInputWitness{}): {0x48},
+	reflect.TypeOf(&btcTxGetInputWitness{}): {0x49},
 }
 
 var PrecompiledContractsHvm0 = map[common.Address]PrecompiledContract{
