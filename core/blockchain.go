@@ -1773,8 +1773,8 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// if len(headersToAdd) > types.MaximumBtcHeadersInTx {
 	// 	headersToAdd = headersToAdd[0:types.MaximumBtcHeadersInTx]
 	// }
-	if len(headersToAdd) > 3 {
-		headersToAdd = headersToAdd[0:3]
+	if len(headersToAdd) > 1 {
+		headersToAdd = headersToAdd[0:1]
 	}
 	log.Info(fmt.Sprintf("Headers to add while generating Bitcoin Attributes Deposited transaction: %d", headersToAdd))
 

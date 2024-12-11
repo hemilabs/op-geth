@@ -323,163 +323,6 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 	return nil
 }
 
-// Moves the Tx indexer to the specified header. This does not
-// assume that the move to header is straight - it will determine
-// whether a fork is required and handle it appropriately.
-// This should only be used when recovering from a desync between
-// the indexers, otherwise always use moveIndexersToHeight
-// TODO: Dedup with moveTxIndexerToUtxo & TBCIndexToHeader logic
-func moveTxIndexerToHeader(header *wire.BlockHeader) error {
-	tIndexInfo, err := TBCFullNode.TxIndexHash(context.Background())
-	headerHash := header.BlockHash()
-	if err != nil {
-		// Critical error
-		log.Crit(fmt.Sprintf("Unable to move TBC full node Tx indexer to block %x; unable to get TxIndexHash",
-			headerHash[:]), "err", err)
-	}
-
-	if hashEquals(tIndexInfo.Hash, header.BlockHash()) {
-		// already done
-		return nil
-	}
-
-	targetHash := header.BlockHash()
-	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &targetHash)
-	if err != nil {
-		// Passed in header is not available
-		return err
-	}
-
-	targetHH := &tbc.HashHeight{
-		Height: targetHeight,
-		Hash:   targetHash,
-	}
-
-	ancestor, _, missingHeader, isFork, err := FindCommonAncestor(tIndexInfo, targetHH)
-	if err != nil {
-		// Critical error
-		if missingHeader != nil {
-			// Got error and information about the missing header, print a critical log line that contains info
-			// about the missing header
-			log.Crit(fmt.Sprintf("Unable to find common ancestor between Tx indexer tip %s @ %d and best header"+
-				" %s @ %d, encountered a missing header %s", tIndexInfo.Hash.String(), tIndexInfo.Height,
-				targetHH.Hash.String(), targetHH.Height, missingHeader.String()), "err", err)
-		} else {
-			// Got error without missing header
-			log.Crit(fmt.Sprintf("Unable to find common ancestor between Tx indexer tip %s @ %d and best header"+
-				" %s @ %d, but no missing header in the path identified", tIndexInfo.Hash.String(), tIndexInfo.Height,
-				targetHH.Hash.String(), targetHH.Height), "err", err)
-		}
-	}
-
-	ancestorHash := ancestor.BlockHash()
-
-	if !isFork {
-		// Tx indexer only needs to move in one direction, and TxIndexer will figure out which
-		err = TBCFullNode.TxIndexer(context.Background(), &targetHH.Hash)
-		if err != nil {
-			log.Error("Unable to move Tx indexer from current hash %x to requested hash %x",
-				tIndexInfo.Hash[:], targetHH.Hash[:])
-			return err
-		}
-	} else {
-		// Tx indexer needs to first unwind to the ancestor, and then wind to the requested target
-		err = TBCFullNode.TxIndexer(context.Background(), &ancestorHash)
-		if err != nil {
-			log.Error("While indexing over a fork, unable to unwind Tx indexer from current hash "+
-				"%x to requested hash %x", tIndexInfo.Hash[:], ancestorHash[:])
-			return err
-		}
-		// We unwound to common ancestor, now need to wind forward
-		err = TBCFullNode.TxIndexer(context.Background(), &targetHH.Hash)
-		if err != nil {
-			log.Error("While indexing over a fork, unable to wind Tx indexer from current hash "+
-				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
-		}
-	}
-
-	// Successful
-	return nil
-}
-
-// Moves the UTXO indexer to the specified header. This does not
-// assume that the move to header is straight - it will determine
-// whether a fork is required and handle it appropriately.
-// This should only be used when recovering from a desync between
-// the indexers, otherwise always use moveIndexersToHeight
-// TODO: Dedup with moveTxIndexerToHeader / TBCIndexToHeader logic somehow?
-func moveUtxoIndexerToHeader(header *wire.BlockHeader) error {
-	uIndexInfo, err := TBCFullNode.UtxoIndexHash(context.Background())
-	headerHash := header.BlockHash()
-	if err != nil {
-		// Critical error
-		log.Crit(fmt.Sprintf("Unable to move TBC full node UTXO indexer to block %x; unable to get UtxoIndexHash",
-			headerHash[:]), "err", err)
-	}
-
-	if hashEquals(uIndexInfo.Hash, header.BlockHash()) {
-		// already done
-		return nil
-	}
-
-	targetHash := header.BlockHash()
-	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &targetHash)
-	if err != nil {
-		// Passed in header is not available
-		return err
-	}
-
-	targetHH := &tbc.HashHeight{
-		Height: targetHeight,
-		Hash:   targetHash,
-	}
-
-	ancestor, _, missingHeader, isFork, err := FindCommonAncestor(uIndexInfo, targetHH)
-	if err != nil {
-		// Critical error
-		if missingHeader != nil {
-			// Got error and information about the missing header, print a critical log line that contains info
-			// about the missing header
-			log.Crit(fmt.Sprintf("Unable to find common ancestor between UTXO indexer tip %s @ %d and best header"+
-				" %s @ %d, encountered a missing header %s", uIndexInfo.Hash.String(), uIndexInfo.Height,
-				targetHH.Hash.String(), targetHH.Height, missingHeader.String()), "err", err)
-		} else {
-			// Got error without missing header
-			log.Crit(fmt.Sprintf("Unable to find common ancestor between UTXO indexer tip %s @ %d and best header"+
-				" %s @ %d, but no missing header in the path identified", uIndexInfo.Hash.String(), uIndexInfo.Height,
-				targetHH.Hash.String(), targetHH.Height), "err", err)
-		}
-	}
-	ancestorHash := ancestor.BlockHash()
-
-	if !isFork {
-		// UTXO indexer only needs to move in one direction, and UtxoIndexer will figure out which
-		err = TBCFullNode.UtxoIndexer(context.Background(), &targetHH.Hash)
-		if err != nil {
-			log.Error("Unable to move UTXO indexer from current hash %x to requested hash %x",
-				uIndexInfo.Hash[:], targetHH.Hash[:])
-			return err
-		}
-	} else {
-		// UTXO indexer needs to first unwind to the ancestor, and then wind to the requested target
-		err = TBCFullNode.UtxoIndexer(context.Background(), &ancestorHash)
-		if err != nil {
-			log.Error("While indexing over a fork, unable to unwind UTXO indexer from current hash "+
-				"%x to requested hash %x", uIndexInfo.Hash[:], ancestorHash[:])
-			return err
-		}
-		// We unwound to common ancestor, now need to wind forward
-		err = TBCFullNode.UtxoIndexer(context.Background(), &targetHH.Hash)
-		if err != nil {
-			log.Error("While indexing over a fork, unable to wind UTXO indexer from current hash "+
-				"%x to requested hash %x", ancestorHash[:], targetHH.Hash[:])
-		}
-	}
-
-	// Successful
-	return nil
-}
-
 // FixMismatchedIndexesIfRequired checks if the UTXO and TX indexers do not match,
 // and if they don't walks both of them back to the highest common ancestor.
 // This should only ever be required if something like an unclean
@@ -524,19 +367,16 @@ func FixMismatchedIndexesIfRequired() error {
 			"Tx indexer is at %s @ %d, common ancestor is %s @ %d", uIndexInfo.Hash.String(), uIndexInfo.Height,
 			tIndexInfo.Hash.String(), tIndexInfo.Height, ancestor.BlockHash().String(), ancestorHeight))
 
+		ancestorHash := ancestor.BlockHash()
+
 		// Rewind both to common ancestor
-		err = moveUtxoIndexerToHeader(ancestor)
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), &ancestorHash)
 		if err != nil {
 			// Critical as
-			log.Crit(fmt.Sprintf("Unable to repair indexer desync by moving UTXO indexer "+
-				"from %s @ %d to common ancestor %s @ %d", uIndexInfo.Hash.String(), uIndexInfo.Height,
-				ancestor.BlockHash().String(), ancestorHeight), "err", err)
-		}
-		err = moveTxIndexerToHeader(ancestor)
-		if err != nil {
-			log.Crit(fmt.Sprintf("Unable to repair indexer desync by moving Tx indexer "+
-				"from %s @ %d to common ancestor %s @ %d", tIndexInfo.Hash.String(), tIndexInfo.Height,
-				ancestor.BlockHash().String(), ancestorHeight), "err", err)
+			log.Crit(fmt.Sprintf("Unable to repair indexer desync by moving indexers "+
+				"from utxo: %s @ %d and tx: %s @ %d to common ancestor %s @ %d", uIndexInfo.Hash.String(),
+				uIndexInfo.Height, tIndexInfo.Hash.String(), tIndexInfo.Height, ancestor.BlockHash().String(),
+				ancestorHeight), "err", err)
 		}
 	}
 
