@@ -372,6 +372,8 @@ github.com/hemilabs/heminetwork v0.8.0 h1:M/P8Vpa9B5OIVpzZEt9QVYCRe8RHuJaYAkeo3w
 github.com/hemilabs/heminetwork v0.8.0/go.mod h1:QL2VDSrg4jX3AqJj+LtnFgCuImRPGE2OXKJDGW2pvgc=
 github.com/hemilabs/heminetwork v0.8.1-0.20241211020757-5f61ce5579c4 h1:tP2nTpo+wlgXfRtV8poeG3gcR3+m+nFrEsMGlUWJLfU=
 github.com/hemilabs/heminetwork v0.8.1-0.20241211020757-5f61ce5579c4/go.mod h1:QL2VDSrg4jX3AqJj+LtnFgCuImRPGE2OXKJDGW2pvgc=
+github.com/hemilabs/heminetwork v0.8.1-0.20241211134759-7e19d722bcff h1:xbJvYRdSPp7J8zy6Zz0gjcECCKfzNJB3uU0SYIHJKoE=
+github.com/hemilabs/heminetwork v0.8.1-0.20241211134759-7e19d722bcff/go.mod h1:RiMgaE8FzenA7BJgKNm5fLQzzfZQKxvR3tdSSF2huQ8=
 github.com/holiman/billy v0.0.0-20230718173358-1c7e68d277a7 h1:3JQNjnMRil1yD0IfZKHF9GxxWKDJGj8I0IqOUol//sw=
 github.com/holiman/billy v0.0.0-20230718173358-1c7e68d277a7/go.mod h1:5GuXa7vkL8u9FkFuWdVvfR5ix8hRB7DbOAaYULamFpc=
 github.com/holiman/bloomfilter/v2 v2.0.3 h1:73e0e/V0tCydx14a0SCYS/EWCxgwLZ18CZcZKVu0fao=

@@ -272,9 +272,11 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		genesisHash := genesisHeader.BlockHash()
 		genesisHeight := cfg.Eth.HvmGenesisHeight
 
+		log.Info("Waiting for TBC full node to finish startup")
+
 		for {
 			time.Sleep(100 * time.Millisecond)
-			if vm.TBCFullNode.IsDbReady() {
+			if vm.TBCFullNode.Running() {
 				break
 			}
 		}
