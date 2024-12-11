@@ -269,7 +269,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		}
 
 		// TODO: Review TBC Full-Node initial sync logic, maybe do a blocking call in contracts.go?
-		time.Sleep(5 * time.Second)
+		time.Sleep(30 * time.Second)
 		genesisHeader, err := bdf.Hex2Header(cfg.Eth.HvmGenesisHeader)
 		genesisHash := genesisHeader.BlockHash()
 		genesisHeight := cfg.Eth.HvmGenesisHeight
