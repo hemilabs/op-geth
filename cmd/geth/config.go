@@ -268,11 +268,17 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			log.Crit("Unable to setup TBC Full Node", "err", err)
 		}
 
-		// TODO: Review TBC Full-Node initial sync logic, maybe do a blocking call in contracts.go?
-		time.Sleep(30 * time.Second)
 		genesisHeader, err := bdf.Hex2Header(cfg.Eth.HvmGenesisHeader)
 		genesisHash := genesisHeader.BlockHash()
 		genesisHeight := cfg.Eth.HvmGenesisHeight
+
+		for {
+			time.Sleep(100 * time.Millisecond)
+			if vm.TBCFullNode.IsDbReady() {
+				break
+			}
+		}
+		log.Info("TBC full node done loading.")
 
 		log.Info(fmt.Sprintf("TBC Full Node started, will sync to Bitcoin block %s configured as the start "+
 			"of hVM consensus tracking on this chain.", genesisHash.String()))
