@@ -2098,7 +2098,7 @@ func (bc *BlockChain) calculateHvmIndexerTipLagTestnet3(cursorHeader *wire.Block
 					return 0, err
 				}
 
-				if tempCursor.Timestamp.Unix()+(3600*3) < tipTimestamp {
+				if tempCursor.Timestamp.Unix()+(3600*5) < tipTimestamp {
 					// If we encounter a header with a timestamp more than 3 hours behind current tip,
 					// stop here to avoid overly long waits on false triggers of difficulty bomb
 					// due to low mining difficulty or mining 1-diff blocks on 20-min interval as regular
