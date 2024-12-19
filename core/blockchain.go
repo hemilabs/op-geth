@@ -537,6 +537,11 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 		log.Crit("Unable to get upstream state ID from TBC header node", "err", err)
 	}
 
+	current := bc.currentBlock.Load()
+	currentHash := current.Hash()
+
+	log.Info("hVM node initiated, stateId=%x, current EVM tip=%s", stateId[:], currentHash.String())
+
 	if bytes.Equal(stateId[:], hVMGenesisUpstreamId[:]) {
 		// TBC claims to be in its genesis configuration, check to ensure its best header is the hVM genesis header
 		_, bestHeader, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
@@ -547,9 +552,6 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 
 		bestHeaderHash := bestHeader.BlockHash()
 		genesisHash := config.EffectiveGenesisBlock.BlockHash()
-
-		current := bc.currentBlock.Load()
-		currentHash := current.Hash()
 
 		if bc.chainConfig.IsHvm0(current.Time) {
 			// Current tip is after hVM Phase 0 activation time, so header-only mode TBC node should not be
