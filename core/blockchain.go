@@ -420,7 +420,7 @@ func (bc *BlockChain) performFullHvmHeaderStateRestore() {
 			log.Info(fmt.Sprintf("Processing hVM header state changes for block %s @ %d",
 				cursor.Hash().String(), cursor.Number.Uint64()))
 		}
-		err := bc.applyHvmHeaderConsensusUpdate(cursor)
+		err := bc.applyHvmHeaderConsensusUpdate(cursor, false)
 		if err != nil {
 			log.Crit(fmt.Sprintf("Failed to fully restore hVM state, encountered an error processing hVM "+
 				"state updates for block %s @ %d", cursor.Hash().String(), cursor.Number.Uint64()), "err", err)
@@ -1243,7 +1243,7 @@ func (bc *BlockChain) getHeaderFromDiskOrHoldingPen(hash common.Hash) *types.Hea
 // transaction and, if it exists, applies the headers contained in it
 // to the protocol's lightweight view of Bitcoin and verifies that the
 // claimed canonical tip is correct.
-func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error {
+func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemptPrefetch bool) error {
 	block := bc.getBlockFromDiskOrHoldingPen(header.Hash())
 	if block == nil {
 		// Block not on disk or in holding pen
@@ -1367,21 +1367,24 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 				"to a wire message", header.Hash().String(), header.Number.Uint64(), cbh.Hash.String()),
 				"err", err)
 		}
-		_, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(context2.Background(), cbhWire)
-		if err != nil {
-			log.Error(fmt.Sprintf("unable to proactively check for full TBC node containing blocks to tip %s",
-				cbh.Hash.String()), "err", err)
-		}
 
-		if blocksMissing != nil {
-			if len(*blocksMissing) > 0 {
-				for _, blockMissing := range *blocksMissing {
-					// Note that it's possible the canonical tip returned by lightweight consensus is not canonical
-					// on the actual Bitcoin network and one or more blocks cannot be acquired, but as long as
-					// the reorg is smaller than the hVM indexing delay/lag it will be fine.
-					log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from peers "+
-						"so it will be available when needed for indexing", blockMissing.BlockHash().String()))
-					vm.TBCAttemptBlockRefetch(context2.Background(), &blockMissing)
+		if attemptPrefetch {
+			_, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(context2.Background(), cbhWire)
+			if err != nil {
+				log.Error(fmt.Sprintf("unable to proactively check for full TBC node containing blocks to tip %s",
+					cbh.Hash.String()), "err", err)
+			}
+
+			if blocksMissing != nil {
+				if len(*blocksMissing) > 0 {
+					for _, blockMissing := range *blocksMissing {
+						// Note that it's possible the canonical tip returned by lightweight consensus is not canonical
+						// on the actual Bitcoin network and one or more blocks cannot be acquired, but as long as
+						// the reorg is smaller than the hVM indexing delay/lag it will be fine.
+						log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from peers "+
+							"so it will be available when needed for indexing", blockMissing.BlockHash().String()))
+						vm.TBCAttemptBlockRefetch(context2.Background(), &blockMissing)
+					}
 				}
 			}
 		}
@@ -1965,7 +1968,7 @@ func (bc *BlockChain) walkHvmHeaderConsensusForward(currentHead *types.Header, n
 
 	// Start at 1 to skip the currentHead which has been processed previously
 	for index := 1; index < len(headers); index++ {
-		err := bc.applyHvmHeaderConsensusUpdate(headers[index])
+		err := bc.applyHvmHeaderConsensusUpdate(headers[index], true)
 		if err != nil {
 			if errors.Is(err, consensus.ErrInvalidHVMBlockFormat) || errors.Is(err, consensus.ErrInvalidHVMHeaders) {
 				// Something is wrong with the block, report it as invalid
@@ -2344,7 +2347,7 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header, updateFull
 
 	// If currentHead is direct parent, then just apply state change from newHead
 	if newHead.ParentHash.Cmp(currentHead.Hash()) == 0 {
-		err := bc.applyHvmHeaderConsensusUpdate(newHead)
+		err := bc.applyHvmHeaderConsensusUpdate(newHead, true)
 		if err != nil {
 			if errors.Is(err, consensus.ErrInvalidHVMBlockFormat) || errors.Is(err, consensus.ErrInvalidHVMHeaders) {
 				// Block is invalid, ban block and bubble error up
