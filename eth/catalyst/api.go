@@ -20,6 +20,7 @@ package catalyst
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/consensus"
 	"sync"
 	"time"
 
@@ -627,12 +628,25 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 	if err := api.eth.BlockChain().InsertBlockWithoutSetHead(block); err != nil {
 		log.Warn("NewPayloadV1: inserting block failed", "error", err)
 
-		api.invalidLock.Lock()
-		api.invalidBlocksHits[block.Hash()] = 1
-		api.invalidTipsets[block.Hash()] = block.Header()
-		api.invalidLock.Unlock()
+		if errors.Is(err, consensus.ErrFullTBCMissingFullBTCBlock) {
+			log.Info("error is full TBC missing full BTC block, delaying payload import")
+			// TBC is missing a full block which is a failure which could be recovered in future.
+			// Delay the payload import,
+			return api.delayPayloadImport(block)
+		} else if errors.Is(err, consensus.ErrFullTBCMissingBTCHeader) {
+			log.Info("error is full TBC missing a BTC header, delaying payload import")
+			// TBC is missing a block header which is a failure which could be recovered in future.
+			// Delay the payload import,
+			return api.delayPayloadImport(block)
+		} else {
+			log.Warn("InsertBlockWithoutSetHead failed but error is not full TBC missing full block or header!", "err", err)
+			api.invalidLock.Lock()
+			api.invalidBlocksHits[block.Hash()] = 1
+			api.invalidTipsets[block.Hash()] = block.Header()
+			api.invalidLock.Unlock()
 
-		return api.invalid(err, parent.Header()), nil
+			return api.invalid(err, parent.Header()), nil
+		}
 	}
 	// We've accepted a valid payload from the beacon client. Mark the local
 	// chain transitions to notify other subsystems (e.g. downloader) of the

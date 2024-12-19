@@ -457,7 +457,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 
 	missingFullBlocks := make([]wire.BlockHeader, 0)
 
-	log.Debug(fmt.Sprintf("TBCBlocksAvailableToHeader called with endingHeader=%s, UTXOs synced to: "+
+	log.Info(fmt.Sprintf("TBCBlocksAvailableToHeader called with endingHeader=%s, UTXOs synced to: "+
 		"%s and Txs synced to: %s", endingHeader.BlockHash().String(), utxoSync.Hash.String(), txSync.Hash.String()))
 
 	// When both indexers are at the same header, this will be that header.
@@ -478,8 +478,10 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	targetHH, err := hashHeightForHeader(ctx, endingHeader)
 	if err != nil {
 		if errors.As(err, &database.ErrNotFound) {
+			endingHeaderHash := endingHeader.BlockHash()
+			log.Warn(fmt.Sprintf("Header %s not found", endingHeaderHash.String()), "err", err)
 			// TBC full node does not know about the ending header
-			return false, nil, &targetHH.Hash, nil
+			return false, nil, &endingHeaderHash, nil
 		}
 		return false, nil, nil, err
 	}

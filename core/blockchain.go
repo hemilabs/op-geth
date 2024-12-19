@@ -1331,7 +1331,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header) error 
 		// Proactively check for any missing full blocks between full TBC's current indexed height and the
 		// new canonical tip that resulted from adding the new headers, and trigger a fetch from peers for
 		// any blocks that we will need in the future when the full TBC node's indexers are advanced.
-		// (bool, *[]wire.BlockHeader, *chainhash.Hash, error)
+
 		// Convert tbcd.BlockHeader (contains position and cumulative diff. info) to wire.BlockHeader
 		cbhWire, err := cbh.Wire()
 		if err != nil {
@@ -3768,7 +3768,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 							"inserting block %s @ %d", block.Hash().String(), block.NumberU64()))
 					}
 
-					if errors.Is(err, consensus.ErrFullTBCMissingFullBTCBlock) {
+					if errors.Is(err, consensus.ErrFullTBCMissingFullBTCBlock) || errors.Is(err, consensus.ErrFullTBCMissingBTCHeader) {
 						// This might recover, add this block as future block for later processing
 						bc.futureBlocks.Add(block.Hash(), block)
 						return it.index, err
