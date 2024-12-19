@@ -548,10 +548,34 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 		bestHeaderHash := bestHeader.BlockHash()
 		genesisHash := config.EffectiveGenesisBlock.BlockHash()
 
-		if bytes.Equal(bestHeaderHash[:], genesisHash[:]) {
-			log.Info("SetupHvmHeaderNode has determined that the external header mode TBC is in its genesis state" +
-				" and initialized correctly.")
+		current := bc.currentBlock.Load()
+		currentHash := current.Hash()
+
+		if bc.chainConfig.IsHvm0(current.Time) {
+			// Current tip is after hVM Phase 0 activation time, so header-only mode TBC node should not be
+			// at genesis state ID. Attempt recovery to align header-only mode TBC with current EVM chain tip.
+			bc.performFullHvmHeaderStateRestore()
+
+			// Check to make sure state restore was successful
+			postRestoreStateId, err := bc.tbcHeaderNode.UpstreamStateId(context2.Background())
+			if err != nil {
+				log.Crit("Unable to get upstream state ID from lightweight TBC node after attempting restore.")
+			}
+
+			if bytes.Equal(postRestoreStateId[:], currentHash[:]) {
+				log.Info(fmt.Sprintf("Successfully regenerated lightweight TBC state to match EVM tip %s", currentHash.String()))
+			} else {
+				// Failed to restore, exit
+				log.Crit(fmt.Sprintf("Attempted to regenerate lightweight tBC state to match EVM tip %s "+
+					"but after restore upstream state ID is %x", currentHash.String(), postRestoreStateId[:]))
+			}
+		} else {
+			if bytes.Equal(bestHeaderHash[:], genesisHash[:]) {
+				log.Info("SetupHvmHeaderNode has determined that the external header mode TBC is in its genesis state" +
+					" and initialized correctly.")
+			}
 		}
+
 	} else {
 		potentialBlockHash := common.BytesToHash(stateId[:])
 		potentialHeader := bc.GetHeaderByHash(potentialBlockHash)
