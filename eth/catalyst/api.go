@@ -229,7 +229,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	defer api.forkchoiceLock.Unlock()
 
 	log.Trace("Engine API request received", "method", "ForkchoiceUpdated", "head", update.HeadBlockHash, "finalized", update.FinalizedBlockHash, "safe", update.SafeBlockHash)
-	log.Info(fmt.Sprintf("forkchoiceUpdated, payloadAttributes=%v", payloadAttributes))
+	log.Trace(fmt.Sprintf("forkchoiceUpdated, payloadAttributes=%v", payloadAttributes))
 	log.Info(fmt.Sprintf("Engine API forkchoice updated, head=%s, finalized=%s, safe=%s", update.HeadBlockHash.String(), update.FinalizedBlockHash.String(), update.SafeBlockHash.String()))
 
 	if update.HeadBlockHash == (common.Hash{}) {
