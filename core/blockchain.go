@@ -540,7 +540,7 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 	current := bc.currentBlock.Load()
 	currentHash := current.Hash()
 
-	log.Info("hVM node initiated, stateId=%x, current EVM tip=%s", stateId[:], currentHash.String())
+	log.Info(fmt.Sprintf("hVM node initiated, stateId=%x, current EVM tip=%s", stateId[:], currentHash.String()))
 
 	if bytes.Equal(stateId[:], hVMGenesisUpstreamId[:]) {
 		// TBC claims to be in its genesis configuration, check to ensure its best header is the hVM genesis header
