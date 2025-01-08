@@ -6,7 +6,7 @@ This is a post-mortem concerning the minority split that occurred on Ethereum ma
 
 
 - 2021-08-17: Guido Vranken submitted a bounty report. Investigation started, root cause identified, patch variations discussed. 
-- 2021-08-18: Made public announcement over twitter about upcoming security release upcoming Tuesday. Downstream projects were also notified about the upcoming patch-release.
+- 2021-08-18: Made public announcement over X about upcoming security release upcoming Tuesday. Downstream projects were also notified about the upcoming patch-release.
 - 2021-08-24: Released [v1.10.8](https://github.com/ethereum/go-ethereum/releases/tag/v1.10.8) containing the fix on Tuesday morning (CET). Erigon released [v2021.08.04](https://github.com/ledgerwatch/erigon/releases/tag/v2021.08.04).
 - 2021-08-27: At 12:50:07 UTC, issue exploited. Analysis started roughly 30m later, 
 
@@ -60,7 +60,7 @@ It was decided that in this specific instance, it would be possible to make a pu
 
 Since we had merged the removal of `ETH65`, if the entire network were to upgrade, then nodes which have not yet implemented `ETH66` would be cut off from the network. After further discussions, we decided to:
 
-- Announce an upcoming security release on Tuesday (August 24th), via Twitter and official channels, plus reach out to downstream projects.
+- Announce an upcoming security release on Tuesday (August 24th), via X and official channels, plus reach out to downstream projects.
 - Temporarily revert the `ETH65`-removal.
 - Place the fix into the PR optimizing the jumpdest analysis [233381](https://github.com/ethereum/go-ethereum/pull/23381). 
 - After 4-8 weeks, release details about the vulnerability. 
@@ -128,8 +128,8 @@ Action point: enable push-based alerts to be sent from the forkmon, to speed up 
 
 ## Links
 
-- [1] https://twitter.com/go_ethereum/status/1428051458763763721
-- [2] https://twitter.com/mhswende/status/1431259601530458112
+- [1] https://x.com/go_ethereum/status/1428051458763763721
+- [2] https://x.com/mhswende/status/1431259601530458112
 
 
 ## Appendix
@@ -147,7 +147,7 @@ recommend downstream/dependent projects to be ready to take actions to
 upgrade to the latest go-ethereum codebase. More information about the
 issue will be disclosed at a later date.
 
-https://twitter.com/go_ethereum/status/1428051458763763721
+https://x.com/go_ethereum/status/1428051458763763721
 
 ```
 ### Patch
