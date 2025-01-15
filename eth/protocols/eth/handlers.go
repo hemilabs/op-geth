@@ -411,10 +411,8 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 		exists, err := vm.TBCFullNode.FullBlockAvailable(context.Background(), &hash)
 		if err != nil {
 			log.Error("Unable to check whether TBC has BTC block received over P2P", "badIndex", i, "block", hash.String(), "err", err)
-			continue
-		}
-
-		if exists {
+			// Still attempt to add block if unable to determine
+		} else if exists {
 			log.Info("Received BTC block over P2P which TBC already has, ignoring", "block", hash.String())
 			continue
 		}
