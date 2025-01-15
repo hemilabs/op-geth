@@ -240,6 +240,7 @@ func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the block body retrieval message
 	var query GetBTCBlocksPacket
 	if err := msg.Decode(&query); err != nil {
+		log.Error("Unable to decode GetBTCBlocksPacket", "err", err)
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 	response := ServiceGetBTCBlocksQuery(backend.Chain(), query.GetBTCBlocksRequest)
@@ -247,6 +248,8 @@ func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest) []rlp.RawValue {
+	log.Info("ServiceGetBTCBlocksQuery called")
+
 	// Gather Bitcoin blocks until the fetch or network limits is reached
 	var (
 		bytesCount int
