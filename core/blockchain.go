@@ -1466,6 +1466,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 }
 
 func (bc *BlockChain) GetMissingBtcBlocks() []common.Hash {
+	log.Info("GetMissingBtcBlocks() called")
 	if bc.tbcHeaderNode == nil {
 		log.Info("GetMissingBtcBlocks() does not have tbcHeaderNode active yet")
 	}
