@@ -1466,6 +1466,10 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 }
 
 func (bc *BlockChain) GetMissingBtcBlocks() []common.Hash {
+	if bc.tbcHeaderNode == nil {
+		log.Info("GetMissingBtcBlocks() does not have tbcHeaderNode active yet")
+	}
+
 	_, tip, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
 	if err != nil {
 		log.Debug("Unable to get best block header from TBC node in GetMissingBtcBlocks()", "err", err)
