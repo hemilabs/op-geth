@@ -255,6 +255,9 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 		bytesCount int
 		blocks     []rlp.RawValue
 	)
+
+	log.Info("P2P requested BTC blocks", "numBlocks", len(query))
+
 	for lookups, hash := range query {
 		if bytesCount >= softResponseLimitBTC || len(blocks) >= maxBtcBlocksServe ||
 			lookups >= 2*maxBtcBlocksServe {
