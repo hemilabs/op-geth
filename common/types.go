@@ -57,6 +57,12 @@ var (
 // a MsgBlock later
 type BitcoinBlock []byte
 
+func BytesToBitcoinBlock(b []byte) BitcoinBlock {
+	var bb BitcoinBlock
+	copy(bb[:], b[:])
+	return bb
+}
+
 // Hash represents the 32 byte Keccak256 hash of arbitrary data.
 type Hash [HashLength]byte
 
