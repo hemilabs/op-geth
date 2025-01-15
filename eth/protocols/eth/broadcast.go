@@ -75,7 +75,7 @@ func (p *Peer) prefetchBTCBlocks() {
 				if err != nil {
 					// TODO: Change to Debug logging
 					log.Info("Error requesting BTC blocks from peer", "err", err)
-					return
+					continue
 				}
 			} else {
 				// TODO: Remove, testing code to simulate block fetching
@@ -87,7 +87,7 @@ func (p *Peer) prefetchBTCBlocks() {
 				if err != nil {
 					// TODO: Change to Debug logging
 					log.Info("Error requesting BTC blocks from peer", "err", err)
-					return
+					continue
 				}
 			}
 
