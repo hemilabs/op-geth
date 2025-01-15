@@ -100,6 +100,11 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 	case *eth.PooledTransactionsResponse:
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
+	case *eth.BTCBlocksPacket:
+		// TODO remove, for debugging
+		fmt.Sprintf("ethHandler.Handle() called with a BTCBlocksPacket")
+		return nil
+
 	default:
 		return fmt.Errorf("unexpected eth packet type: %T", packet)
 	}

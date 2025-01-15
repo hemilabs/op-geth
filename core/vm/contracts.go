@@ -413,6 +413,7 @@ func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.Ha
 	return &tbc.HashHeight{Hash: hash, Height: height}, nil
 }
 
+// TBCAttemptBlockRefetch attempts to fetch a specific block
 func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 	bh := header.BlockHash()
 	log.Info(fmt.Sprintf("Attempting to refetch block %s for TBC full node over P2P", bh.String()))
@@ -425,7 +426,9 @@ func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 	if block != nil {
 		log.Info(fmt.Sprintf("Attempt to refetch block %s returned the requested block indicating a refetch "+
 			"was not required", bh.String()))
+		return
 	}
+
 }
 
 // TBCBlocksAvailableToHeader Checks whether the TBC full node has all of the blocks required to index to the

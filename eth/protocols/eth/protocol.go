@@ -63,6 +63,8 @@ const (
 	PooledTransactionsMsg         = 0x0a
 	GetReceiptsMsg                = 0x0f
 	ReceiptsMsg                   = 0x10
+	GetBtcBlocksMsg               = 0xD0
+	BtcBlocksMsg                  = 0xD1
 )
 
 var (
@@ -74,6 +76,7 @@ var (
 	errNetworkIDMismatch       = errors.New("network ID mismatch")
 	errGenesisMismatch         = errors.New("genesis mismatch")
 	errForkIDRejected          = errors.New("fork ID rejected")
+	errBtcBlockNotFound        = errors.New("bitcoin block not found")
 )
 
 // Packet represents a p2p message in the `eth` protocol.
@@ -322,6 +325,49 @@ type PooledTransactionsRLPPacket struct {
 	PooledTransactionsRLPResponse
 }
 
+// GetBTCBlocksRequest represents a BTC blocks query.
+// Caller sends the hash of one or more Bitcoin blocks and receives the full serialized BTC block(s) in response
+type GetBTCBlocksRequest []common.Hash
+
+// GetBTCBlocksPacket represents a BTC blocks query with request ID wrapping.
+type GetBTCBlocksPacket struct {
+	RequestId uint64
+	GetBTCBlocksRequest
+}
+
+// BTCBlocksResponse is the network packet for BTC blocks distribution.
+type BTCBlocksResponse []common.BitcoinBlock
+
+// BTCBlocksPacket is the network packet for BTC blocks distribution with
+// request ID wrapping.
+type BTCBlocksPacket struct {
+	RequestId uint64
+	BTCBlocksResponse
+}
+
+// BTCBlocksRLPResponse is used for replying to BTC blocks requests, in cases
+// where we already have them RLP-encoded, and thus can avoid the decode-encode
+// roundtrip.
+type BTCBlocksRLPResponse []rlp.RawValue
+
+// BTCBlocksRLPPacket is the BTCBlocksRLPResponse with request ID wrapping.
+type BTCBlocksRLPPacket struct {
+	RequestId uint64
+	BTCBlocksRLPResponse
+}
+
+// Unpack retrieves the raw BTC blocks from the range packet and returns
+// them in a split flat format.
+func (p *BTCBlocksResponse) Unpack() []*common.BitcoinBlock {
+	var (
+		blockset = make([]*common.BitcoinBlock, len(*p))
+	)
+	for i, body := range *p {
+		blockset[i] = &body
+	}
+	return blockset
+}
+
 func (*StatusPacket) Name() string { return "Status" }
 func (*StatusPacket) Kind() byte   { return StatusMsg }
 
@@ -362,3 +408,9 @@ func (*GetReceiptsRequest) Kind() byte   { return GetReceiptsMsg }
 
 func (*ReceiptsResponse) Name() string { return "Receipts" }
 func (*ReceiptsResponse) Kind() byte   { return ReceiptsMsg }
+
+func (*GetBTCBlocksRequest) Name() string { return "GetBtcBlocks" }
+func (*GetBTCBlocksRequest) Kind() byte   { return GetBtcBlocksMsg }
+
+func (*BTCBlocksResponse) Name() string { return "BtcBlocks" }
+func (*BTCBlocksResponse) Kind() byte   { return BtcBlocksMsg }

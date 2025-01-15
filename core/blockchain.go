@@ -26,6 +26,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"io"
 	"math/big"
@@ -321,6 +322,8 @@ type BlockChain struct {
 
 	btcAttributesDepCacheBlockHash common.Hash
 	btcAttributesDepCacheEntry     *types.BtcAttributesDepositedTx
+
+	p2pServer *p2p.Server
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -1383,9 +1386,17 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 						// Note that it's possible the canonical tip returned by lightweight consensus is not canonical
 						// on the actual Bitcoin network and one or more blocks cannot be acquired, but as long as
 						// the reorg is smaller than the hVM indexing delay/lag it will be fine.
-						log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from peers "+
+						log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from TBC peers "+
 							"so it will be available when needed for indexing", blockMissing.BlockHash().String()))
 						vm.TBCAttemptBlockRefetch(context2.Background(), &blockMissing)
+
+						// TODO: Fetch from geth-p2p here as well
+						if bc.p2pServer != nil {
+							log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from op-geth peers "+
+								"so it will be available when needed for indexing", blockMissing.BlockHash().String()))
+
+							bc.p2pServer.Peers()
+						}
 					}
 				}
 			}
@@ -1451,6 +1462,58 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 			return consensus.ErrInvalidHVMHeaders
 		}
 		return nil
+	}
+}
+
+func (bc *BlockChain) GetMissingBtcBlocks() []common.Hash {
+	_, tip, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
+	if err != nil {
+		log.Debug("Unable to get best block header from TBC node in GetMissingBtcBlocks()", "err", err)
+		return nil
+	}
+
+	_, blocksMissing, missingHeaderHash, err := vm.TBCBlocksAvailableToHeader(context2.Background(), tip)
+	if err != nil {
+		log.Error(fmt.Sprintf("unable to proactively check for full TBC node containing blocks to tip %s",
+			tip.BlockHash().String()), "err", err)
+	}
+
+	if missingHeaderHash != nil {
+		// Create an array with just the hash of the one known missing header
+		missingHashArr := make([]common.Hash, 0)
+		bhBytes := missingHeaderHash.CloneBytes()
+		var hash common.Hash
+		hash.SetBytes(bhBytes)
+		missingHashArr = append(missingHashArr, hash)
+		return missingHashArr
+	}
+
+	if blocksMissing != nil {
+		if len(*blocksMissing) > 0 {
+			missingFullBlocks := make([]common.Hash, 0)
+			for _, blockMissing := range *blocksMissing {
+				bh := blockMissing.BlockHash()
+				bhBytes := bh.CloneBytes()
+				var hash common.Hash
+				hash.SetBytes(bhBytes)
+				missingFullBlocks = append(missingFullBlocks, hash)
+			}
+			return missingFullBlocks
+		}
+	}
+
+	return nil
+}
+
+func (bc *BlockChain) prefetchBlocksFromGethPeers(hash *chainhash.Hash) {
+	if hash == nil {
+		log.Error("cannot fetch nil BTC block from geth peers")
+		return
+	}
+
+	peers := bc.p2pServer.Peers()
+	for _, peer := range peers {
+		peer.RemoteAddr()
 	}
 }
 

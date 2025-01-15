@@ -17,12 +17,16 @@
 package eth
 
 import (
+	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
-
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
@@ -232,6 +236,70 @@ func ServiceGetBlockBodiesQuery(chain *core.BlockChain, query GetBlockBodiesRequ
 	return bodies
 }
 
+func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
+	// Decode the block body retrieval message
+	var query GetBTCBlocksPacket
+	if err := msg.Decode(&query); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+	response := ServiceGetBTCBlocksQuery(backend.Chain(), query.GetBTCBlocksRequest)
+	return peer.ReplyBTCBlocksRLP(query.RequestId, response)
+}
+
+func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest) []rlp.RawValue {
+	// Gather Bitcoin blocks until the fetch or network limits is reached
+	var (
+		bytesCount int
+		blocks     []rlp.RawValue
+	)
+	for lookups, hash := range query {
+		if bytesCount >= softResponseLimitBTC || len(blocks) >= maxBtcBlocksServe ||
+			lookups >= 2*maxBtcBlocksServe {
+			break
+		}
+
+		var ch chainhash.Hash
+		err := ch.SetBytes(hash.Bytes())
+		if err != nil {
+			log.Error(fmt.Sprintf("Unable to convert hash %s to a chainhash", hash.String()), "err", err)
+			continue // Keep searching for other valid blocks
+		}
+
+		// TODO: Remove, temp logging for testing visibility
+		log.Info("Peer requested BTC block", "block", ch.String())
+
+		block, err := vm.TBCFullNode.BlockByHash(context.Background(), &ch)
+		if err != nil {
+			log.Error(fmt.Sprintf("did not find BTC block %s requested by peer", hash.String()), "err", err)
+			continue
+		}
+		if block == nil {
+			log.Error(fmt.Sprintf("did not encounter error when looking up BTC block %s but block is nil", hash.String()))
+			continue
+		}
+		var blockBuf bytes.Buffer
+
+		// Note that this might not always be congruent with BTC wire format in the future
+		err = block.MsgBlock().Serialize(&blockBuf)
+		if err != nil {
+			log.Error(fmt.Sprintf("error serializing BTC block %s for peer", hash.String()), "err", err)
+			continue
+		}
+
+		blockBytes := blockBuf.Bytes()
+		if len(blockBytes) != 0 {
+			rlpBytes, err := rlp.EncodeToBytes(blockBytes)
+			if err != nil {
+				log.Error(fmt.Sprintf("error RLP-encoding BTC block %s", hash.String()), "err", err)
+			}
+			blocks = append(blocks, rlpBytes)
+			bytesCount += len(rlpBytes)
+		}
+	}
+
+	return blocks
+}
+
 func handleGetReceipts(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the block receipts retrieval message
 	var query GetReceiptsPacket
@@ -311,6 +379,61 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	peer.markBlock(ann.Block.Hash())
 
 	return backend.Handle(peer, ann)
+}
+
+func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
+	// TODO: Remove, temporary logging for testing visibility
+	log.Info("Peer sent BTC blocks")
+
+	// Retrieve and decode the propagated block
+	res := new(BTCBlocksPacket)
+	if err := msg.Decode(res); err != nil {
+		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+	}
+
+	for i, blockRlp := range res.BTCBlocksResponse {
+		var msgBlockBytes []byte
+		err := rlp.DecodeBytes(blockRlp[:], msgBlockBytes)
+		if err != nil {
+			log.Error("Unable to RLP-decode BTC block", "badIndex", i, "err", err)
+			continue
+		}
+
+		var msgBlock wire.MsgBlock
+		err = msgBlock.Deserialize(bytes.NewReader(msgBlockBytes))
+		if err != nil {
+			log.Error("Unable to deserialize BTC block", "badIndex", i, "err", err)
+			continue
+		}
+
+		hash := msgBlock.BlockHash()
+		// TODO: Remove, temporary logging for testing visibility
+		log.Info("BTC block from peer", "blockHash", hash.String())
+
+		exists, err := vm.TBCFullNode.FullBlockAvailable(context.Background(), &hash)
+		if err != nil {
+			log.Error("Unable to check whether TBC has BTC block received over P2P", "badIndex", i, "block", hash.String(), "err", err)
+			continue
+		}
+
+		if exists {
+			log.Info("Received BTC block over P2P which TBC already has, ignoring", "block", hash.String())
+			continue
+		}
+
+		insert, err := vm.TBCFullNode.BlockInsert(context.Background(), &msgBlock)
+		if err != nil {
+			// Note: if there is a race condition which inserts the block from elsewhere (either TBC peers or other geth peers)
+			// between the FullBlockAvailable call and this insert, it will produce an insert error (database.DuplicateError)
+			// but that is harmless and will be printed below.
+			log.Error("Unable to add BTC block to TBC", "badIndex", i, "block", hash.String(), "err", err)
+			continue
+		}
+
+		log.Info("Added BTC block from geth P2P to TBC", "block", hash.String(), "height", insert)
+	}
+
+	return nil
 }
 
 func handleBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {

@@ -17,7 +17,9 @@
 package eth
 
 import (
+	"github.com/ethereum/go-ethereum/log"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -53,6 +55,41 @@ func (p *Peer) broadcastBlocks() {
 				return
 			}
 			p.Log().Trace("Announced block", "number", block.Number(), "hash", block.Hash())
+
+		case <-p.term:
+			return
+		}
+	}
+}
+
+func (p *Peer) prefetchBTCBlocks() {
+	for {
+		select {
+		case <-time.After(5 * time.Second):
+			// TODO: Remove, logging code for better testing visibility
+
+			missingBlocks := p.blockchain.GetMissingBtcBlocks()
+			if missingBlocks != nil && len(missingBlocks) > 0 {
+				// responses := make(chan *Response)
+				err := p.RequestBtcBlocks(missingBlocks)
+				if err != nil {
+					// TODO: Change to Debug logging
+					log.Info("Error requesting BTC blocks from peer", "err", err)
+					return
+				}
+			} else {
+				// TODO: Remove, testing code to simulate block fetching
+				testHashArr := make([]common.Hash, 0)
+				testHash := common.HexToHash("0x0000000089117961705e0dcba8b554374f6a96c7ea4d9a1f371a6f56437bc730") // BTC Block 3613400
+				testHashArr = append(testHashArr, testHash)
+				err := p.RequestBtcBlocks(missingBlocks)
+
+				if err != nil {
+					// TODO: Change to Debug logging
+					log.Info("Error requesting BTC blocks from peer", "err", err)
+					return
+				}
+			}
 
 		case <-p.term:
 			return

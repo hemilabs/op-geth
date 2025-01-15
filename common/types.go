@@ -52,6 +52,11 @@ var (
 	MaxHash = HexToHash("0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff")
 )
 
+// BitcoinBlock is bytes that represent a wire-serialized Bitcoin block, rather than using the wire.MsgBlock
+// directly and having RLP encode that structure, just RLP-encode a byte array and decode that byte array as
+// a MsgBlock later
+type BitcoinBlock []byte
+
 // Hash represents the 32 byte Keccak256 hash of arbitrary data.
 type Hash [HashLength]byte
 

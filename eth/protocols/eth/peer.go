@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"github.com/ethereum/go-ethereum/core"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -90,6 +91,8 @@ type Peer struct {
 
 	term chan struct{} // Termination channel to stop the broadcasters
 	lock sync.RWMutex  // Mutex protecting the internal fields
+
+	blockchain *core.BlockChain // For async missing BTC block fetcher
 }
 
 // NewPeer create a wrapper for a network connection and negotiated  protocol
@@ -115,10 +118,15 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Pe
 	// Start up all the broadcasters
 	go peer.broadcastBlocks()
 	go peer.broadcastTransactions()
+	go peer.prefetchBTCBlocks()
 	go peer.announceTransactions()
 	go peer.dispatcher()
 
 	return peer
+}
+
+func (p *Peer) setBlockChain(b *core.BlockChain) {
+	p.blockchain = b
 }
 
 // Close signals the broadcast goroutine to terminate. Only ever call this if
@@ -326,6 +334,14 @@ func (p *Peer) ReplyBlockBodiesRLP(id uint64, bodies []rlp.RawValue) error {
 	})
 }
 
+func (p *Peer) ReplyBTCBlocksRLP(id uint64, blocks []rlp.RawValue) error {
+	// Not packed into BlockBodiesResponse to avoid RLP decoding
+	return p2p.Send(p.rw, BtcBlocksMsg, &BTCBlocksRLPPacket{
+		RequestId:            id,
+		BTCBlocksRLPResponse: blocks,
+	})
+}
+
 // ReplyReceiptsRLP is the response to GetReceipts.
 func (p *Peer) ReplyReceiptsRLP(id uint64, receipts []rlp.RawValue) error {
 	return p2p.Send(p.rw, ReceiptsMsg, &ReceiptsRLPPacket{
@@ -468,6 +484,35 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 		RequestId:                    id,
 		GetPooledTransactionsRequest: hashes,
 	})
+}
+
+// RequestBtcBlocks fetches Bitcoin block(s) corresponding to the hash(es) specified.
+func (p *Peer) RequestBtcBlocks(hashes []common.Hash) error {
+	// Info for now (instead of normal debug) for more log visibility
+	p.Log().Info("Fetching btc blocks", "count", len(hashes))
+	id := rand.Uint64()
+
+	requestTracker.Track(p.id, p.version, GetPooledTransactionsMsg, PooledTransactionsMsg, id)
+	return p2p.Send(p.rw, GetBtcBlocksMsg, &GetPooledTransactionsPacket{
+		RequestId:                    id,
+		GetPooledTransactionsRequest: hashes,
+	})
+
+	/*
+		req := &Request{
+			id:   id,
+			sink: sink,
+			code: GetBtcBlocksMsg,
+			want: BtcBlocksMsg,
+			data: &GetBTCBlocksPacket{
+				RequestId:           id,
+				GetBTCBlocksRequest: hashes,
+			},
+		}
+		if err := p.dispatchRequest(req); err != nil {
+			return nil, err
+		}
+		return req, nil */
 }
 
 // knownCache is a cache for known hashes.

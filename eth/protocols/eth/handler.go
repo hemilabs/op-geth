@@ -49,6 +49,18 @@ const (
 	// containing 200+ transactions nowadays, the practical limit will always
 	// be softResponseLimit.
 	maxReceiptsServe = 1024
+
+	// softResponseLimitBTC is the target maximum size of replies to data retrievals
+	// for Bitcoin blocks. Separated from the regular softResponseLimit for all other
+	// RPC requests to provide sufficient space for Bitcoin blocks without impacting
+	// the performance of the rest of the Ethereum protocol. Set large enough to permit
+	// two full Bitcoin blocks per message.
+	softResponseLimitBTC = 9 * 1024 * 1024
+
+	// maxBtcBlocksServe is the maximum number of Bitcoin blocks to serve. This
+	// number is mostly there to limit the number of disk lookups. With 4MB block
+	// sizes, the softResponseLimit will generally be the limiting factor.
+	maxBtcBlocksServe = 32
 )
 
 // Handler is a callback to invoke from an outside runner after the boilerplate
@@ -194,6 +206,8 @@ var eth68 = map[uint64]msgHandler{
 	ReceiptsMsg:                   handleReceipts,
 	GetPooledTransactionsMsg:      handleGetPooledTransactions,
 	PooledTransactionsMsg:         handlePooledTransactions,
+	GetBtcBlocksMsg:               handleGetBTCBlocks,
+	BtcBlocksMsg:                  handleBTCBlocks,
 }
 
 // handleMessage is invoked whenever an inbound message is received from a remote
