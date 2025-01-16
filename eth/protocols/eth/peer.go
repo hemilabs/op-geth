@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"fmt"
 	"github.com/ethereum/go-ethereum/core"
 	"math/big"
 	"math/rand"
@@ -489,7 +490,10 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 // RequestBtcBlocks fetches Bitcoin block(s) corresponding to the hash(es) specified.
 func (p *Peer) RequestBtcBlocks(hashes []common.Hash) error {
 	// Info for now (instead of normal debug) for more log visibility
-	p.Log().Info("Fetching btc blocks", "count", len(hashes))
+	if len(hashes) == 0 {
+		return nil
+	}
+	p.Log().Info("Fetching btc blocks", "count", len(hashes), "first", fmt.Sprintf("%x", hashes[0][:]))
 	id := rand.Uint64()
 
 	requestTracker.Track(p.id, p.version, GetPooledTransactionsMsg, PooledTransactionsMsg, id)
