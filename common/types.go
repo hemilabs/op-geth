@@ -58,9 +58,7 @@ var (
 type BitcoinBlock []byte
 
 func BytesToBitcoinBlock(b []byte) BitcoinBlock {
-	var bb BitcoinBlock
-	copy(bb[:], b[:])
-	return bb
+	return b
 }
 
 func (bb BitcoinBlock) Bytes() []byte {
