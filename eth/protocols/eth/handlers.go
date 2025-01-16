@@ -406,6 +406,8 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 
 	for i, btcBlock := range res.BTCBlocksResponse {
 		log.Info(fmt.Sprintf("RLP-encoded BTC block from peer: %x", btcBlock.Bytes()))
+		bb := *btcBlock
+		log.Info(fmt.Sprintf("RLP-encoded BTC block from peer 2: %x", bb[:]))
 		/*
 			var btcBlockBytes common.BitcoinBlock
 			err := rlp.DecodeBytes(*blockRlp, &btcBlockBytes)

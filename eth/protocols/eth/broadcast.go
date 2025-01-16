@@ -71,6 +71,7 @@ func (p *Peer) prefetchBTCBlocks() {
 			missingBlocks := p.blockchain.GetMissingBtcBlocks()
 			if missingBlocks != nil && len(missingBlocks) > 0 {
 				// responses := make(chan *Response)
+				log.Info("Requesting missing BTC blocks from peer", "len", len(missingBlocks))
 				err := p.RequestBtcBlocks(missingBlocks)
 				if err != nil {
 					// TODO: Change to Debug logging
