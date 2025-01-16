@@ -63,6 +63,10 @@ func BytesToBitcoinBlock(b []byte) BitcoinBlock {
 	return bb
 }
 
+func (bb BitcoinBlock) Bytes() []byte {
+	return bb[:]
+}
+
 // Hash represents the 32 byte Keccak256 hash of arbitrary data.
 type Hash [HashLength]byte
 

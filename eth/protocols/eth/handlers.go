@@ -295,7 +295,9 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 		blockBytes := blockBuf.Bytes()
 		if len(blockBytes) != 0 {
 			btcBlock := common.BytesToBitcoinBlock(blockBytes)
+			log.Info(fmt.Sprintf("Serialized BTC block bytes: %x", blockBytes[:]))
 			rlpBytes, err := rlp.EncodeToBytes(btcBlock)
+			log.Info(fmt.Sprintf("RLP-encoded BTC block bytes: %x", rlpBytes[:]))
 			if err != nil {
 				log.Error(fmt.Sprintf("error RLP-encoding BTC block %s", hash.String()), "err", err)
 			}
@@ -401,16 +403,18 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 
 	log.Info("Peer BTC Blocks packet info", "len", len(res.BTCBlocksResponse))
 
-	for i, blockRlp := range res.BTCBlocksResponse {
-		var btcBlockBytes common.BitcoinBlock
-		err := rlp.DecodeBytes(*blockRlp, &btcBlockBytes)
-		if err != nil {
-			log.Error("Unable to RLP-decode BTC block", "badIndex", i, "err", err)
-			continue
-		}
+	for i, btcBlock := range res.BTCBlocksResponse {
+		log.Info(fmt.Sprintf("RLP-encoded BTC block from peer: %x", btcBlock.Bytes()))
+		/*
+			var btcBlockBytes common.BitcoinBlock
+			err := rlp.DecodeBytes(*blockRlp, &btcBlockBytes)
+			if err != nil {
+				log.Error("Unable to RLP-decode BTC block", "badIndex", i, "err", err)
+				continue
+			} */
 
 		var msgBlock wire.MsgBlock
-		err = msgBlock.Deserialize(bytes.NewReader(btcBlockBytes[:]))
+		err := msgBlock.Deserialize(bytes.NewReader(btcBlock.Bytes()))
 		if err != nil {
 			log.Error("Unable to deserialize BTC block", "badIndex", i, "err", err)
 			continue

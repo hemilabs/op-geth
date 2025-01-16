@@ -80,7 +80,7 @@ func (p *Peer) prefetchBTCBlocks() {
 			} else {
 				// TODO: Remove, testing code to simulate block fetching
 				testHashArr := make([]common.Hash, 0)
-				testHash := common.HexToHash("0x30c77b43566f1a371f9a4deac7966a4f3754b5a8cb0d5e706179118900000000") // BTC Block 3613400
+				testHash := common.HexToHash("0x4c2ee2ad6dd4c343a032618315ca2cf30cf49496403af1774a4e780400000000") // BTC Block 74991
 				testHashArr = append(testHashArr, testHash)
 				err := p.RequestBtcBlocks(testHashArr)
 
