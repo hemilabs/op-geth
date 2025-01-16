@@ -295,9 +295,10 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 		blockBytes := blockBuf.Bytes()
 		if len(blockBytes) != 0 {
 			btcBlock := common.BytesToBitcoinBlock(blockBytes)
-			log.Info(fmt.Sprintf("Serialized BTC block bytes: %x", blockBytes[:]))
+			log.Info(fmt.Sprintf("Serialized BTC block bytes: %x", blockBytes[:]), "len", len(blockBytes))
+			log.Info(fmt.Sprintf("BTC block struct: %x", btcBlock.Bytes()), "len", len(btcBlock.Bytes()))
 			rlpBytes, err := rlp.EncodeToBytes(&btcBlock)
-			log.Info(fmt.Sprintf("RLP-encoded BTC block bytes: %x", rlpBytes[:]))
+			log.Info(fmt.Sprintf("RLP-encoded BTC block bytes: %x", rlpBytes[:]), "len", len(rlpBytes))
 			if err != nil {
 				log.Error(fmt.Sprintf("error RLP-encoding BTC block %s", hash.String()), "err", err)
 			}
