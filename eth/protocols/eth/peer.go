@@ -496,10 +496,10 @@ func (p *Peer) RequestBtcBlocks(hashes []common.Hash) error {
 	p.Log().Info("Fetching btc blocks", "count", len(hashes), "first", fmt.Sprintf("%x", hashes[0][:]))
 	id := rand.Uint64()
 
-	requestTracker.Track(p.id, p.version, GetPooledTransactionsMsg, PooledTransactionsMsg, id)
-	return p2p.Send(p.rw, GetBtcBlocksMsg, &GetPooledTransactionsPacket{
-		RequestId:                    id,
-		GetPooledTransactionsRequest: hashes,
+	requestTracker.Track(p.id, p.version, GetBtcBlocksMsg, BtcBlocksMsg, id)
+	return p2p.Send(p.rw, GetBtcBlocksMsg, &GetBTCBlocksPacket{
+		RequestId:           id,
+		GetBTCBlocksRequest: hashes,
 	})
 
 	/*
