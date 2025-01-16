@@ -363,7 +363,7 @@ func (p *BTCBlocksResponse) Unpack() []*common.BitcoinBlock {
 		blockset = make([]*common.BitcoinBlock, len(*p))
 	)
 	for i, body := range *p {
-		blockset[i] = &body
+		blockset[i] = body
 	}
 	return blockset
 }

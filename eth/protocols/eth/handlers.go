@@ -403,7 +403,7 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 
 	for i, blockRlp := range res.BTCBlocksResponse {
 		var btcBlockBytes common.BitcoinBlock
-		err := rlp.DecodeBytes(blockRlp, &btcBlockBytes)
+		err := rlp.DecodeBytes(*blockRlp, &btcBlockBytes)
 		if err != nil {
 			log.Error("Unable to RLP-decode BTC block", "badIndex", i, "err", err)
 			continue
