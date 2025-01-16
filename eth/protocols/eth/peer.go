@@ -335,6 +335,20 @@ func (p *Peer) ReplyBlockBodiesRLP(id uint64, bodies []rlp.RawValue) error {
 	})
 }
 
+func (p *Peer) ReplyBTCBlocksPacket(id uint64, blocks []*common.BitcoinBlock) error {
+	/**
+		requestTracker.Track(p.id, p.version, GetBtcBlocksMsg, BtcBlocksMsg, id)
+	return p2p.Send(p.rw, GetBtcBlocksMsg, &GetBTCBlocksPacket{
+		RequestId:           id,
+		GetBTCBlocksRequest: hashes,
+	})
+	*/
+	return p2p.Send(p.rw, BtcBlocksMsg, &BTCBlocksPacket{
+		RequestId:         id,
+		BTCBlocksResponse: blocks,
+	})
+}
+
 func (p *Peer) ReplyBTCBlocksRLP(id uint64, blocks []rlp.RawValue) error {
 	// Not packed into BlockBodiesResponse to avoid RLP decoding
 	return p2p.Send(p.rw, BtcBlocksMsg, &BTCBlocksRLPPacket{

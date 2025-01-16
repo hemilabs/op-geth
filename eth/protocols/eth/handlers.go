@@ -246,19 +246,20 @@ func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 	response := ServiceGetBTCBlocksQuery(backend.Chain(), query.GetBTCBlocksRequest)
 
 	for i := 0; i < len(response); i++ {
-		log.Info(fmt.Sprintf("BTC response[%d] length: %d", i, len(response[i])))
+		block := *response[i]
+		log.Info(fmt.Sprintf("BTC response[%d] length: %d", i, len(block.Bytes())))
 	}
 
-	return peer.ReplyBTCBlocksRLP(query.RequestId, response)
+	return peer.ReplyBTCBlocksPacket(query.RequestId, response)
 }
 
-func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest) []rlp.RawValue {
+func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest) []*common.BitcoinBlock {
 	log.Info("ServiceGetBTCBlocksQuery called")
 
 	// Gather Bitcoin blocks until the fetch or network limits is reached
 	var (
 		bytesCount int
-		blocks     []rlp.RawValue
+		blocks     []*common.BitcoinBlock
 	)
 
 	log.Info("P2P requested BTC blocks", "numBlocks", len(query))
@@ -307,8 +308,10 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 			if err != nil {
 				log.Error(fmt.Sprintf("error RLP-encoding BTC block %s", hash.String()), "err", err)
 			}
-			blocks = append(blocks, rlpBytes)
-			bytesCount += len(rlpBytes)
+			//blocks = append(blocks, rlpBytes)
+			//bytesCount += len(rlpBytes)
+			blocks = append(blocks, &btcBlock)
+			bytesCount += len(blockBytes)
 		}
 	}
 
