@@ -402,10 +402,12 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 
 	// Retrieve and decode the propagated block
 	res := new(BTCBlocksPacket)
+	log.Info("Decoding...")
 	if err := msg.Decode(res); err != nil {
 		log.Info("BTC Blocks decode error", "err", err)
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
+	log.Info("Done decoding...")
 
 	log.Info("Peer BTC Blocks packet info", "len", len(res.BTCBlocksResponse))
 
