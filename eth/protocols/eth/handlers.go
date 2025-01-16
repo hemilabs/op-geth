@@ -244,6 +244,11 @@ func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 	response := ServiceGetBTCBlocksQuery(backend.Chain(), query.GetBTCBlocksRequest)
+
+	for i := 0; i < len(response); i++ {
+		log.Info(fmt.Sprintf("BTC response[%d] length: %d", i, len(response[i])))
+	}
+
 	return peer.ReplyBTCBlocksRLP(query.RequestId, response)
 }
 
