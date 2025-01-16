@@ -336,7 +336,7 @@ type GetBTCBlocksPacket struct {
 }
 
 // BTCBlocksResponse is the network packet for BTC blocks distribution.
-type BTCBlocksResponse []common.BitcoinBlock
+type BTCBlocksResponse []*common.BitcoinBlock
 
 // BTCBlocksPacket is the network packet for BTC blocks distribution with
 // request ID wrapping.
