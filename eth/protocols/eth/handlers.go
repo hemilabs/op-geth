@@ -412,6 +412,19 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 			continue
 		}
 
+		headers := make([]*wire.BlockHeader, 1)
+		headers[0] = &msgBlock.Header
+
+		msgHeaders := &wire.MsgHeaders{
+			Headers: headers,
+		}
+
+		_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(context.Background(), msgHeaders)
+		if err != nil {
+			// Do not exit, try to still insert block below regardless but log error
+			log.Error("Unable to add BTC header to TBC", "err", err)
+		}
+
 		insert, err := vm.TBCFullNode.BlockInsert(context.Background(), &msgBlock)
 		if err != nil {
 			// Note: if there is a race condition which inserts the block from elsewhere (either TBC peers or other geth peers)
