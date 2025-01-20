@@ -867,6 +867,10 @@ func (s *BlockChainAPI) GetBlockByNumber(ctx context.Context, number rpc.BlockNu
 	return nil, err
 }
 
+func (s *BlockChainAPI) HVMCreatingBitcoinAttributes() bool {
+	return s.b.HVMCreatingBitcoinAttributes()
+}
+
 // GetBlockByHash returns the requested block. When fullTx is true all transactions in the block are returned in full
 // detail, otherwise only the transaction hash is returned.
 func (s *BlockChainAPI) GetBlockByHash(ctx context.Context, hash common.Hash, fullTx bool) (map[string]interface{}, error) {

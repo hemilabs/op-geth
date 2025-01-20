@@ -19,6 +19,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	context2 "context"
 	"errors"
 	"fmt"
@@ -37,7 +38,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/service/tbc"
-	"golang.org/x/net/context"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -324,7 +324,22 @@ type BlockChain struct {
 	btcAttributesDepCacheBlockHash common.Hash
 	btcAttributesDepCacheEntry     *types.BtcAttributesDepositedTx
 
-	missingProgressionBlocks *wire.MsgHeaders
+	creatingBitcoinAttributesForNextBlock    bool
+	creatingBitcoinAttributesForNextBlockMtx sync.Mutex
+}
+
+func (bc *BlockChain) GetCreatingBitcoinAttributesForNextBlock() bool {
+	bc.creatingBitcoinAttributesForNextBlockMtx.Lock()
+	defer bc.creatingBitcoinAttributesForNextBlockMtx.Unlock()
+
+	return bc.creatingBitcoinAttributesForNextBlock
+}
+
+func (bc *BlockChain) setCreatingBitcoinAttributesForNextBlock(value bool) {
+	bc.creatingBitcoinAttributesForNextBlockMtx.Lock()
+	defer bc.creatingBitcoinAttributesForNextBlockMtx.Unlock()
+
+	bc.creatingBitcoinAttributesForNextBlock = value
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -1551,6 +1566,9 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		return nil, errChainStopped
 	}
 	defer bc.chainmu.Unlock()
+
+	bc.setCreatingBitcoinAttributesForNextBlock(true)
+	defer bc.setCreatingBitcoinAttributesForNextBlock(false)
 
 	// Don't generate a Bitcoin Attributes deposited transaction unless we're building for a recent block.
 	// XXX: Move this upstream?

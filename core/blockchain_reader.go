@@ -405,6 +405,10 @@ func (bc *BlockChain) GetVMConfig() *vm.Config {
 	return &bc.vmConfig
 }
 
+func (bc *BlockChain) HVMCreatingBitcoinAttributes() bool {
+	return bc.GetCreatingBitcoinAttributesForNextBlock()
+}
+
 // TxIndexProgress returns the transaction indexing progress.
 func (bc *BlockChain) TxIndexProgress() (TxIndexProgress, error) {
 	if bc.txIndexer == nil {
