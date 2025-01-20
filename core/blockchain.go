@@ -2484,7 +2484,7 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header, updateFull
 		// Now make sure TBC indexer represents this final state
 		err = bc.updateFullTBCToLightweight()
 		if err != nil {
-			log.Crit("Unable to update full TBC node according to lightweight", "err", err)
+			log.Error("Unable to update full TBC node according to lightweight", "err", err)
 			return err
 		}
 	}
