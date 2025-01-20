@@ -66,25 +66,10 @@ func (p *Peer) prefetchBTCBlocks() {
 	for {
 		select {
 		case <-time.After(5 * time.Second):
-			// TODO: Remove, logging code for better testing visibility
-
 			missingBlocks := p.blockchain.GetMissingBtcBlocks()
 			if missingBlocks != nil && len(missingBlocks) > 0 {
-				// responses := make(chan *Response)
 				log.Info("Requesting missing BTC blocks from peer", "len", len(missingBlocks))
 				err := p.RequestBtcBlocks(missingBlocks)
-				if err != nil {
-					// TODO: Change to Debug logging
-					log.Info("Error requesting BTC blocks from peer", "err", err)
-					continue
-				}
-			} else {
-				// TODO: Remove, testing code to simulate block fetching
-				testHashArr := make([]common.Hash, 0)
-				testHash := common.HexToHash("0x4c2ee2ad6dd4c343a032618315ca2cf30cf49496403af1774a4e780400000000") // BTC Block 74991
-				testHashArr = append(testHashArr, testHash)
-				err := p.RequestBtcBlocks(testHashArr)
-
 				if err != nil {
 					// TODO: Change to Debug logging
 					log.Info("Error requesting BTC blocks from peer", "err", err)

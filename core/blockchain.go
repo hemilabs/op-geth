@@ -26,7 +26,6 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"io"
 	"math/big"
@@ -322,8 +321,6 @@ type BlockChain struct {
 
 	btcAttributesDepCacheBlockHash common.Hash
 	btcAttributesDepCacheEntry     *types.BtcAttributesDepositedTx
-
-	p2pServer *p2p.Server
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -1389,14 +1386,6 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 						log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from TBC peers "+
 							"so it will be available when needed for indexing", blockMissing.BlockHash().String()))
 						vm.TBCAttemptBlockRefetch(context2.Background(), &blockMissing)
-
-						// TODO: Fetch from geth-p2p here as well
-						if bc.p2pServer != nil {
-							log.Info(fmt.Sprintf("Proactively attempting to fetch missing full BTC block %s from op-geth peers "+
-								"so it will be available when needed for indexing", blockMissing.BlockHash().String()))
-
-							bc.p2pServer.Peers()
-						}
 					}
 				}
 			}
@@ -1466,7 +1455,6 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 }
 
 func (bc *BlockChain) GetMissingBtcBlocks() []common.Hash {
-	log.Info("GetMissingBtcBlocks() called")
 	if bc.tbcHeaderNode == nil {
 		log.Info("GetMissingBtcBlocks() does not have tbcHeaderNode active yet")
 	}
@@ -1508,18 +1496,6 @@ func (bc *BlockChain) GetMissingBtcBlocks() []common.Hash {
 	}
 
 	return nil
-}
-
-func (bc *BlockChain) prefetchBlocksFromGethPeers(hash *chainhash.Hash) {
-	if hash == nil {
-		log.Error("cannot fetch nil BTC block from geth peers")
-		return
-	}
-
-	peers := bc.p2pServer.Peers()
-	for _, peer := range peers {
-		peer.RemoteAddr()
-	}
 }
 
 func (bc *BlockChain) IsHvmEnabled() bool {

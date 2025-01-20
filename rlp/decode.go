@@ -22,7 +22,6 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 	"reflect"
@@ -936,7 +935,6 @@ func (s *Stream) Decode(val interface{}) error {
 		return errDecodeIntoNil
 	}
 	rval := reflect.ValueOf(val)
-	log.Info("rVal", "type", rval.String())
 	rtyp := rval.Type()
 	if rtyp.Kind() != reflect.Ptr {
 		return errNoPointer

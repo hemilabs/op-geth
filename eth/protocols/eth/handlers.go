@@ -245,17 +245,10 @@ func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 	}
 	response := ServiceGetBTCBlocksQuery(backend.Chain(), query.GetBTCBlocksRequest)
 
-	for i := 0; i < len(response); i++ {
-		block := *response[i]
-		log.Info(fmt.Sprintf("BTC response[%d] length: %d", i, len(block.Bytes())))
-	}
-
 	return peer.ReplyBTCBlocksPacket(query.RequestId, response)
 }
 
 func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest) []*common.BitcoinBlock {
-	log.Info("ServiceGetBTCBlocksQuery called")
-
 	// Gather Bitcoin blocks until the fetch or network limits is reached
 	var (
 		bytesCount int
@@ -276,9 +269,6 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 			log.Error(fmt.Sprintf("Unable to convert hash %s to a chainhash", hash.String()), "err", err)
 			continue // Keep searching for other valid blocks
 		}
-
-		// TODO: Remove, temp logging for testing visibility
-		log.Info("Peer requested BTC block", "block", ch.String())
 
 		block, err := vm.TBCFullNode.BlockByHash(context.Background(), &ch)
 		if err != nil {
@@ -301,15 +291,6 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 		blockBytes := blockBuf.Bytes()
 		if len(blockBytes) != 0 {
 			btcBlock := common.BytesToBitcoinBlock(blockBytes)
-			log.Info(fmt.Sprintf("Serialized BTC block bytes: %x", blockBytes[:]), "len", len(blockBytes))
-			log.Info(fmt.Sprintf("BTC block struct: %x", btcBlock.Bytes()), "len", len(btcBlock.Bytes()))
-			rlpBytes, err := rlp.EncodeToBytes(&btcBlock)
-			log.Info(fmt.Sprintf("RLP-encoded BTC block bytes: %x", rlpBytes[:]), "len", len(rlpBytes))
-			if err != nil {
-				log.Error(fmt.Sprintf("error RLP-encoding BTC block %s", hash.String()), "err", err)
-			}
-			//blocks = append(blocks, rlpBytes)
-			//bytesCount += len(rlpBytes)
 			blocks = append(blocks, &btcBlock)
 			bytesCount += len(blockBytes)
 		}
@@ -405,19 +386,15 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 
 	// Retrieve and decode the propagated block
 	res := new(BTCBlocksPacket)
-	log.Info("Decoding...")
 	if err := msg.Decode(res); err != nil {
 		log.Info("BTC Blocks decode error", "err", err)
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
-	log.Info("Done decoding...")
 
 	log.Info("Peer BTC Blocks packet info", "len", len(res.BTCBlocksResponse))
 
 	for i, btcBlock := range res.BTCBlocksResponse {
-		log.Info(fmt.Sprintf("RLP-encoded BTC block from peer: %x", btcBlock.Bytes()))
 		bb := *btcBlock
-		log.Info(fmt.Sprintf("RLP-encoded BTC block from peer 2: %x", bb[:]))
 		/*
 			var btcBlockBytes common.BitcoinBlock
 			err := rlp.DecodeBytes(*blockRlp, &btcBlockBytes)
@@ -434,8 +411,6 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 		}
 
 		hash := msgBlock.BlockHash()
-		// TODO: Remove, temporary logging for testing visibility
-		log.Info("BTC block from peer", "blockHash", hash.String())
 
 		exists, err := vm.TBCFullNode.FullBlockAvailable(context.Background(), &hash)
 		if err != nil {
