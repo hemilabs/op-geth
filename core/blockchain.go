@@ -322,6 +322,8 @@ type BlockChain struct {
 
 	btcAttributesDepCacheBlockHash common.Hash
 	btcAttributesDepCacheEntry     *types.BtcAttributesDepositedTx
+
+	missingProgressionBlocks *wire.MsgHeaders
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -1460,6 +1462,19 @@ func (bc *BlockChain) GetMissingBtcBlocks() []common.Hash {
 		log.Info("GetMissingBtcBlocks() does not have tbcHeaderNode active yet")
 	}
 
+	if bc.missingProgressionBlocks != nil {
+		headers := bc.missingProgressionBlocks.Headers
+		missingHashArr := make([]common.Hash, len(headers))
+		for i := 0; i < len(headers); i++ {
+			blockhash := headers[i].BlockHash()
+			bhBytes := blockhash.CloneBytes()
+			var hash common.Hash
+			hash.SetBytes(bhBytes)
+			missingHashArr[i] = hash
+		}
+		return missingHashArr
+	}
+
 	_, tip, err := bc.tbcHeaderNode.BlockHeaderBest(context2.Background())
 	if err != nil {
 		log.Debug("Unable to get best block header from TBC node in GetMissingBtcBlocks()", "err", err)
@@ -2293,17 +2308,29 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 				Headers: headers,
 			}
 
+			bc.missingProgressionBlocks = msgHeaders
+
 			_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(context.Background(), msgHeaders)
 
 			vm.TBCAttemptBlockRefetch(context2.Background(), header)
 			return consensus.ErrFullTBCMissingBTCHeader
 		}
 		if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 {
+			headers := make([]*wire.BlockHeader, len(*missingFullBlockHeaders))
+
 			// Log all of the missing full blocks and trigger an attempt at refetching them over P2P
 			for i := 0; i < len(*missingFullBlockHeaders); i++ {
+				headers[i] = &(*missingFullBlockHeaders)[i]
 				log.Warn(fmt.Sprintf("\tTBC missing full block: %s", (*missingFullBlockHeaders)[i].BlockHash().String()))
 				vm.TBCAttemptBlockRefetch(context2.Background(), &(*missingFullBlockHeaders)[i])
 			}
+
+			msgHeaders := &wire.MsgHeaders{
+				Headers: headers,
+			}
+
+			bc.missingProgressionBlocks = msgHeaders
+
 			return consensus.ErrFullTBCMissingFullBTCBlock
 		} else {
 			// Should never get available=false but neither a missing full block or block header, so if this happens
@@ -2314,6 +2341,9 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 				"or full blocks which should not be possible", cursorHeader.BlockHash().String(), cursorHeight))
 		}
 	}
+
+	// If we got to here, there are no missing progression blocks
+	bc.missingProgressionBlocks = nil
 
 	log.Info(fmt.Sprintf("Moving TBC Full Node indexes to BTC block %s", cursorHeader.BlockHash().String()))
 
