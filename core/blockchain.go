@@ -27,6 +27,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/service/tbc"
+	"golang.org/x/net/context"
 	"io"
 	"math/big"
 	"os"
@@ -2275,9 +2276,26 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 		log.Warn("Unable to update full TBC node to lightweight tip (minus effective lag) due to at least one missing block.")
 		if missingHeaderHash != nil {
 			// TBC Full Node does not even have knowledge of at least one header that is needed to update the Full TBC node
-			// indexers. Currently, nothing to do from the op-geth side, but TBC full node may resolve this issue eventually
-			// by continuing to sync with the Bitcoin network.
+			// indexers. Op-geth should insert the missing header into the TBC full node so that the P2P fetcher can attempt
+			// to re-fetch.
 			log.Error(fmt.Sprintf("TBC missing block header for block: %s", missingHeaderHash))
+
+			header, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), missingHeaderHash)
+			if err != nil {
+				log.Error("Unable to recover missing TBC full node header from lightweight node!", "missing", missingHeaderHash.String())
+				return consensus.ErrFullTBCMissingBTCHeader
+			}
+
+			headers := make([]*wire.BlockHeader, 1)
+			headers[0] = header
+
+			msgHeaders := &wire.MsgHeaders{
+				Headers: headers,
+			}
+
+			_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(context.Background(), msgHeaders)
+
+			vm.TBCAttemptBlockRefetch(context2.Background(), header)
 			return consensus.ErrFullTBCMissingBTCHeader
 		}
 		if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 {
@@ -3834,7 +3852,7 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 				err = bc.updateFullTBCToLightweight()
 				if err != nil {
 					// On error update lightweight TBC node to its previous state
-					revertErr := bc.updateHvmHeaderConsensus(tbcHeader, true)
+					revertErr := bc.updateHvmHeaderConsensus(tbcHeader, false)
 					if revertErr != nil {
 						// Critical error if we cannot restore lightweight TBC state correctly
 						log.Crit(fmt.Sprintf("unable to restore lightweight TBC node to previous state when "+
