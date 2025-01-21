@@ -2311,8 +2311,8 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 				header, _, err := vm.TBCFullNode.BlockHeaderByHash(context.Background(), &hash)
 				if err != nil || header == nil {
 					// Prepend so headers are in correct (ascending) order
-					headers = append([]*wire.BlockHeader{header}, headers...)
-					vm.TBCAttemptBlockRefetch(context2.Background(), header)
+					headers = append([]*wire.BlockHeader{headerCursor}, headers...)
+					vm.TBCAttemptBlockRefetch(context2.Background(), headerCursor)
 				} else {
 					break
 				}
