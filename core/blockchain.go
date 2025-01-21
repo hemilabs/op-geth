@@ -2295,14 +2295,29 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 			// to re-fetch.
 			log.Error(fmt.Sprintf("TBC missing block header for block: %s", missingHeaderHash))
 
-			header, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), missingHeaderHash)
-			if err != nil {
-				log.Error("Unable to recover missing TBC full node header from lightweight node!", "missing", missingHeaderHash.String())
-				return consensus.ErrFullTBCMissingBTCHeader
+			// A missing header hash indicates at least one missing tip block, need to determine how many blocks are actually
+			// missing from full TBC compared to lightweight canonical
+
+			// Only walk back a maximum of 100 blocks
+			_, headerCursor, err := bc.tbcHeaderNode.BlockHeaderBest(context.Background())
+			if err != nil || headerCursor == nil {
+				log.Crit("Unable to fetch best header from TBC lightweight node!", "err", err)
 			}
 
-			headers := make([]*wire.BlockHeader, 1)
-			headers[0] = header
+			headers := make([]*wire.BlockHeader, 0)
+
+			for count := 0; count < 100; count++ {
+				hash := headerCursor.BlockHash()
+				header, _, err := vm.TBCFullNode.BlockHeaderByHash(context.Background(), &hash)
+				if err != nil || header == nil {
+					// Prepend so headers are in correct (ascending) order
+					headers = append([]*wire.BlockHeader{header}, headers...)
+					vm.TBCAttemptBlockRefetch(context2.Background(), header)
+				} else {
+					break
+				}
+				headerCursor, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), &headerCursor.PrevBlock)
+			}
 
 			msgHeaders := &wire.MsgHeaders{
 				Headers: headers,
@@ -2312,7 +2327,6 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 
 			_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(context.Background(), msgHeaders)
 
-			vm.TBCAttemptBlockRefetch(context2.Background(), header)
 			return consensus.ErrFullTBCMissingBTCHeader
 		}
 		if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 {
