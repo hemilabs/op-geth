@@ -21,12 +21,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
 	"math/big"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/service/tbc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -243,6 +244,9 @@ func New(stack *node.Node, config *ethconfig.Config) (*Ethereum, error) {
 
 	if config.HvmEnabled {
 		tbcCfg := tbc.NewDefaultConfig()
+
+		// tbc does not set a default for this, set a sensible default directory
+		tbcCfg.LevelDBHome = "~/.tbcd"
 
 		genesisHeader, err := bdf.Hex2Header(config.HvmGenesisHeader)
 		if err != nil {
