@@ -302,39 +302,15 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				log.Crit("could not get best block header from TBC full node", "err", err)
 			}
 
-			// if bhb is all zeros
-			// tbc full node index to configured hvm genesis header
-			allZeroes := func(b []byte) bool {
-				if b == nil {
-					return false
-				}
-
-				for _, bb := range b {
-					if bb != 0 {
-						return false
-					}
-				}
-
-				return true
-			}
-
 			log.Info(fmt.Sprintf("got best block header of %s",
 				bhb.BlockHash().String()))
 
-			_blockHash := bhb.BlockHash()
-			if allZeroes((&_blockHash).CloneBytes()) {
-				log.Info(fmt.Sprintf("determined to be all zeroes, will reindex to %s", genesisHeader.BlockHash().String()))
-				err := vm.TBCIndexToHeader(genesisHeader)
+			if genesisHeight < 5000 {
+				log.Info("genesis height is less than 5000, brute-force sync to genesis header")
+				err = vm.TBCIndexToHeader(genesisHeader)
 				if err != nil {
-					log.Crit(fmt.Sprintf("not able to get block header best, error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
+					log.Crit(fmt.Sprintf("error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
 				}
-			}
-
-			bh, bhb, err = vm.TBCFullNode.BlockHeaderBest(ctx.Context)
-			if err != nil {
-				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
-				// either a bug or data corruption, so exit with crit.
-				log.Crit("could not get best block header from TBC full node", "err", err)
 			}
 
 			// Get the current indexer information and make sure both indexers are at the same height
