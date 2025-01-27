@@ -22,15 +22,16 @@ import (
 	context2 "context"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
 	"os"
 	"reflect"
 	"runtime"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/service/tbc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/external"
@@ -299,6 +300,29 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
 				// either a bug or data corruption, so exit with crit.
 				log.Crit("could not get best block header from TBC full node", "err", err)
+			}
+
+			// if bhb is all zeros
+			// tbc full node index to configured hvm genesis header
+			allZeroes := func(b []byte) bool {
+				if b == nil {
+					return false
+				}
+
+				for _, bb := range b {
+					if bb != 0 {
+						return false
+					}
+				}
+
+				return true
+			}
+
+			if allZeroes(bhb.BlockHash().CloneBytes()) {
+				err := vm.TBCIndexToHeader(genesisHeader)
+				if err != nil {
+					log.Crit(fmt.Sprintf("not able to get block header best, error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
+				}
 			}
 
 			// Get the current indexer information and make sure both indexers are at the same height
