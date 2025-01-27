@@ -306,6 +306,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				bhb.BlockHash().String()))
 
 			if genesisHeight < 5000 {
+				time.Sleep(10 * time.Second)
 				log.Info("genesis height is less than 5000, brute-force sync to genesis header")
 				_bh := genesisHeader.BlockHash()
 				err = vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &_bh)
