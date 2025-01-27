@@ -318,7 +318,8 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				return true
 			}
 
-			if allZeroes(bhb.BlockHash().CloneBytes()) {
+			_blockHash := bhb.BlockHash()
+			if allZeroes((&_blockHash).CloneBytes()) {
 				err := vm.TBCIndexToHeader(genesisHeader)
 				if err != nil {
 					log.Crit(fmt.Sprintf("not able to get block header best, error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
