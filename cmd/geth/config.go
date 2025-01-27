@@ -326,6 +326,13 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				}
 			}
 
+			bh, bhb, err = vm.TBCFullNode.BlockHeaderBest(ctx.Context)
+			if err != nil {
+				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
+				// either a bug or data corruption, so exit with crit.
+				log.Crit("could not get best block header from TBC full node", "err", err)
+			}
+
 			// Get the current indexer information and make sure both indexers are at the same height
 			syncInfo = *vm.GetTBCFullNodeSyncStatus()
 
