@@ -22,10 +22,6 @@ import (
 	context2 "context"
 	"errors"
 	"fmt"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/hemilabs/heminetwork/database/tbcd"
-	"github.com/hemilabs/heminetwork/service/tbc"
 	"io"
 	"math/big"
 	"os"
@@ -34,6 +30,11 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/hemilabs/heminetwork/database/tbcd"
+	"github.com/hemilabs/heminetwork/service/tbc"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -445,6 +446,7 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 		}
 	}
 
+	// here here here
 	dataDir := bc.tbcHeaderNodeConfig.LevelDBHome
 	if err := os.RemoveAll(dataDir); err != nil {
 		log.Crit(fmt.Sprintf("ResetHvmHeaderNodeToGenesis unable to delete external header mode TBC "+
@@ -2268,12 +2270,14 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 	bc.currentBlock.Store(block.Header())
 	headBlockGauge.Update(int64(block.NumberU64()))
 
-	log.Info("Updating hVM header consensus to block %s @ %d in writeHeadBlock()",
-		block.Hash().String(), block.Number().Uint64())
-	err := bc.updateHvmHeaderConsensus(block.Header())
-	if err != nil {
-		log.Crit("Unable to update hVM header consensus to block %s @ %d in writeHeadBlock()",
-			block.Hash().String(), block.Number().Uint64(), "err", err)
+	if bc.hvmEnabled {
+		log.Info("Updating hVM header consensus to block %s @ %d in writeHeadBlock()",
+			block.Hash().String(), block.Number().Uint64())
+		err := bc.updateHvmHeaderConsensus(block.Header())
+		if err != nil {
+			log.Crit("Unable to update hVM header consensus to block %s @ %d in writeHeadBlock()",
+				block.Hash().String(), block.Number().Uint64(), "err", err)
+		}
 	}
 }
 
@@ -2793,15 +2797,18 @@ func (bc *BlockChain) writeBlockAndSetHead(block *types.Block, receipts []*types
 	} else {
 		status = SideStatTy
 	}
+
 	// Set new head.
 	if status == CanonStatTy {
 		bc.writeHeadBlock(block)
-		log.Info("Updating hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
-			block.Hash().String(), block.Number().Uint64())
-		err := bc.updateHvmHeaderConsensus(block.Header())
-		if err != nil {
-			log.Crit("Unable to update hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
-				block.Hash().String(), block.Number().Uint64(), "err", err)
+		if bc.hvmEnabled {
+			log.Info("Updating hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
+				block.Hash().String(), block.Number().Uint64())
+			err := bc.updateHvmHeaderConsensus(block.Header())
+			if err != nil {
+				log.Crit("Unable to update hVM header consensus to block %s @ %d in writeBlockAndSetHead()",
+					block.Hash().String(), block.Number().Uint64(), "err", err)
+			}
 		}
 	}
 	bc.futureBlocks.Remove(block.Hash())
@@ -3868,12 +3875,14 @@ func (bc *BlockChain) SetCanonical(head *types.Block) (common.Hash, error) {
 	}
 	bc.writeHeadBlock(head)
 
-	log.Info("Updating hVM header consensus to block %s @ %d in SetCanonical()",
-		head.Hash().String(), head.Number().Uint64())
-	err := bc.updateHvmHeaderConsensus(head.Header())
-	if err != nil {
-		log.Crit("Unable to update hVM header consensus to block %s @ %d in SetCanonical()",
-			head.Hash().String(), head.Number().Uint64(), "err", err)
+	if bc.hvmEnabled {
+		log.Info("Updating hVM header consensus to block %s @ %d in SetCanonical()",
+			head.Hash().String(), head.Number().Uint64())
+		err := bc.updateHvmHeaderConsensus(head.Header())
+		if err != nil {
+			log.Crit("Unable to update hVM header consensus to block %s @ %d in SetCanonical()",
+				head.Hash().String(), head.Number().Uint64(), "err", err)
+		}
 	}
 
 	// Emit events
