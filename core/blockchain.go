@@ -22,12 +22,6 @@ import (
 	context2 "context"
 	"errors"
 	"fmt"
-	"github.com/btcsuite/btcd/blockchain"
-	"github.com/btcsuite/btcd/chaincfg"
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/wire"
-	"github.com/hemilabs/heminetwork/service/tbc"
-	"golang.org/x/net/context"
 	"io"
 	"math/big"
 	"os"
@@ -37,6 +31,13 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/btcsuite/btcd/blockchain"
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/hemilabs/heminetwork/service/tbc"
+	"golang.org/x/net/context"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -379,6 +380,11 @@ func (bc *BlockChain) getHvmPhase0ActivationBlock() (*types.Header, error) {
 
 	// Walk back until we are either at genesis or we pass behind the hVM Phase 0 activation timestamp
 	for {
+		// we are at genesis, no ParentHash should exist
+		if cursor.Number.Uint64() == 0 {
+			break
+		}
+
 		header := bc.GetHeaderByHash(cursor.ParentHash)
 		if bc.chainConfig.IsHvm0(header.Time) && header.Number.Uint64() > 0 {
 			cursor = header
@@ -1183,6 +1189,11 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 			"err", err)
 	}
 
+	log.Info(fmt.Sprintf("[Unapply HVM Header Consensus Update] *REMOVING* external BTC headers:"))
+	for i := 0; i < len(reconstitutedHeaders.Headers); i++ {
+		log.Info(fmt.Sprintf("\t %s", reconstitutedHeaders.Headers[i].BlockHash().String()))
+	}
+
 	rt, lastHeader, err := bc.tbcHeaderNode.RemoveExternalHeaders(
 		context2.Background(), reconstitutedHeaders, expectedPreviousTip, stateTransitionTargetHash[:])
 	if err != nil {
@@ -1347,6 +1358,11 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 			return consensus.ErrInvalidHVMBlockFormat
 		}
 
+		log.Info(fmt.Sprintf("[Apply HVM Header Consensus Update] *ADDING* external BTC headers:"))
+		for i := 0; i < len(reconstitutedHeaders.Headers); i++ {
+			log.Info(fmt.Sprintf("\t %s", reconstitutedHeaders.Headers[i].BlockHash().String()))
+		}
+
 		it, cbh, lbh, _, err := bc.tbcHeaderNode.AddExternalHeaders(
 			context2.Background(), reconstitutedHeaders, stateTransitionTargetHash[:])
 		if err != nil {
@@ -1405,6 +1421,11 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 				"claims that after adding %d headers ending with %x, the canonical tip should be %x, but after "+
 				"adding the headers to TBC the canonical tip is %x", header.Hash().String(), header.Number.Uint64(),
 				headersToAdd, lastHeader[:], btcAttrDep.CanonicalTip[:], cbHash[:]))
+
+			log.Info(fmt.Sprintf("[Apply HVM Header Consensus Update] *REMOVING* external BTC headers:"))
+			for i := 0; i < len(reconstitutedHeaders.Headers); i++ {
+				log.Info(fmt.Sprintf("\t %s", reconstitutedHeaders.Headers[i].BlockHash().String()))
+			}
 
 			// Remove the added headers and set the canonical tip and previous upstream state id back to
 			// what it was prior to the invalid addition
@@ -1923,6 +1944,10 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		Headers: headersToAddPtr,
 	}
 
+	log.Info(fmt.Sprintf("[Bitcoin Attributes for Next Block] *ADDING* external BTC headers:"))
+	for i := 0; i < len(msgHeaders.Headers); i++ {
+		log.Info(fmt.Sprintf("\t %s", msgHeaders.Headers[i].BlockHash().String()))
+	}
 	_, canonical, _, _, err := bc.tbcHeaderNode.AddExternalHeaders(
 		context2.Background(),
 		msgHeaders,
@@ -1935,6 +1960,11 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 			"of prior canonical tip %x @ %d!", len(*headersToAddSerialized), first[:], last[:], lightTipHash,
 			lightTipHeight), "err", err)
 		return nil, err
+	}
+
+	log.Info(fmt.Sprintf("[Bitcoin Attributes for Next Block] *REMOVING* external BTC headers:"))
+	for i := 0; i < len(msgHeaders.Headers); i++ {
+		log.Info(fmt.Sprintf("\t %s", msgHeaders.Headers[i].BlockHash().String()))
 	}
 
 	// Revert lightweight TBC's view back to what it was before we started.
@@ -2234,6 +2264,8 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 		return consensus.ErrCorruptHVMHeaderOnlyModeState
 	}
 
+	// if there was no error, but the tip hash is blank, no-op
+
 	lightTipHash := lightTipHeader.BlockHash()
 
 	cursorHeight, cursorHeader := lightTipHeight, lightTipHeader
@@ -2273,6 +2305,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 					cursorHeader.PrevBlock.String(), cursorHeight-1), "err", err)
 				return consensus.ErrCorruptHVMHeaderOnlyModeState
 			}
+
 			cursorHeader, cursorHeight = head, height // Storing them temporarily for verbose logging
 			cursorHash = cursorHeader.BlockHash()
 		}

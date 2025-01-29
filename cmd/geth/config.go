@@ -22,15 +22,16 @@ import (
 	context2 "context"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
 	"os"
 	"reflect"
 	"runtime"
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/service/tbc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/external"
@@ -299,6 +300,20 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
 				// either a bug or data corruption, so exit with crit.
 				log.Crit("could not get best block header from TBC full node", "err", err)
+			}
+
+			log.Info(fmt.Sprintf("got best block header of %s",
+				bhb.BlockHash().String()))
+
+			if genesisHeight < 5000 {
+				time.Sleep(10 * time.Second)
+				log.Info("genesis height is less than 5000, brute-force sync to genesis header")
+				_bh := genesisHeader.BlockHash()
+				err = vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &_bh)
+				if err != nil {
+					log.Crit(fmt.Sprintf("error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
+				}
+
 			}
 
 			// Get the current indexer information and make sure both indexers are at the same height
