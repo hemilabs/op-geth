@@ -638,6 +638,10 @@ func (api *BlockChainAPI) ChainId() *hexutil.Big {
 	return (*hexutil.Big)(api.b.ChainConfig().ChainID)
 }
 
+func (s *BlockChainAPI) CreatingBitcoinAttributesForNextBlock() bool {
+	return s.b.CreatingBitcoinAttributesForNextBlock()
+}
+
 // BlockNumber returns the block number of the chain head.
 func (s *BlockChainAPI) BlockNumber() hexutil.Uint64 {
 	header, _ := s.b.HeaderByNumber(context.Background(), rpc.LatestBlockNumber) // latest header should always be available

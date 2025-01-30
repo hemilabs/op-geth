@@ -19,7 +19,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	context2 "context"
 	"errors"
 	"fmt"
@@ -38,6 +37,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/service/tbc"
+	"golang.org/x/net/context"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -324,6 +324,7 @@ type BlockChain struct {
 	btcAttributesDepCacheBlockHash common.Hash
 	btcAttributesDepCacheEntry     *types.BtcAttributesDepositedTx
 
+	missingProgressionBlocks                 *wire.MsgHeaders
 	creatingBitcoinAttributesForNextBlock    bool
 	creatingBitcoinAttributesForNextBlockMtx sync.Mutex
 }

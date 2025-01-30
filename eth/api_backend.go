@@ -54,6 +54,10 @@ type EthAPIBackend struct {
 	gpo                 *gasprice.Oracle
 }
 
+func (b *EthAPIBackend) CreatingBitcoinAttributesForNextBlock() bool {
+	return b.eth.blockchain.GetCreatingBitcoinAttributesForNextBlock()
+}
+
 // ChainConfig returns the active chain configuration.
 func (b *EthAPIBackend) ChainConfig() *params.ChainConfig {
 	return b.eth.blockchain.Config()
