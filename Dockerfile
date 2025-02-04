@@ -40,6 +40,9 @@ ARG BUILDNUM=""
 
 LABEL commit="$COMMIT" version="$VERSION" buildnum="$BUILDNUM"
 
+RUN apk update
+RUN apk add openssh
+
 USER geth:geth
 WORKDIR /go-ethereum/
 ENTRYPOINT ["/usr/local/bin/geth"]
