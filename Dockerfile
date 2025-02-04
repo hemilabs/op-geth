@@ -41,7 +41,7 @@ ARG BUILDNUM=""
 LABEL commit="$COMMIT" version="$VERSION" buildnum="$BUILDNUM"
 
 RUN apk update
-RUN apk add openssh
+RUN apk add openssh rsync
 
 USER geth:geth
 WORKDIR /go-ethereum/
