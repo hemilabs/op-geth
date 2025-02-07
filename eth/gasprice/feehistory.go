@@ -108,7 +108,13 @@ func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
 
 	sorter := make([]txGasAndReward, len(bf.block.Transactions()))
 	for i, tx := range bf.block.Transactions() {
-		reward, _ := tx.EffectiveGasTip(bf.block.BaseFee())
+		var reward *big.Int
+		if tx.Type() == types.PopPayoutTxType {
+			reward = new(big.Int)
+		} else {
+			reward, _ = tx.EffectiveGasTip(bf.block.BaseFee())
+		}
+
 		sorter[i] = txGasAndReward{gasUsed: bf.receipts[i].GasUsed, reward: reward}
 	}
 	slices.SortStableFunc(sorter, func(a, b txGasAndReward) int {
