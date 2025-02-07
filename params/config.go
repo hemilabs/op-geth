@@ -396,6 +396,9 @@ type ChainConfig struct {
 
 	InteropTime *uint64 `json:"interopTime,omitempty"` // Interop switch time (nil = no fork, 0 = already on optimism interop)
 
+	// Hemi-specific activations
+	Hvm0Time *uint64 `json:"hvm0Time,omitempty"` // HVM Phase 0 activation time
+
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
 	TerminalTotalDifficulty *big.Int `json:"terminalTotalDifficulty,omitempty"`
@@ -547,6 +550,9 @@ func (c *ChainConfig) Description() string {
 	if c.InteropTime != nil {
 		banner += fmt.Sprintf(" - Interop:                     @%-10v\n", *c.InteropTime)
 	}
+	if c.Hvm0Time != nil {
+		banner += fmt.Sprintf(" - HVM Phase 0:                 @%-10v\n", *c.Hvm0Time)
+	}
 	return banner
 }
 
@@ -696,6 +702,10 @@ func (c *ChainConfig) IsOptimismEcotone(time uint64) bool {
 // IsOptimismPreBedrock returns true iff this is an optimism node & bedrock is not yet active
 func (c *ChainConfig) IsOptimismPreBedrock(num *big.Int) bool {
 	return c.IsOptimism() && !c.IsBedrock(num)
+}
+
+func (c *ChainConfig) IsHvm0(time uint64) bool {
+	return isTimestampForked(c.Hvm0Time, time)
 }
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
@@ -1034,6 +1044,7 @@ type Rules struct {
 	IsVerkle                                                bool
 	IsOptimismBedrock, IsOptimismRegolith                   bool
 	IsOptimismCanyon                                        bool
+	IsHvm0                                                  bool
 }
 
 // Rules ensures c's ChainID is not nil.
@@ -1065,5 +1076,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsOptimismBedrock:  isMerge && c.IsOptimismBedrock(num),
 		IsOptimismRegolith: isMerge && c.IsOptimismRegolith(timestamp),
 		IsOptimismCanyon:   isMerge && c.IsOptimismCanyon(timestamp),
+		// Hemi
+		IsHvm0: c.IsHvm0(timestamp), // TODO: Review HVM's compatibility with older upgrades and require minimum one here
 	}
 }

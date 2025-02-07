@@ -18,13 +18,20 @@ package main
 
 import (
 	"bufio"
+	"bytes"
+	context2 "context"
 	"errors"
 	"fmt"
 	"os"
 	"reflect"
 	"runtime"
 	"strings"
+	"time"
 	"unicode"
+
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/service/tbc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/external"
@@ -194,7 +201,277 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		cfg.Eth.OverrideVerkle = &v
 	}
 
+	if ctx.IsSet(utils.OverrideHvmEnabled.Name) {
+		v := ctx.Bool(utils.OverrideHvmEnabled.Name)
+		cfg.Eth.HvmEnabled = v
+	}
+	if ctx.IsSet(utils.OverrideHvmGenesisHeader.Name) {
+		v := ctx.String(utils.OverrideHvmGenesisHeader.Name)
+		cfg.Eth.HvmGenesisHeader = v
+	}
+	if ctx.IsSet(utils.OverrideHvmGenesisHeight.Name) {
+		v := ctx.Uint64(utils.OverrideHvmGenesisHeight.Name)
+		cfg.Eth.HvmGenesisHeight = v
+	}
+	if ctx.IsSet(utils.OverrideHvmHeaderDataDir.Name) {
+		v := ctx.String(utils.OverrideHvmHeaderDataDir.Name)
+		cfg.Eth.HvmHeaderDataDir = v
+	}
+	if ctx.IsSet(utils.OverrideHvm0.Name) {
+		v := ctx.Uint64(utils.OverrideHvm0.Name)
+		cfg.Eth.OverrideHemiHvm0 = &v
+	}
+
+	// TODO: expose debug.verbosityFlag or pass verbosity setting up the stack
+	verbosity := ctx.Int("verbosity")
+
 	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+
+	if cfg.Eth.HvmEnabled {
+		// Before starting up any other services, make sure TBC is in correct initial state
+		fullNodeTbcCfg := tbc.NewDefaultConfig()
+
+		if ctx.IsSet(utils.TBCListenAddress.Name) {
+			fullNodeTbcCfg.ListenAddress = ctx.String(utils.TBCListenAddress.Name)
+		}
+		if ctx.IsSet(utils.TBCMaxCachedTxs.Name) {
+			fullNodeTbcCfg.MaxCachedTxs = ctx.Int(utils.TBCMaxCachedTxs.Name)
+		}
+		if ctx.IsSet(utils.TBCLevelDBHome.Name) {
+			fullNodeTbcCfg.LevelDBHome = ctx.String(utils.TBCLevelDBHome.Name)
+		}
+		if ctx.IsSet(utils.TBCBlockSanity.Name) {
+			fullNodeTbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
+		}
+		if ctx.IsSet(utils.TBCNetwork.Name) {
+			fullNodeTbcCfg.Network = ctx.String(utils.TBCNetwork.Name)
+		}
+		if ctx.IsSet(utils.TBCPrometheusAddress.Name) {
+			fullNodeTbcCfg.PrometheusListenAddress = ctx.String(utils.TBCPrometheusAddress.Name)
+		}
+		if ctx.IsSet(utils.TBCSeeds.Name) {
+			fullNodeTbcCfg.Seeds = ctx.StringSlice(utils.TBCSeeds.Name)
+		}
+
+		logLevel := "INFO"  // Anything 0-3 (silent to info) maps to "INFO" for TBC
+		if verbosity == 4 { // Geth debug = TBC TRACE
+			logLevel = "DEBUG"
+		} else if verbosity == 5 { // Geth detail = TBC TRACE
+			logLevel = "TRACE"
+		}
+
+		// Set tbc, tbcd, and leveldb log levels to the log level based on op-geth
+		fullNodeTbcCfg.LogLevel = "tbcd=" + logLevel + ";tbc=" + logLevel + ";level=" + logLevel
+
+		// Initialize TBC Bitcoin indexer to answer hVM queries
+		err := vm.SetupTBCFullNode(ctx.Context, fullNodeTbcCfg)
+		if err != nil {
+			log.Crit("Unable to setup TBC Full Node", "err", err)
+		}
+
+		genesisHeader, err := bdf.Hex2Header(cfg.Eth.HvmGenesisHeader)
+		genesisHash := genesisHeader.BlockHash()
+		genesisHeight := cfg.Eth.HvmGenesisHeight
+
+		log.Info("Waiting for TBC full node to finish startup")
+
+		for {
+			time.Sleep(100 * time.Millisecond)
+			if vm.TBCFullNode.Running() {
+				break
+			}
+		}
+		log.Info("TBC full node done loading.")
+
+		log.Info(fmt.Sprintf("TBC Full Node started, will sync to Bitcoin block %s configured as the start "+
+			"of hVM consensus tracking on this chain.", genesisHash.String()))
+
+		var syncInfo tbc.SyncInfo
+
+		// Require a complete sync of TBC full node up to the hVM genesis height whether or not we have
+		// passed the hVM Phase 0 activation height, so that the node will not continue starting up
+		// until it will be in the correct initial condition when the hVM Phase 0 activation occurs,
+		// rather than working correctly until then and freezing at activation until TBC is caught up.
+		// Would rather have node delay full startup to fully sync TBC to required genesis height
+		// than startup without full information and later freeze at hVM Phase 0 activation time.
+		for {
+			bh, bhb, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
+			if err != nil {
+				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
+				// either a bug or data corruption, so exit with crit.
+				log.Crit("could not get best block header from TBC full node", "err", err)
+			}
+
+			log.Info(fmt.Sprintf("got best block header of %s",
+				bhb.BlockHash().String()))
+
+			if genesisHeight < 5000 {
+				time.Sleep(10 * time.Second)
+				log.Info("genesis height is less than 5000, brute-force sync to genesis header")
+				_bh := genesisHeader.BlockHash()
+				err = vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &_bh)
+				if err != nil {
+					log.Crit(fmt.Sprintf("error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
+				}
+
+			}
+
+			// Get the current indexer information and make sure both indexers are at the same height
+			syncInfo = *vm.GetTBCFullNodeSyncStatus()
+
+			utxoHH := syncInfo.Utxo
+			txHH := syncInfo.Tx
+
+			if !bytes.Equal(utxoHH.Hash[:], txHH.Hash[:]) {
+				// TBC is in an invalid indexing state as its UTXO and Tx indexers are not matched,
+				// attempt to automatically recover by unindexing both back to their common shared
+				// ancestor.
+				err := vm.FixMismatchedIndexesIfRequired()
+				if err != nil {
+					// If we have mismatched indexes that we aren't able to repair, this is a critical
+					// error and likely due to data corruption in TBC needing manual intervention to resolve.
+					log.Crit(fmt.Sprintf("On startup, TBC Full Node has mismatched indexers, "+
+						"UTXO = %s @ %d, Tx = %s @ %d, and automatic recovery to walk indexers back to a common "+
+						"ancestor failed. This is likely due to TBC state corruption. Either restore a "+
+						"working older TBC full node data directory to the currently set TBCLevelDB home (%s), or "+
+						"delete it and let op-geth resync the TBC full node from scratch.", utxoHH.Hash.String(),
+						utxoHH.Height, txHH.Hash.String(), txHH.Height, fullNodeTbcCfg.LevelDBHome), "err", err)
+				}
+			}
+
+			if bh >= genesisHeight {
+				// TBC full node already has awareness of BTC chain at/beyond the genesis height, so make sure
+				// that it is also *indexed* to at least the genesis height.
+
+				// At this point UTXO and Tx indexers are at the same height, so we can do everything based
+				// off the UTXO one. Check whether the indexers are above the genesis height, and if not index
+				// up to that height.
+
+				if utxoHH.Height < genesisHeight {
+					// Safe to assume that a higher height means we are indexed past the effective genesis block
+					// (rather than indexed on a fork before the genesis) as the hVM protocol makes the assumption
+					// that the effective genesis block will never be forked, and should be set far enough in the
+					// past that it is deemed safe.
+
+					// First check that all blocks from the current indexed tip to the target hVM Phase 0 activation
+					// effective genesis block are available, and if not kick off async requests to download these
+					// from peers. Do this by walking back from the effective genesis header, rather than attempting
+					// to walk forward from current indexed tip and determine which known headers are on the canonical
+					// chain.
+
+					// Even if we are indexed onto a fork, this function will check the full availability of
+					// full blocks from the common fork point between the current indexed tip and the target
+					// effective genesis header.
+					available, missingFullBlockHeaders, missingHeaderHash, err := vm.TBCBlocksAvailableToHeader(ctx.Context, genesisHeader)
+					if err != nil {
+						// This is a critical error on startup, generally meaning the TBC Full Node has missing
+						// header knowledge somewhere. Errors will only be returned if there is an underlying
+						// problem finding the header or reading from the database.
+
+						// Check if there were missing full blocks returned in addition to the error and print them
+						// out, but do not attempt a refetch as we are going to exit due to the error.
+						if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 {
+							for i := 0; i < len(*missingFullBlockHeaders); i++ {
+								log.Warn(fmt.Sprintf("\tTBC missing full block: %s",
+									(*missingFullBlockHeaders)[i].BlockHash().String()))
+							}
+						}
+
+						log.Crit(fmt.Sprintf("On startup, TBC Full Node reports knowledge of hVM effective "+
+							"genesis block, but an unexpected error was encountered when attempting to check all "+
+							"full BTC blocks are available to that genesis height. Indexer: %s @ %d, genesis: %s @ %d",
+							utxoHH.Hash.String(), utxoHH.Height, genesisHeader.BlockHash().String(), genesisHeight),
+							"err", err)
+					}
+
+					if !available {
+						// One or more full blocks or a header are not known below the hVM Phase 0 activation height,
+						// even though the block for the activation height itself is known.
+
+						// If there is a header itself unavailable then this is a critical error, as TBC should not
+						// be able to return a best block at/after genesis without having headers prior to it.
+						if missingHeaderHash != nil {
+							log.Crit(fmt.Sprintf("TBC Full Node reports knowledge of hVM effective genesis "+
+								"block %s @ %d, but is missing a header %s below that height",
+								genesisHeader.BlockHash().String(), genesisHeight, missingHeaderHash.String()))
+						}
+
+						// If there are one or more blocks missing, attempt to refetch them
+						if missingFullBlockHeaders != nil {
+							if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 {
+								for i := 0; i < len(*missingFullBlockHeaders); i++ {
+									log.Warn(fmt.Sprintf("\tTBC missing full block: %s",
+										(*missingFullBlockHeaders)[i].BlockHash().String()))
+									vm.TBCAttemptBlockRefetch(context2.Background(), &(*missingFullBlockHeaders)[i])
+								}
+							}
+						} else {
+							// Should be impossible to have available=false but neither a missing header or block
+							// identified without an error returned, so exit with crit for unexpected behavior
+							log.Crit("TBC Full Node reports knowledge of hVM effective genesis block %s @ %d," +
+								" but claims to be missing block information below that height without indicating " +
+								"what information is missing")
+						}
+						// Now that we have attempted refetches, allow the loop to run again and if the missing
+						// blocks have been received then the else condition below will be hit.
+						continue
+					} else {
+						// All blocks are available to index up to the genesis header, so move the indexer forward
+						err := vm.TBCIndexToHeader(genesisHeader)
+						if err != nil {
+							log.Crit(fmt.Sprintf("On startup, TBC Full Node reports full knowledge of all "+
+								"blocks required to index to the hVM effective genesis block %s @ %d but returned "+
+								"an unexpected error while attempting move the indexers to the effective genesis block",
+								genesisHeader.BlockHash().String(), genesisHeight), "err", err)
+						}
+
+						// Ensure that the full TBC node truly has moved both indexers to the effective genesis block,
+						// and if not then fail with crit as the above TBCIndexToHeader must have failed to make
+						// the appropriate state changes without returning an error.
+						syncInfo = *vm.GetTBCFullNodeSyncStatus()
+
+						utxoHH := syncInfo.Utxo
+						txHH := syncInfo.Tx
+
+						if !bytes.Equal(utxoHH.Hash[:], genesisHash[:]) {
+							log.Crit(fmt.Sprintf("On startup, TBC Full Node was indexed to the hVM "+
+								"effective genesis block %s @ %d but afterwards its UTXO indexer reports it is "+
+								"indexed to %s @ %d instead", genesisHash.String(), genesisHeight,
+								utxoHH.Hash.String(), utxoHH.Height))
+						}
+
+						if !bytes.Equal(txHH.Hash[:], genesisHash[:]) {
+							log.Crit(fmt.Sprintf("On startup, TBC Full Node was indexed to the hVM "+
+								"effective genesis block %s @ %d but afterwards its Tx indexer reports it is "+
+								"indexed to %s @ %d instead", genesisHash.String(), genesisHeight,
+								txHH.Hash.String(), txHH.Height))
+						}
+					}
+				}
+
+				// If we got here then we are at/above the hVM genesis height and can break out of the startup loop
+				log.Info(fmt.Sprintf("TBC full node indexed to block %s @ %d which is at or beyond hVM "+
+					"effective genesis block %s @ %d", bhb.BlockHash().String(), bh, genesisHash.String(),
+					genesisHeight))
+				break
+			} else { // The best block known by TBC is still below the genesis height
+				// We could index the chain incrementally as we sync, but in the current implementation
+				// we wait until the TBC Full Node is fully synced with all data and then do the indexing
+				// all at one time, so for now just log the syncing progress.
+				log.Info(fmt.Sprintf("TBC Full Node is performing initial sync, current tip: %s @ %d",
+					bhb.BlockHash().String(), bh))
+			}
+
+			select {
+			case <-time.After(500 * time.Millisecond):
+			case <-ctx.Context.Done():
+				log.Crit("context done")
+			}
+		}
+
+		log.Info("TBC initial sync completed", "headerHeight", syncInfo.BlockHeader.Height,
+			"utxoIndexHeight", syncInfo.Utxo.Height, "txIndexHeight", syncInfo.Tx.Height)
+	}
 
 	// Create gauge with geth system and build information
 	if eth != nil { // The 'eth' backend may be nil in light mode

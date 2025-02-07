@@ -146,30 +146,32 @@ type Message struct {
 	// This field will be set to true for operations like RPC eth_call.
 	SkipAccountChecks bool
 
-	IsSystemTx     bool                 // IsSystemTx indicates the message, if also a deposit, does not emit gas usage.
-	IsDepositTx    bool                 // IsDepositTx indicates the message is force-included and can persist a mint.
-	Mint           *big.Int             // Mint is the amount to mint before EVM processing, or nil if there is no minting.
-	RollupCostData types.RollupCostData // RollupCostData caches data to compute the fee we charge for data availability
-	IsPopPayoutTx  bool                 // IsPopPayoutTx indicates whether the message performs a PoP payout (protocol-only)
+	IsSystemTx                 bool                 // IsSystemTx indicates the message, if also a deposit, does not emit gas usage.
+	IsDepositTx                bool                 // IsDepositTx indicates the message is force-included and can persist a mint.
+	Mint                       *big.Int             // Mint is the amount to mint before EVM processing, or nil if there is no minting.
+	RollupCostData             types.RollupCostData // RollupCostData caches data to compute the fee we charge for data availability
+	IsPopPayoutTx              bool                 // IsPopPayoutTx indicates whether the message performs a PoP payout (protocol-only)
+	IsBtcAttributesDepositedTx bool                 // IsBtcAttributesDepositedTx indicates whether the message is a BTC Attr Dep tx (protocol-only)
 }
 
 // TransactionToMessage converts a transaction into a Message.
 func TransactionToMessage(tx *types.Transaction, s types.Signer, baseFee *big.Int) (*Message, error) {
 	msg := &Message{
-		Nonce:          tx.Nonce(),
-		GasLimit:       tx.Gas(),
-		GasPrice:       new(big.Int).Set(tx.GasPrice()),
-		GasFeeCap:      new(big.Int).Set(tx.GasFeeCap()),
-		GasTipCap:      new(big.Int).Set(tx.GasTipCap()),
-		To:             tx.To(),
-		Value:          tx.Value(),
-		Data:           tx.Data(),
-		AccessList:     tx.AccessList(),
-		IsSystemTx:     tx.IsSystemTx(),
-		IsDepositTx:    tx.IsDepositTx(),
-		Mint:           tx.Mint(),
-		RollupCostData: tx.RollupCostData(),
-		IsPopPayoutTx:  tx.IsPopPayoutTx(),
+		Nonce:                      tx.Nonce(),
+		GasLimit:                   tx.Gas(),
+		GasPrice:                   new(big.Int).Set(tx.GasPrice()),
+		GasFeeCap:                  new(big.Int).Set(tx.GasFeeCap()),
+		GasTipCap:                  new(big.Int).Set(tx.GasTipCap()),
+		To:                         tx.To(),
+		Value:                      tx.Value(),
+		Data:                       tx.Data(),
+		AccessList:                 tx.AccessList(),
+		IsSystemTx:                 tx.IsSystemTx(),
+		IsDepositTx:                tx.IsDepositTx(),
+		Mint:                       tx.Mint(),
+		RollupCostData:             tx.RollupCostData(),
+		IsPopPayoutTx:              tx.IsPopPayoutTx(),
+		IsBtcAttributesDepositedTx: tx.IsBtcAttributesDepositedTx(),
 
 		SkipAccountChecks: false,
 		BlobHashes:        tx.BlobHashes(),
@@ -294,7 +296,7 @@ func (st *StateTransition) buyGas() error {
 }
 
 func (st *StateTransition) preCheck() error {
-	if st.msg.IsDepositTx || st.msg.IsPopPayoutTx {
+	if st.msg.IsDepositTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx {
 		// No fee fields to check, no nonce to check, and no need to check if EOA (L1 already verified it for us)
 		// Gas is free, but no refunds!
 		st.initialGas = st.msg.GasLimit
@@ -514,11 +516,11 @@ func (st *StateTransition) innerTransitionDb() (*ExecutionResult, error) {
 	// if deposit or pop payout: skip refunds, skip tipping coinbase (PoP included for pre-Regolith
 	// backwards compatibility)
 	// Regolith changes this behaviour to report the actual gasUsed instead of always reporting all gas used.
-	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx) && !rules.IsOptimismRegolith {
+	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx) && !rules.IsOptimismRegolith {
 		// Record deposits as using all their gas (matches the gas pool)
 		// System Transactions and PoP Payout transactions are special & are not recorded as using any gas (anywhere)
 		gasUsed := st.msg.GasLimit
-		if st.msg.IsSystemTx || st.msg.IsPopPayoutTx {
+		if st.msg.IsSystemTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx {
 			gasUsed = 0
 		}
 		return &ExecutionResult{
@@ -538,8 +540,8 @@ func (st *StateTransition) innerTransitionDb() (*ExecutionResult, error) {
 		// After EIP-3529: refunds are capped to gasUsed / 5
 		gasRefund = st.refundGas(params.RefundQuotientEIP3529)
 	}
-	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx) && rules.IsOptimismRegolith {
-		// Skip coinbase payments for deposit and PoP payout tx in Regolith
+	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx) && rules.IsOptimismRegolith {
+		// Skip coinbase payments for deposit, PoP payout, and BTC Attr Dep tx in Regolith
 		return &ExecutionResult{
 			UsedGas:     st.gasUsed(),
 			RefundedGas: gasRefund,

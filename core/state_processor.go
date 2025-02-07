@@ -112,7 +112,7 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 
 	nonce := tx.Nonce()
 
-	if (msg.IsDepositTx || msg.IsPopPayoutTx) && config.IsOptimismRegolith(evm.Context.Time) {
+	if (msg.IsDepositTx || msg.IsPopPayoutTx || msg.IsBtcAttributesDepositedTx) && config.IsOptimismRegolith(evm.Context.Time) {
 		nonce = statedb.GetNonce(msg.From)
 	}
 
@@ -158,6 +158,10 @@ func applyTransaction(msg *Message, config *params.ChainConfig, gp *GasPool, sta
 	if msg.IsPopPayoutTx && config.IsOptimismRegolith(evm.Context.Time) {
 		// The actual nonce for PoP Payout transactions is only recorded from Regolith onwards.
 		receipt.PoPPayoutNonce = &nonce
+	}
+	if msg.IsBtcAttributesDepositedTx && config.IsHvm0(evm.Context.Time) {
+		// The actual nonce for BTC Attr Dep transactions is only recorded from Regolith onwards.
+		receipt.BtcAttributesDepositedNonce = &nonce
 	}
 
 	if tx.Type() == types.BlobTxType {

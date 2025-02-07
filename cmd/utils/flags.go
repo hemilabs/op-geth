@@ -933,17 +933,40 @@ var (
 		Category: flags.RollupCategory,
 		Value:    "", // No Prometheus by default
 	}
-	TBCInitHeight = &cli.Uint64Flag{
-		Name:     "tbc.initheight",
-		Usage:    "Height to ensure tbc is at before starting geth",
-		Category: flags.RollupCategory,
-		Value:    2585811,
-	}
 	TBCSeeds = &cli.StringSliceFlag{
 		Name:     "tbc.seeds",
 		Usage:    "override tbc seeds when finding peers",
 		Category: flags.RollupCategory,
 		Value:    nil,
+	}
+	OverrideHvmEnabled = &cli.BoolFlag{
+		Name:     "hvm.enabled",
+		Usage:    "override whether hVM is enabled",
+		Category: flags.RollupCategory,
+		Value:    ethconfig.Defaults.HvmEnabled,
+	}
+	OverrideHvmGenesisHeader = &cli.StringFlag{
+		Name:     "hvm.genesisheader",
+		Usage:    "override the genesis block header where hVM starts tracking Bitcoin consensus",
+		Category: flags.RollupCategory,
+		Value:    ethconfig.Defaults.HvmGenesisHeader,
+	}
+	OverrideHvmGenesisHeight = &cli.Uint64Flag{
+		Name:     "hvm.genesisheight",
+		Usage:    "override the genesis block height where hVM starts tracking Bitcoin consensus",
+		Category: flags.RollupCategory,
+		Value:    ethconfig.Defaults.HvmGenesisHeight,
+	}
+	OverrideHvmHeaderDataDir = &cli.StringFlag{
+		Name:     "hvm.headerdatadir",
+		Usage:    "override the data directory where op-geth stores Bitcoin headers for hVM consensus tracking",
+		Category: flags.RollupCategory,
+		Value:    ethconfig.Defaults.HvmHeaderDataDir,
+	}
+	OverrideHvm0 = &cli.Uint64Flag{
+		Name:     "override.hvm0",
+		Usage:    "Manually specify the hVM phase 0 activation timestamp, overriding the bundled setting",
+		Category: flags.EthCategory,
 	}
 
 	// Metrics flags

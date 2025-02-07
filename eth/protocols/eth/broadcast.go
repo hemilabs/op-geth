@@ -17,7 +17,9 @@
 package eth
 
 import (
+	"github.com/ethereum/go-ethereum/log"
 	"math/big"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -53,6 +55,27 @@ func (p *Peer) broadcastBlocks() {
 				return
 			}
 			p.Log().Trace("Announced block", "number", block.Number(), "hash", block.Hash())
+
+		case <-p.term:
+			return
+		}
+	}
+}
+
+func (p *Peer) prefetchBTCBlocks() {
+	for {
+		select {
+		case <-time.After(5 * time.Second):
+			missingBlocks := p.blockchain.GetMissingBtcBlocks()
+			if missingBlocks != nil && len(missingBlocks) > 0 {
+				log.Info("Requesting missing BTC blocks from peer", "len", len(missingBlocks))
+				err := p.RequestBtcBlocks(missingBlocks)
+				if err != nil {
+					// TODO: Change to Debug logging
+					log.Info("Error requesting BTC blocks from peer", "err", err)
+					continue
+				}
+			}
 
 		case <-p.term:
 			return

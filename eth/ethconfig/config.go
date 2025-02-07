@@ -68,6 +68,12 @@ var Defaults = Config{
 	RPCEVMTimeout:      5 * time.Second,
 	GPO:                FullNodeGPO,
 	RPCTxFeeCap:        1, // 1 ether
+	// TODO: Move hVM defaults somewhere else on a per-network basis
+	HvmEnabled:       true,
+	HvmGenesisHeader: "00000020715ae5bdcf3d4b3a27cecfc0db309ea522fddbe83946492d0f000000000000000f092c40dc00db9010da6452d0e0688056d5b1cbc287de4ffb6a5acff873cd4b0a3c4467ffff001d04dafc10",
+	HvmGenesisHeight: 3488421,
+	HvmHeaderDataDir: "~/.tbcdheaders", // TODO: put this in configured geth data directory
+
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
@@ -155,6 +161,11 @@ type Config struct {
 	// send-transaction variants. The unit is ether.
 	RPCTxFeeCap float64
 
+	HvmEnabled       bool   `toml:",omitempty"`
+	HvmGenesisHeader string `toml:",omitempty"`
+	HvmGenesisHeight uint64 `toml:",omitempty"`
+	HvmHeaderDataDir string `toml:",omitempty"`
+
 	// OverrideCancun (TODO: remove after the fork)
 	OverrideCancun *uint64 `toml:",omitempty"`
 
@@ -166,6 +177,13 @@ type Config struct {
 	OverrideOptimismEcotone *uint64 `toml:",omitempty"`
 
 	OverrideOptimismInterop *uint64 `toml:",omitempty"`
+
+	OverrideHemiHvm0 *uint64 `toml:",omitempty"`
+
+	OverrideHvmEnabled       bool    `toml:",omitempty"`
+	OverrideHvmGenesisHeader string  `toml:",omitempty"`
+	OverrideHvmGenesisHeight *uint64 `toml:",omitempty"`
+	OverrideHvmHeaderDataDir string  `toml:",omitempty"`
 
 	// ApplySuperchainUpgrades requests the node to load chain-configuration from the superchain-registry.
 	ApplySuperchainUpgrades bool `toml:",omitempty"`

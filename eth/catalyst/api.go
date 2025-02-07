@@ -20,6 +20,7 @@ package catalyst
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/consensus"
 	"sync"
 	"time"
 
@@ -228,6 +229,9 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	defer api.forkchoiceLock.Unlock()
 
 	log.Trace("Engine API request received", "method", "ForkchoiceUpdated", "head", update.HeadBlockHash, "finalized", update.FinalizedBlockHash, "safe", update.SafeBlockHash)
+	log.Trace(fmt.Sprintf("forkchoiceUpdated, payloadAttributes=%v", payloadAttributes))
+	log.Info(fmt.Sprintf("Engine API forkchoice updated, head=%s, finalized=%s, safe=%s", update.HeadBlockHash.String(), update.FinalizedBlockHash.String(), update.SafeBlockHash.String()))
+
 	if update.HeadBlockHash == (common.Hash{}) {
 		log.Warn("Forkchoice requested update to zero hash")
 		return engine.STATUS_INVALID, nil // TODO(karalabe): Why does someone send us this?
@@ -241,6 +245,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	// need to either trigger a sync, or to reject this forkchoice update for a
 	// reason.
 	block := api.eth.BlockChain().GetBlockByHash(update.HeadBlockHash)
+	log.Info(fmt.Sprintf("ForkchoiceUpdated command requests we set head to %s @ %d", block.Hash().String(), block.NumberU64()))
 	if block == nil {
 		// If this block was previously invalidated, keep rejecting it here too
 		if res := api.checkInvalidAncestor(update.HeadBlockHash, update.HeadBlockHash); res != nil {
@@ -349,6 +354,9 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			log.Warn("Safe block not available in database")
 			return engine.STATUS_INVALID, engine.InvalidForkChoiceState.With(errors.New("safe block not available in database"))
 		}
+		currentSafe := rawdb.ReadCanonicalHash(api.eth.ChainDb(), safeBlock.NumberU64())
+		log.Info(fmt.Sprintf("forkchoiceUpdated canonical block @ 'safe' height: %d: %s", safeBlock.NumberU64(), currentSafe.String()))
+		log.Info(fmt.Sprintf("forchoiceUpdated update says canonical should be: %s @ %d", update.SafeBlockHash.String(), safeBlock.NumberU64()))
 		if rawdb.ReadCanonicalHash(api.eth.ChainDb(), safeBlock.NumberU64()) != update.SafeBlockHash {
 			log.Warn("Safe block not in canonical chain")
 			return engine.STATUS_INVALID, engine.InvalidForkChoiceState.With(errors.New("safe block not in canonical chain"))
@@ -620,12 +628,25 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 	if err := api.eth.BlockChain().InsertBlockWithoutSetHead(block); err != nil {
 		log.Warn("NewPayloadV1: inserting block failed", "error", err)
 
-		api.invalidLock.Lock()
-		api.invalidBlocksHits[block.Hash()] = 1
-		api.invalidTipsets[block.Hash()] = block.Header()
-		api.invalidLock.Unlock()
+		if errors.Is(err, consensus.ErrFullTBCMissingFullBTCBlock) {
+			log.Info("error is full TBC missing full BTC block, delaying payload import")
+			// TBC is missing a full block which is a failure which could be recovered in future.
+			// Delay the payload import,
+			return api.delayPayloadImport(block)
+		} else if errors.Is(err, consensus.ErrFullTBCMissingBTCHeader) {
+			log.Info("error is full TBC missing a BTC header, delaying payload import")
+			// TBC is missing a block header which is a failure which could be recovered in future.
+			// Delay the payload import,
+			return api.delayPayloadImport(block)
+		} else {
+			log.Warn("InsertBlockWithoutSetHead failed but error is not full TBC missing full block or header!", "err", err)
+			api.invalidLock.Lock()
+			api.invalidBlocksHits[block.Hash()] = 1
+			api.invalidTipsets[block.Hash()] = block.Header()
+			api.invalidLock.Unlock()
 
-		return api.invalid(err, parent.Header()), nil
+			return api.invalid(err, parent.Header()), nil
+		}
 	}
 	// We've accepted a valid payload from the beacon client. Mark the local
 	// chain transitions to notify other subsystems (e.g. downloader) of the

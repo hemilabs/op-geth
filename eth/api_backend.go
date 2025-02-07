@@ -294,6 +294,7 @@ func (b *EthAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 
 func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
 	if b.ChainConfig().IsOptimism() && signedTx.Type() == types.BlobTxType {
+		log.Info(fmt.Sprintf("Type not supported for sigvalues in SendTx %d", signedTx.Type()))
 		return types.ErrTxTypeNotSupported
 	}
 	if b.eth.seqRPCService != nil {

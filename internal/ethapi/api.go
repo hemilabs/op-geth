@@ -1491,6 +1491,10 @@ func newRPCTransaction(tx *types.Transaction, blockHash common.Hash, blockNumber
 		if receipt != nil && receipt.PoPPayoutNonce != nil {
 			result.Nonce = hexutil.Uint64(*receipt.PoPPayoutNonce)
 		}
+	case types.BtcAttributesDepositedTxType:
+		if receipt != nil && receipt.BtcAttributesDepositedNonce != nil {
+			result.Nonce = hexutil.Uint64(*receipt.BtcAttributesDepositedNonce)
+		}
 	case types.DepositTxType:
 		srcHash := tx.SourceHash()
 		isSystemTx := tx.IsSystemTx()
@@ -1915,7 +1919,7 @@ func marshalReceipt(receipt *types.Receipt, blockHash common.Hash, blockNumber u
 		"effectiveGasPrice": (*hexutil.Big)(receipt.EffectiveGasPrice),
 	}
 
-	if chainConfig.Optimism != nil && !tx.IsDepositTx() && !tx.IsPopPayoutTx() {
+	if chainConfig.Optimism != nil && !tx.IsDepositTx() && !tx.IsPopPayoutTx() && !tx.IsBtcAttributesDepositedTx() {
 		fields["l1GasPrice"] = (*hexutil.Big)(receipt.L1GasPrice)
 		fields["l1GasUsed"] = (*hexutil.Big)(receipt.L1GasUsed)
 		fields["l1Fee"] = (*hexutil.Big)(receipt.L1Fee)
@@ -1932,6 +1936,9 @@ func marshalReceipt(receipt *types.Receipt, blockHash common.Hash, blockNumber u
 	}
 	if chainConfig.Optimism != nil && tx.IsPopPayoutTx() && receipt.PoPPayoutNonce != nil {
 		fields["popPayoutNonce"] = hexutil.Uint64(*receipt.PoPPayoutNonce)
+	}
+	if chainConfig.Optimism != nil && tx.IsBtcAttributesDepositedTx() && receipt.BtcAttributesDepositedNonce != nil {
+		fields["btcAttributesDepositedNonce"] = hexutil.Uint64(*receipt.BtcAttributesDepositedNonce)
 	}
 
 	// Assign receipt status or post state.

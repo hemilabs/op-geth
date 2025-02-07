@@ -54,11 +54,20 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		RPCGasCap                               uint64
 		RPCEVMTimeout                           time.Duration
 		RPCTxFeeCap                             float64
+		HvmEnabled                              bool    `toml:",omitempty"`
+		HvmGenesisHeader                        string  `toml:",omitempty"`
+		HvmGenesisHeight                        uint64  `toml:",omitempty"`
+		HvmHeaderDataDir                        string  `toml:",omitempty"`
 		OverrideCancun                          *uint64 `toml:",omitempty"`
 		OverrideVerkle                          *uint64 `toml:",omitempty"`
 		OverrideOptimismCanyon                  *uint64 `toml:",omitempty"`
 		OverrideOptimismEcotone                 *uint64 `toml:",omitempty"`
 		OverrideOptimismInterop                 *uint64 `toml:",omitempty"`
+		OverrideHemiHvm0                        *uint64 `toml:",omitempty"`
+		OverrideHvmEnabled                      bool    `toml:",omitempty"`
+		OverrideHvmGenesisHeader                string  `toml:",omitempty"`
+		OverrideHvmGenesisHeight                *uint64 `toml:",omitempty"`
+		OverrideHvmHeaderDataDir                string  `toml:",omitempty"`
 		ApplySuperchainUpgrades                 bool    `toml:",omitempty"`
 		RollupSequencerHTTP                     string
 		RollupHistoricalRPC                     string
@@ -105,11 +114,20 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.RPCGasCap = c.RPCGasCap
 	enc.RPCEVMTimeout = c.RPCEVMTimeout
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
+	enc.HvmEnabled = c.HvmEnabled
+	enc.HvmGenesisHeader = c.HvmGenesisHeader
+	enc.HvmGenesisHeight = c.HvmGenesisHeight
+	enc.HvmHeaderDataDir = c.HvmHeaderDataDir
 	enc.OverrideCancun = c.OverrideCancun
 	enc.OverrideVerkle = c.OverrideVerkle
 	enc.OverrideOptimismCanyon = c.OverrideOptimismCanyon
 	enc.OverrideOptimismEcotone = c.OverrideOptimismEcotone
 	enc.OverrideOptimismInterop = c.OverrideOptimismInterop
+	enc.OverrideHemiHvm0 = c.OverrideHemiHvm0
+	enc.OverrideHvmEnabled = c.OverrideHvmEnabled
+	enc.OverrideHvmGenesisHeader = c.OverrideHvmGenesisHeader
+	enc.OverrideHvmGenesisHeight = c.OverrideHvmGenesisHeight
+	enc.OverrideHvmHeaderDataDir = c.OverrideHvmHeaderDataDir
 	enc.ApplySuperchainUpgrades = c.ApplySuperchainUpgrades
 	enc.RollupSequencerHTTP = c.RollupSequencerHTTP
 	enc.RollupHistoricalRPC = c.RollupHistoricalRPC
@@ -160,11 +178,20 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		RPCGasCap                               *uint64
 		RPCEVMTimeout                           *time.Duration
 		RPCTxFeeCap                             *float64
+		HvmEnabled                              *bool   `toml:",omitempty"`
+		HvmGenesisHeader                        *string `toml:",omitempty"`
+		HvmGenesisHeight                        *uint64 `toml:",omitempty"`
+		HvmHeaderDataDir                        *string `toml:",omitempty"`
 		OverrideCancun                          *uint64 `toml:",omitempty"`
 		OverrideVerkle                          *uint64 `toml:",omitempty"`
 		OverrideOptimismCanyon                  *uint64 `toml:",omitempty"`
 		OverrideOptimismEcotone                 *uint64 `toml:",omitempty"`
 		OverrideOptimismInterop                 *uint64 `toml:",omitempty"`
+		OverrideHemiHvm0                        *uint64 `toml:",omitempty"`
+		OverrideHvmEnabled                      *bool   `toml:",omitempty"`
+		OverrideHvmGenesisHeader                *string `toml:",omitempty"`
+		OverrideHvmGenesisHeight                *uint64 `toml:",omitempty"`
+		OverrideHvmHeaderDataDir                *string `toml:",omitempty"`
 		ApplySuperchainUpgrades                 *bool   `toml:",omitempty"`
 		RollupSequencerHTTP                     *string
 		RollupHistoricalRPC                     *string
@@ -288,6 +315,18 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.RPCTxFeeCap != nil {
 		c.RPCTxFeeCap = *dec.RPCTxFeeCap
 	}
+	if dec.HvmEnabled != nil {
+		c.HvmEnabled = *dec.HvmEnabled
+	}
+	if dec.HvmGenesisHeader != nil {
+		c.HvmGenesisHeader = *dec.HvmGenesisHeader
+	}
+	if dec.HvmGenesisHeight != nil {
+		c.HvmGenesisHeight = *dec.HvmGenesisHeight
+	}
+	if dec.HvmHeaderDataDir != nil {
+		c.HvmHeaderDataDir = *dec.HvmHeaderDataDir
+	}
 	if dec.OverrideCancun != nil {
 		c.OverrideCancun = dec.OverrideCancun
 	}
@@ -302,6 +341,21 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.OverrideOptimismInterop != nil {
 		c.OverrideOptimismInterop = dec.OverrideOptimismInterop
+	}
+	if dec.OverrideHemiHvm0 != nil {
+		c.OverrideHemiHvm0 = dec.OverrideHemiHvm0
+	}
+	if dec.OverrideHvmEnabled != nil {
+		c.OverrideHvmEnabled = *dec.OverrideHvmEnabled
+	}
+	if dec.OverrideHvmGenesisHeader != nil {
+		c.OverrideHvmGenesisHeader = *dec.OverrideHvmGenesisHeader
+	}
+	if dec.OverrideHvmGenesisHeight != nil {
+		c.OverrideHvmGenesisHeight = dec.OverrideHvmGenesisHeight
+	}
+	if dec.OverrideHvmHeaderDataDir != nil {
+		c.OverrideHvmHeaderDataDir = *dec.OverrideHvmHeaderDataDir
 	}
 	if dec.ApplySuperchainUpgrades != nil {
 		c.ApplySuperchainUpgrades = *dec.ApplySuperchainUpgrades
