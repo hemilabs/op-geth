@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -294,7 +295,76 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		// rather than working correctly until then and freezing at activation until TBC is caught up.
 		// Would rather have node delay full startup to fully sync TBC to required genesis height
 		// than startup without full information and later freeze at hVM Phase 0 activation time.
+
 		for {
+
+			// wait until we have a high degree of confidence that we have
+			// chain up to the hvm genesis block indexed
+			for {
+				select {
+				case <-time.After(1 * time.Second):
+					bh, _, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
+					if err != nil {
+						log.Crit(fmt.Sprintf("error getting block header best: %s", err))
+					}
+
+					log.Info(fmt.Sprintf("the current best block height is %d", bh))
+
+					if bh < genesisHeight {
+						continue
+					}
+
+					ghh := genesisHeader.BlockHash()
+					// we're above genesis height, but are we on the best chain with genesis?
+					_, height, err := vm.TBCFullNode.BlockHeaderByHash(ctx.Context, &ghh)
+					if err != nil {
+						log.Crit(fmt.Sprintf("could not get block by hash: %s", err))
+					}
+
+					if height != genesisHeight {
+						log.Crit(fmt.Sprintf("mismatched genesis heights %d != %d", height, genesisHeight))
+					}
+
+					break
+				case <-ctx.Context.Done():
+					return nil, nil
+				}
+				break
+			}
+
+			log.Info("done getting hvm genesis header, waiting until we have all of the blocks")
+
+			// wait until we have full blocks up to the best, this is a bit unsafe since we
+			// don't check every block, but we have a high degree of confidence we have full blocks
+			height, blockHeaderBest, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
+			if err != nil {
+				log.Crit(fmt.Sprintf("error getting block header best: %s", err))
+			}
+
+			for {
+				bhh := blockHeaderBest.BlockHash()
+				avail, err := vm.TBCFullNode.FullBlockAvailable(ctx.Context, &bhh)
+				if err != nil {
+					log.Crit(fmt.Sprintf("could not determine if full block available: %s", err))
+				}
+
+				if !avail {
+					log.Info(fmt.Sprintf("block not available, will wait: %s:%d", blockHeaderBest.BlockHash().String(), height))
+					time.Sleep(5 * time.Second)
+					continue
+				}
+
+				log.Info("block is available %s:%d", blockHeaderBest.BlockHash().String(), height)
+
+				log.Info("done downloading blocks, now will sync indexers to best")
+
+				if err := vm.TBCFullNode.SyncIndexersToBest(ctx.Context); err != nil {
+					log.Crit(fmt.Sprintf("could not sync indexers to best: %s", err))
+				}
+
+				break
+			}
+
 			bh, bhb, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
 			if err != nil {
 				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
@@ -304,17 +374,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 
 			log.Info(fmt.Sprintf("got best block header of %s",
 				bhb.BlockHash().String()))
-
-			if genesisHeight < 5000 {
-				time.Sleep(10 * time.Second)
-				log.Info("genesis height is less than 5000, brute-force sync to genesis header")
-				_bh := genesisHeader.BlockHash()
-				err = vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &_bh)
-				if err != nil {
-					log.Crit(fmt.Sprintf("error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
-				}
-
-			}
 
 			// Get the current indexer information and make sure both indexers are at the same height
 			syncInfo = *vm.GetTBCFullNodeSyncStatus()
