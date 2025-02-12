@@ -541,6 +541,13 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		}
 
 		prevBlockHash := cursor.PrevBlock // Temp variable to allow returning it on error since cursor is overwritten
+
+		emptyChainHash := &chainhash.Hash{}
+		if emptyChainHash.IsEqual(&prevBlockHash) {
+			log.Info("Walking back to check for available blocks hit genesis, stopping search")
+			break
+		}
+
 		cursor, height, err = TBCFullNode.BlockHeaderByHash(ctx, &cursor.PrevBlock)
 		if err != nil {
 			// Should be impossible as a missing header would have been identified when finding the
@@ -556,7 +563,6 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 			// Somehow walking backwards got to a lower block than the ancestor we are looking for.
 			// Should never happen, would mean that the current indexed tip and target are not
 			// on the same chain graph but FindCommonAncestor reported a common ancestor.
-			log.Error(fmt.Sprintf(""))
 			return false, nil, nil, fmt.Errorf("TBCBlocksAvailableToHeader failed walking backwards from "+
 				"%s @ %d looking for %s @ %d, walked to height=%d", targetHH.Hash.String(),
 				targetHH.Height, ancestorToTarget.BlockHash().String(), ancestorHeight, height)
