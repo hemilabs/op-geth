@@ -342,13 +342,24 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 
 			for {
 				bhh := blockHeaderBest.BlockHash()
-				avail, err := vm.TBCFullNode.FullBlockAvailable(ctx.Context, &bhh)
+				available, err := vm.TBCFullNode.FullBlockAvailable(ctx.Context, &bhh)
 				if err != nil {
 					log.Crit(fmt.Sprintf("could not determine if full block available: %s", err))
 				}
 
-				if !avail {
+				if !available {
 					log.Info(fmt.Sprintf("block not available, will wait: %s:%d", blockHeaderBest.BlockHash().String(), height))
+					time.Sleep(5 * time.Second)
+					continue
+				}
+
+				available, _, _, err = vm.TBCBlocksAvailableToHeader(ctx.Context, blockHeaderBest)
+				if err != nil {
+					log.Crit(fmt.Sprintf("error occurred checking if blocks available: %s", err))
+				}
+
+				if !available {
+					log.Info(fmt.Sprintf("block not available to header, will wait: %s:%d", blockHeaderBest.BlockHash().String(), height))
 					time.Sleep(5 * time.Second)
 					continue
 				}
