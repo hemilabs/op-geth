@@ -29,7 +29,6 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -358,7 +357,8 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 
 				log.Info("done downloading blocks, now will sync indexers to best")
 
-				if err := vm.TBCFullNode.SyncIndexersToBest(ctx.Context); err != nil {
+				bestBlockHash := blockHeaderBest.BlockHash()
+				if err := vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &bestBlockHash); err != nil {
 					log.Crit(fmt.Sprintf("could not sync indexers to best: %s", err))
 				}
 
