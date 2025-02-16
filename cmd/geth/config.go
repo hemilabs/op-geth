@@ -353,6 +353,34 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 					continue
 				}
 
+				log.Info("block is available %s:%d", blockHeaderBest.BlockHash().String(), height)
+
+				log.Info("done downloading blocks, now will sync indexers to best")
+
+				for {
+					missing, err := vm.TBCFullNode.BlocksMissing(ctx.Context, 100)
+					if err != nil {
+						log.Crit(fmt.Sprintf("could not get blocks missing: %s", err))
+					}
+
+					if len(missing) == 0 {
+						break
+					}
+
+					for _, m := range missing {
+						log.Info("found missing block, will atttempt download: %s:%d", m.Hash, m.Height)
+						_, err := vm.TBCFullNode.DownloadBlockFromRandomPeers(ctx.Context, m.Hash, 1)
+						if err != nil {
+							log.Crit(fmt.Sprintf("could not download block from random peer: %s", err))
+						}
+					}
+				}
+
+				bestBlockHash := blockHeaderBest.BlockHash()
+				if err := vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &bestBlockHash); err != nil {
+					log.Crit(fmt.Sprintf("could not sync indexers to best: %s", err))
+				}
+
 				break
 			}
 
