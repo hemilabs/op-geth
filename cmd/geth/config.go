@@ -360,8 +360,8 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 
 				if len(missing) > 0 {
 					for _, m := range missing {
-						log.Info(fmt.Sprintf("refecting: %s", missing.BlockHash().String()))
-						vm.TBCAttemptBlockRefetch(ctx.Context, missing)
+						log.Info(fmt.Sprintf("refecting: %s", m.BlockHash().String()))
+						vm.TBCAttemptBlockRefetch(ctx.Context, m)
 					}
 				}
 
