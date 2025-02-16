@@ -353,9 +353,16 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 					continue
 				}
 
-				available, _, _, err = vm.TBCBlocksAvailableToHeader(ctx.Context, blockHeaderBest)
+				available, _, missing, err := vm.TBCBlocksAvailableToHeader(ctx.Context, blockHeaderBest)
 				if err != nil {
 					log.Crit(fmt.Sprintf("error occurred checking if blocks available: %s", err))
+				}
+
+				if len(missing) > 0 {
+					for _, m := range missing {
+						log.Info(fmt.Sprintf("refecting: %s", missing.BlockHash().String()))
+						vm.TBCAttemptBlockRefetch(ctx.Context, missing)
+					}
 				}
 
 				if !available {
