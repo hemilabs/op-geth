@@ -353,33 +353,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 					continue
 				}
 
-				available, missing, _, err := vm.TBCBlocksAvailableToHeader(ctx.Context, blockHeaderBest)
-				if err != nil {
-					log.Crit(fmt.Sprintf("error occurred checking if blocks available: %s", err))
-				}
-
-				if missing != nil {
-					for _, m := range *missing {
-						log.Info(fmt.Sprintf("refecting: %s", m.BlockHash().String()))
-						vm.TBCAttemptBlockRefetch(ctx.Context, &m)
-					}
-				}
-
-				if !available {
-					log.Info(fmt.Sprintf("block not available to header, will wait: %s:%d", blockHeaderBest.BlockHash().String(), height))
-					time.Sleep(5 * time.Second)
-					continue
-				}
-
-				log.Info("block is available %s:%d", blockHeaderBest.BlockHash().String(), height)
-
-				log.Info("done downloading blocks, now will sync indexers to best")
-
-				bestBlockHash := blockHeaderBest.BlockHash()
-				if err := vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &bestBlockHash); err != nil {
-					log.Crit(fmt.Sprintf("could not sync indexers to best: %s", err))
-				}
-
 				break
 			}
 
