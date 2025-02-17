@@ -304,7 +304,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				case <-time.After(1 * time.Second):
 					bh, _, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
 					if err != nil {
-						log.Crit(fmt.Sprintf("error getting block header best: %s", err))
+						log.Crit(fmt.Sprintf("error getting best block header: %s", err))
 					}
 
 					log.Trace(fmt.Sprintf("the current best block height is %d", bh))
@@ -337,7 +337,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			// this one
 			height, blockHeaderBest, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
 			if err != nil {
-				log.Crit(fmt.Sprintf("error getting block header best: %s", err))
+				log.Crit(fmt.Sprintf("error getting best block header: %s", err))
 			}
 
 			for {
