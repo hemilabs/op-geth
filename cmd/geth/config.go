@@ -307,7 +307,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 						log.Crit(fmt.Sprintf("error getting block header best: %s", err))
 					}
 
-					log.Info(fmt.Sprintf("the current best block height is %d", bh))
+					log.Trace(fmt.Sprintf("the current best block height is %d", bh))
 
 					if bh < genesisHeight {
 						continue
@@ -331,7 +331,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				break
 			}
 
-			log.Info("done getting hvm genesis header, waiting until we have all of the blocks")
+			log.Trace("done getting hvm genesis header, waiting until we have all of the blocks")
 
 			// grab the current best block, we will then wait until we have all full blocks up to
 			// this one
@@ -350,14 +350,14 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 
 				// if it's not available, wait until it is
 				if !available {
-					log.Info(fmt.Sprintf("block not available, will wait: %s:%d", blockHeaderBest.BlockHash().String(), height))
+					log.Trace(fmt.Sprintf("block not available, will wait: %s:%d", blockHeaderBest.BlockHash().String(), height))
 					time.Sleep(5 * time.Second)
 					continue
 				}
 
-				log.Info("block is available %s:%d", blockHeaderBest.BlockHash().String(), height)
+				log.Trace(fmt.Sprintf("block is available %s:%d", blockHeaderBest.BlockHash().String(), height))
 
-				log.Info("done downloading blocks, now will sync indexers to best")
+				log.Trace("done downloading blocks, now will sync indexers to best")
 
 				// wait until we have fixed all of the missing blocks
 				for {
@@ -372,7 +372,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 
 					// for each missing block, try to redownload
 					for _, m := range missing {
-						log.Info("found missing block, will atttempt download: %s:%d", m.Hash, m.Height)
+						log.Trace(fmt.Sprintf("found missing block, will atttempt download: %s:%d", m.Hash, m.Height))
 						_, err := vm.TBCFullNode.DownloadBlockFromRandomPeers(ctx.Context, m.Hash, 1)
 						if err != nil {
 							log.Crit(fmt.Sprintf("could not download block from random peer: %s", err))
