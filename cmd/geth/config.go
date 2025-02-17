@@ -304,10 +304,10 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				case <-time.After(1 * time.Second):
 					bh, _, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
 					if err != nil {
-						log.Crit(fmt.Sprintf("error getting best block header: %s", err))
+						log.Crit("error getting best block header", "error", err)
 					}
 
-					log.Trace(fmt.Sprintf("the current best block height is %d", bh))
+					log.Trace("the current best block height", "height", bh)
 
 					if bh < genesisHeight {
 						continue
@@ -317,11 +317,11 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 					// we're above genesis height, but are we on the best chain with genesis?
 					_, height, err := vm.TBCFullNode.BlockHeaderByHash(ctx.Context, &ghh)
 					if err != nil {
-						log.Crit(fmt.Sprintf("could not get block by hash: %s", err))
+						log.Crit("could not get block by hash", "error", err)
 					}
 
 					if height != genesisHeight {
-						log.Crit(fmt.Sprintf("mismatched genesis heights %d != %d", height, genesisHeight))
+						log.Crit("mismatched genesis heights", "height", height, "genesisHeight", genesisHeight)
 					}
 
 					break
@@ -337,7 +337,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			// this one
 			height, blockHeaderBest, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
 			if err != nil {
-				log.Crit(fmt.Sprintf("error getting best block header: %s", err))
+				log.Crit("error getting best block header", "error", err)
 			}
 
 			for {
@@ -345,17 +345,17 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				bhh := blockHeaderBest.BlockHash()
 				available, err := vm.TBCFullNode.FullBlockAvailable(ctx.Context, &bhh)
 				if err != nil {
-					log.Crit(fmt.Sprintf("could not determine if full block available: %s", err))
+					log.Crit("could not determine if full block available", "error", err)
 				}
 
 				// if it's not available, wait until it is
 				if !available {
-					log.Trace(fmt.Sprintf("block not available, will wait: %s:%d", blockHeaderBest.BlockHash().String(), height))
+					log.Trace("block not available, will wait", "hash", blockHeaderBest.BlockHash().String(), "height", height)
 					time.Sleep(5 * time.Second)
 					continue
 				}
 
-				log.Trace(fmt.Sprintf("block is available %s:%d", blockHeaderBest.BlockHash().String(), height))
+				log.Trace("block is available", "hash", blockHeaderBest.BlockHash().String(), "height", height)
 
 				log.Trace("done downloading blocks, now will sync indexers to best")
 
@@ -363,7 +363,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				for {
 					missing, err := vm.TBCFullNode.BlocksMissing(ctx.Context, 100)
 					if err != nil {
-						log.Crit(fmt.Sprintf("could not get blocks missing: %s", err))
+						log.Crit("could not get blocks missing", "error", err)
 					}
 
 					if len(missing) == 0 {
@@ -372,10 +372,10 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 
 					// for each missing block, try to redownload
 					for _, m := range missing {
-						log.Trace(fmt.Sprintf("found missing block, will atttempt download: %s:%d", m.Hash, m.Height))
+						log.Trace("found missing block, will atttempt download", "hash", m.Hash, "height", m.Height)
 						_, err := vm.TBCFullNode.DownloadBlockFromRandomPeers(ctx.Context, m.Hash, 1)
 						if err != nil {
-							log.Crit(fmt.Sprintf("could not download block from random peer: %s", err))
+							log.Crit("could not download block from random peer", "error", err)
 						}
 					}
 
@@ -387,7 +387,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				// to the known best block
 				bestBlockHash := blockHeaderBest.BlockHash()
 				if err := vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &bestBlockHash); err != nil {
-					log.Crit(fmt.Sprintf("could not sync indexers to best: %s", err))
+					log.Crit("could not sync indexers to best", "error", err)
 				}
 
 				break
