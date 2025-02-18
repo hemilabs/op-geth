@@ -143,6 +143,21 @@ func hashEquals(a chainhash.Hash, b chainhash.Hash) bool {
 //   - *chainhash.Hash The hash of the first block header encountered which was not found
 //   - bool Whether there is a fork/reorg
 func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader, uint64, *chainhash.Hash, bool, error) {
+	emptyChainHash := &chainhash.Hash{}
+
+	// If either of the hashes are empty, then assume common ancestor is genesis
+	if a.Hash.IsEqual(emptyChainHash) || b.Hash.IsEqual(emptyChainHash) {
+		gh, err := TBCFullNode.BlockHeadersByHeight(context.Background(), 0)
+		if err != nil {
+			// Should always be able to find genesis
+			log.Crit("Unable to query TBC for the genesis block", "err", err)
+		}
+		if len(gh) != 1 {
+			log.Crit("Should be exactly one genesis header in TBC")
+		}
+		return gh[0], 0, nil, false, nil
+	}
+
 	if a.Hash.IsEqual(&b.Hash) {
 		header, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), &a.Hash)
 		if err != nil {
