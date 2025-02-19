@@ -305,17 +305,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			log.Info(fmt.Sprintf("got best block header of %s",
 				bhb.BlockHash().String()))
 
-			if genesisHeight < 5000 {
-				time.Sleep(10 * time.Second)
-				log.Info("genesis height is less than 5000, brute-force sync to genesis header")
-				_bh := genesisHeader.BlockHash()
-				err = vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &_bh)
-				if err != nil {
-					log.Crit(fmt.Sprintf("error occurred indexing to the hvm genesis header (%s): %s", genesisHeader.BlockHash().String(), err))
-				}
-
-			}
-
 			// Get the current indexer information and make sure both indexers are at the same height
 			syncInfo = *vm.GetTBCFullNodeSyncStatus()
 
