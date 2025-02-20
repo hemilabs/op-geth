@@ -29,6 +29,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -405,6 +406,16 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 						// blocks have been received then the else condition below will be hit.
 						continue
 					} else {
+						emptyHash := &chainhash.Hash{}
+
+						if emptyHash.IsEqual(&utxoHH.Hash) && emptyHash.IsEqual(&txHH.Hash) {
+							log.Info("both utxo and header hash are zeroed, not synced yet, force syncing")
+							err := vm.TBCFullNode.SyncIndexersToHash(ctx.Context, &genesisHash)
+							if err != nil {
+								log.Crit("could not sync indexers to hash", "error", err)
+							}
+						}
+
 						// All blocks are available to index up to the genesis header, so move the indexer forward
 						err := vm.TBCIndexToHeader(genesisHeader)
 						if err != nil {
