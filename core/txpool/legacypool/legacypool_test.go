@@ -2622,6 +2622,32 @@ func TestSetCodeTransactions(t *testing.T) {
 				}
 			},
 		},
+		{
+			name:    "remove-hash-from-authority-tracker",
+			pending: 10,
+			run: func(name string) {
+				var keys []*ecdsa.PrivateKey
+				for i := 0; i < 30; i++ {
+					key, _ := crypto.GenerateKey()
+					keys = append(keys, key)
+					addr := crypto.PubkeyToAddress(key.PublicKey)
+					testAddBalance(pool, addr, big.NewInt(params.Ether))
+				}
+				// Create a transactions with 3 unique auths so the lookup's auth map is
+				// filled with addresses.
+				for i := 0; i < 30; i += 3 {
+					if err := pool.addRemoteSync(pricedSetCodeTx(0, 250000, uint256.NewInt(10), uint256.NewInt(3), keys[i], []unsignedAuth{{0, keys[i]}, {0, keys[i+1]}, {0, keys[i+2]}})); err != nil {
+						t.Fatalf("%s: failed to add with remote setcode transaction: %v", name, err)
+					}
+				}
+				// Replace one of the transactions with a normal transaction so that the
+				// original hash is removed from the tracker. The hash should be
+				// associated with 3 different authorities.
+				if err := pool.addRemoteSync(pricedTransaction(0, 100000, big.NewInt(1000), keys[0])); err != nil {
+					t.Fatalf("%s: failed to replace with remote transaction: %v", name, err)
+				}
+			},
+		},
 	} {
 		tt.run(tt.name)
 		pending, queued := pool.Stats()
