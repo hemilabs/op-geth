@@ -820,7 +820,7 @@ func downloadGoBootstrapSources(cachedir string) []string {
 
 	var bundles []string
 	for _, booter := range []string{"ppa-builder-1.19", "ppa-builder-1.21", "ppa-builder-1.23"} {
-		gobootVersion, err := csdb.FindVersion(booter)
+		gobootVersion, err := build.Version(csdb, booter)
 		if err != nil {
 			log.Fatal(err)
 		}
