@@ -27,14 +27,9 @@ func _() {
 	_ = x[BalanceMint-200]
 }
 
-const (
-	_BalanceChangeReason_name_0 = "UnspecifiedBalanceIncreaseRewardMineUncleBalanceIncreaseRewardMineBlockBalanceIncreaseWithdrawalBalanceIncreaseGenesisBalanceBalanceIncreaseRewardTransactionFeeBalanceDecreaseGasBuyBalanceIncreaseGasReturnBalanceIncreaseDaoContractBalanceDecreaseDaoAccountTransferTouchAccountBalanceIncreaseSelfdestructBalanceDecreaseSelfdestructBalanceDecreaseSelfdestructBurnRevert"
-	_BalanceChangeReason_name_1 = "BalanceMint"
-)
+const _BalanceChangeReason_name = "UnspecifiedBalanceIncreaseRewardMineUncleBalanceIncreaseRewardMineBlockBalanceIncreaseWithdrawalBalanceIncreaseGenesisBalanceBalanceIncreaseRewardTransactionFeeBalanceDecreaseGasBuyBalanceIncreaseGasReturnBalanceIncreaseDaoContractBalanceDecreaseDaoAccountTransferTouchAccountBalanceIncreaseSelfdestructBalanceDecreaseSelfdestructBalanceDecreaseSelfdestructBurnRevert"
 
-var (
-	_BalanceChangeReason_index_0 = [...]uint16{0, 11, 41, 71, 96, 125, 160, 181, 205, 231, 256, 264, 276, 303, 330, 361, 367}
-)
+var _BalanceChangeReason_index = [...]uint16{0, 11, 41, 71, 96, 125, 160, 181, 205, 231, 256, 264, 276, 303, 330, 361, 367}
 
 func (i BalanceChangeReason) String() string {
 	switch {
