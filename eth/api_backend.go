@@ -326,64 +326,19 @@ func (b *EthAPIBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscri
 }
 
 func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction) error {
-	if b.ChainConfig().IsOptimism() && signedTx.Type() == types.BlobTxType {
-		log.Info(fmt.Sprintf("Type not supported for sigvalues in SendTx %d", signedTx.Type()))
-		return types.ErrTxTypeNotSupported
-	}
-
-	// OP-Stack: forward to remote sequencer RPC
-	if b.eth.seqRPCService != nil {
-		data, err := signedTx.MarshalBinary()
-		if err != nil {
+	locals := b.eth.localTxTracker
+	if locals != nil {
+		if err := locals.Track(signedTx); err != nil {
 			return err
 		}
-		if err := b.eth.seqRPCService.CallContext(ctx, nil, "eth_sendRawTransaction", hexutil.Encode(data)); err != nil {
-			return err
-		}
-		if b.disableTxPool {
-			return nil
-		}
-
-		log.Info("sending tx to txPool", "hash", signedTx.Hash())
-
-		// Retain tx in local tx pool after forwarding, for local RPC usage.
-		if err := b.eth.txPool.Add([]*types.Transaction{signedTx}, false)[0]; err != nil {
-			log.Warn("successfully sent tx to sequencer, but failed to persist in local tx pool", "err", err, "tx", signedTx.Hash())
-		}
-		return nil
 	}
-	if b.disableTxPool {
-		return nil
-	}
-
-	// Retain tx in local tx pool after forwarding, for local RPC usage.
-	err := b.sendTx(ctx, signedTx)
-	if err != nil && b.eth.seqRPCService != nil {
-		log.Warn("successfully sent tx to sequencer, but failed to persist in local tx pool", "err", err, "tx", signedTx.Hash())
-		return nil
-	}
-	return err
-}
-
-func (b *EthAPIBackend) sendTx(ctx context.Context, signedTx *types.Transaction) error {
+	// No error will be returned to user if the transaction fails stateful
+	// validation (e.g., no available slot), as the locally submitted transactions
+	// may be resubmitted later via the local tracker.
 	err := b.eth.txPool.Add([]*types.Transaction{signedTx}, false)[0]
-
-	// If the local transaction tracker is not configured, returns whatever
-	// returned from the txpool.
-	if b.eth.localTxTracker == nil {
+	if err != nil && locals == nil {
 		return err
 	}
-	// If the transaction fails with an error indicating it is invalid, or if there is
-	// very little chance it will be accepted later (e.g., the gas price is below the
-	// configured minimum, or the sender has insufficient funds to cover the cost),
-	// propagate the error to the user.
-	if err != nil && !locals.IsTemporaryReject(err) {
-		return err
-	}
-	// No error will be returned to user if the transaction fails with a temporary
-	// error and might be accepted later (e.g., the transaction pool is full).
-	// Locally submitted transactions will be resubmitted later via the local tracker.
-	b.eth.localTxTracker.Track(signedTx)
 	return nil
 }
 

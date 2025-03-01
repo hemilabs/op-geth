@@ -147,6 +147,12 @@ type SubPool interface {
 	// pool mutex.
 	ValidateTxBasics(tx *types.Transaction) error
 
+	// ValidateTxBasics checks whether a transaction is valid according to the consensus
+	// rules, but does not check state-dependent validation such as sufficient balance.
+	// This check is meant as a static check which can be performed without holding the
+	// pool mutex.
+	ValidateTxBasics(tx *types.Transaction) error
+
 	// Add enqueues a batch of transactions into the pool if they are valid. Due
 	// to the large transaction churn, add may postpone fully integrating the tx
 	// to a later point to batch multiple ones together.

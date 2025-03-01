@@ -1117,46 +1117,12 @@ func (p *BlobPool) SetGasTip(tip *big.Int) {
 // and does not require the pool mutex to be held.
 func (p *BlobPool) ValidateTxBasics(tx *types.Transaction) error {
 	opts := &txpool.ValidationOptions{
-		Config:       p.chain.Config(),
-		Accept:       1 << types.BlobTxType,
-		MaxSize:      txMaxSize,
-		MinTip:       p.gasTip.ToBig(),
-		MaxBlobCount: maxBlobsPerTx,
+		Config:  p.chain.Config(),
+		Accept:  1 << types.BlobTxType,
+		MaxSize: txMaxSize,
+		MinTip:  p.gasTip.ToBig(),
 	}
 	return txpool.ValidateTransaction(tx, p.head, p.signer, opts)
-}
-
-// checkDelegationLimit determines if the tx sender is delegated or has a
-// pending delegation, and if so, ensures they have at most one in-flight
-// **executable** transaction, e.g. disallow stacked and gapped transactions
-// from the account.
-func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
-	from, _ := types.Sender(p.signer, tx) // validated
-
-	// Short circuit if the sender has neither delegation nor pending delegation.
-	if p.state.GetCodeHash(from) == types.EmptyCodeHash {
-		// Because there is no exclusive lock held between different subpools
-		// when processing transactions, a blob transaction may be accepted
-		// while other SetCode transactions with pending authorities from the
-		// same address are also accepted simultaneously.
-		//
-		// This scenario is considered acceptable, as the rule primarily ensures
-		// that attackers cannot easily and endlessly stack blob transactions
-		// with a delegated or pending delegated sender.
-		if p.hasPendingAuth == nil || !p.hasPendingAuth(from) {
-			return nil
-		}
-	}
-	// Allow a single in-flight pending transaction.
-	pending := p.index[from]
-	if len(pending) == 0 {
-		return nil
-	}
-	// If account already has a pending transaction, allow replacement only.
-	if len(pending) == 1 && pending[0].nonce == tx.Nonce() {
-		return nil
-	}
-	return txpool.ErrInflightTxLimitReached
 }
 
 // validateTx checks whether a transaction is valid according to the consensus
