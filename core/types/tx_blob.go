@@ -19,7 +19,6 @@ package types
 import (
 	"bytes"
 	"crypto/sha256"
-	"errors"
 	"fmt"
 	"math/big"
 	"slices"
@@ -163,27 +162,8 @@ func (sc *BlobTxSidecar) ValidateBlobCommitmentHashes(hashes []common.Hash) erro
 	return nil
 }
 
-// Copy returns a deep-copied BlobTxSidecar object.
-func (sc *BlobTxSidecar) Copy() *BlobTxSidecar {
-	return &BlobTxSidecar{
-		Version: sc.Version,
-
-		// The element of these slice is fix-size byte array,
-		// therefore slices.Clone will actually deep copy by value.
-		Blobs:       slices.Clone(sc.Blobs),
-		Commitments: slices.Clone(sc.Commitments),
-		Proofs:      slices.Clone(sc.Proofs),
-	}
-}
-
-// blobTxWithBlobs represents blob tx with its corresponding sidecar.
-// This is an interface because sidecars are versioned.
-type blobTxWithBlobs interface {
-	tx() *BlobTx
-	assign(*BlobTxSidecar) error
-}
-
-type blobTxWithBlobsV0 struct {
+// blobTxWithBlobs is used for encoding of transactions when blobs are present.
+type blobTxWithBlobs struct {
 	BlobTx      *BlobTx
 	Blobs       []kzg4844.Blob
 	Commitments []kzg4844.Commitment

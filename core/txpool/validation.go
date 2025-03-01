@@ -223,23 +223,14 @@ func validateBlobTx(tx *types.Transaction, head *types.Header, opts *ValidationO
 	if len(sidecar.Blobs) != len(hashes) {
 		return fmt.Errorf("invalid number of %d blobs compared to %d blob hashes", len(sidecar.Blobs), len(hashes))
 	}
-	if err := sidecar.ValidateBlobCommitmentHashes(hashes); err != nil {
-		return err
-	}
-	// Fork-specific sidecar checks, including proof verification.
-	if opts.Config.IsOsaka(head.Number, head.Time) {
-		return validateBlobSidecarOsaka(sidecar, hashes)
-	}
-	return validateBlobSidecarLegacy(sidecar, hashes)
-}
-
-func validateBlobSidecarLegacy(sidecar *types.BlobTxSidecar, hashes []common.Hash) error {
-	if sidecar.Version != types.BlobSidecarVersion0 {
-		return fmt.Errorf("invalid sidecar version pre-osaka: %v", sidecar.Version)
-	}
 	if len(sidecar.Proofs) != len(hashes) {
 		return fmt.Errorf("invalid number of %d blob proofs expected %d", len(sidecar.Proofs), len(hashes))
 	}
+	if err := sidecar.ValidateBlobCommitmentHashes(hashes); err != nil {
+		return err
+	}
+	// Blob commitments match with the hashes in the transaction, verify the
+	// blobs themselves via KZG
 	for i := range sidecar.Blobs {
 		if err := kzg4844.VerifyBlobProof(&sidecar.Blobs[i], sidecar.Commitments[i], sidecar.Proofs[i]); err != nil {
 			return fmt.Errorf("invalid blob %d: %v", i, err)

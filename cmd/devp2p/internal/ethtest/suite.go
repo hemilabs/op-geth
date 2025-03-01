@@ -19,7 +19,6 @@ package ethtest
 import (
 	"context"
 	"crypto/rand"
-	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -985,10 +984,14 @@ func (s *Suite) TestBlobViolations(t *utesting.T) {
 // data has been modified to produce a different commitment hash.
 func mangleSidecar(tx *types.Transaction) *types.Transaction {
 	sidecar := tx.BlobTxSidecar()
-	cpy := sidecar.Copy()
+	copy := types.BlobTxSidecar{
+		Blobs:       append([]kzg4844.Blob{}, sidecar.Blobs...),
+		Commitments: append([]kzg4844.Commitment{}, sidecar.Commitments...),
+		Proofs:      append([]kzg4844.Proof{}, sidecar.Proofs...),
+	}
 	// zero the first commitment to alter the sidecar hash
-	cpy.Commitments[0] = kzg4844.Commitment{}
-	return tx.WithBlobTxSidecar(cpy)
+	copy.Commitments[0] = kzg4844.Commitment{}
+	return tx.WithBlobTxSidecar(&copy)
 }
 
 func (s *Suite) TestBlobTxWithoutSidecar(t *utesting.T) {
@@ -1093,7 +1096,7 @@ func (s *Suite) testBadBlobTx(t *utesting.T, tx *types.Transaction, badTx *types
 			return
 		}
 		if !readUntilDisconnect(conn) {
-			errc <- errors.New("expected bad peer to be disconnected")
+			errc <- fmt.Errorf("expected bad peer to be disconnected")
 			return
 		}
 		stage3.Done()
@@ -1140,7 +1143,7 @@ func (s *Suite) testBadBlobTx(t *utesting.T, tx *types.Transaction, badTx *types
 		}
 
 		if req.GetPooledTransactionsRequest[0] != tx.Hash() {
-			errc <- errors.New("requested unknown tx hash")
+			errc <- fmt.Errorf("requested unknown tx hash")
 			return
 		}
 
@@ -1150,7 +1153,7 @@ func (s *Suite) testBadBlobTx(t *utesting.T, tx *types.Transaction, badTx *types
 			return
 		}
 		if readUntilDisconnect(conn) {
-			errc <- errors.New("unexpected disconnect")
+			errc <- fmt.Errorf("unexpected disconnect")
 			return
 		}
 		close(errc)
