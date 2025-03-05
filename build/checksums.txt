@@ -2,8 +2,8 @@
 
 # version:spec-tests fusaka-devnet-3%40v1.0.0
 # https://github.com/ethereum/execution-spec-tests/releases
-# https://github.com/ethereum/execution-spec-tests/releases/download/fusaka-devnet-3%40v1.0.0
-576261e1280e5300c458aa9b05eccb2fec5ff80a0005940dc52fa03fdd907249  fixtures_fusaka-devnet-3.tar.gz
+# https://github.com/ethereum/execution-spec-tests/releases/download/pectra-devnet-6%40v1.0.0/
+b69211752a3029083c020dc635fe12156ca1a6725a08559da540a0337586a77e  fixtures_pectra-devnet-6.tar.gz
 
 # version:golang 1.24.1
 # https://go.dev/dl/
