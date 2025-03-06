@@ -32,12 +32,14 @@ const (
 	_BalanceChangeReason_name_1 = "BalanceMint"
 )
 
-var _BalanceChangeReason_index = [...]uint16{0, 24, 54, 84, 109, 138, 173, 194, 218, 244, 269, 290, 315, 342, 369, 400, 419}
+var (
+	_BalanceChangeReason_index_0 = [...]uint16{0, 24, 54, 84, 109, 138, 173, 194, 218, 244, 269, 290, 315, 342, 369, 400, 419}
+)
 
 func (i BalanceChangeReason) String() string {
 	switch {
-	case i < BalanceChangeReason(len(_BalanceChangeReason_index)-1):
-		return _BalanceChangeReason_name_0[_BalanceChangeReason_index[i]:_BalanceChangeReason_index[i+1]]
+	case i <= 15:
+		return _BalanceChangeReason_name_0[_BalanceChangeReason_index_0[i]:_BalanceChangeReason_index_0[i+1]]
 	case i == 200:
 		return _BalanceChangeReason_name_1
 	default:
