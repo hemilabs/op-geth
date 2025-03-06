@@ -12,7 +12,7 @@
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 package core
 
@@ -127,9 +127,10 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 
 	// Listening to chain events and manipulate the transaction indexes.
 	var (
-		stop     chan struct{} // Non-nil if background routine is active.
-		done     chan struct{} // Non-nil if background routine is active.
-		lastHead uint64        // The latest announced chain head (whose tx indexes are assumed created)
+		stop     chan struct{}                       // Non-nil if background routine is active.
+		done     chan struct{}                       // Non-nil if background routine is active.
+		lastHead uint64                              // The latest announced chain head (whose tx indexes are assumed created)
+		lastTail = rawdb.ReadTxIndexTail(indexer.db) // The oldest indexed block, nil means nothing indexed
 
 		headCh = make(chan ChainHeadEvent)
 		sub    = chain.SubscribeChainHeadEvent(headCh)
@@ -150,14 +151,15 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 			if done == nil {
 				stop = make(chan struct{})
 				done = make(chan struct{})
-				go indexer.run(rawdb.ReadTxIndexTail(indexer.db), head.Block.NumberU64(), stop, done)
+				go indexer.run(rawdb.ReadTxIndexTail(indexer.db), head.Header.Number.Uint64(), stop, done)
 			}
-			lastHead = head.Block.NumberU64()
+			lastHead = head.Header.Number.Uint64()
 		case <-done:
 			stop = nil
 			done = nil
+			lastTail = rawdb.ReadTxIndexTail(indexer.db)
 		case ch := <-indexer.progress:
-			ch <- indexer.report(lastHead)
+			ch <- indexer.report(lastHead, lastTail)
 		case ch := <-indexer.term:
 			if stop != nil {
 				close(stop)
@@ -173,11 +175,7 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 }
 
 // report returns the tx indexing progress.
-func (indexer *txIndexer) report(head uint64) TxIndexProgress {
-	var (
-		remaining uint64
-		tail      = rawdb.ReadTxIndexTail(indexer.db)
-	)
+func (indexer *txIndexer) report(head uint64, tail *uint64) TxIndexProgress {
 	total := indexer.limit
 	if indexer.limit == 0 || total > head {
 		total = head + 1 // genesis included
@@ -188,6 +186,7 @@ func (indexer *txIndexer) report(head uint64) TxIndexProgress {
 	}
 	// The value of indexed might be larger than total if some blocks need
 	// to be unindexed, avoiding a negative remaining.
+	var remaining uint64
 	if indexed < total {
 		remaining = total - indexed
 	}

@@ -2,12 +2,14 @@ package beacon
 
 import (
 	"fmt"
+	"github.com/ethereum/go-ethereum/core/err"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -25,7 +27,7 @@ func (o *OpLegacy) VerifyHeader(chain consensus.ChainHeaderReader, header *types
 	}
 	parent := chain.GetHeader(header.ParentHash, number-1)
 	if parent == nil {
-		return consensus.ErrUnknownAncestor
+		return coreerr.ErrUnknownAncestor
 	}
 	// legacy chain is verified by block-hash reverse sync otherwise
 	return nil
@@ -45,7 +47,7 @@ func (o *OpLegacy) VerifyHeaders(chain consensus.ChainHeaderReader, headers []*t
 		}
 		var err error
 		if parent == nil {
-			err = consensus.ErrUnknownAncestor
+			err = coreerr.ErrUnknownAncestor
 		}
 		results <- err
 	}
@@ -60,11 +62,11 @@ func (o *OpLegacy) Prepare(chain consensus.ChainHeaderReader, header *types.Head
 	return fmt.Errorf("cannot prepare for legacy block header: %s (num %d)", header.Hash(), header.Number)
 }
 
-func (o *OpLegacy) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, withdrawals []*types.Withdrawal) {
+func (o *OpLegacy) Finalize(chain consensus.ChainHeaderReader, header *types.Header, state vm.StateDB, body *types.Body) {
 	panic(fmt.Errorf("cannot finalize legacy block header: %s (num %d)", header.Hash(), header.Number))
 }
 
-func (o *OpLegacy) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, txs []*types.Transaction, uncles []*types.Header, receipts []*types.Receipt, withdrawals []*types.Withdrawal) (*types.Block, error) {
+func (o *OpLegacy) FinalizeAndAssemble(chain consensus.ChainHeaderReader, header *types.Header, state *state.StateDB, body *types.Body, receipts []*types.Receipt) (*types.Block, error) {
 	return nil, fmt.Errorf("cannot finalize and assemble for legacy block header: %s (num %d)", header.Hash(), header.Number)
 }
 

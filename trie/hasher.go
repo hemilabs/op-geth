@@ -17,11 +17,11 @@
 package trie
 
 import (
+	"runtime"
 	"sync"
 
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/rlp"
-	"golang.org/x/crypto/sha3"
 )
 
 // hasher is a type used for the trie Hash operation. A hasher has some
@@ -38,7 +38,7 @@ var hasherPool = sync.Pool{
 	New: func() interface{} {
 		return &hasher{
 			tmp:    make([]byte, 0, 550), // cap is as large as a full fullNode.
-			sha:    sha3.NewLegacyKeccak256().(crypto.KeccakState),
+			sha:    crypto.NewKeccakState(),
 			encbuf: rlp.NewEncoderBuffer(nil),
 		}
 	},
@@ -46,7 +46,7 @@ var hasherPool = sync.Pool{
 
 func newHasher(parallel bool) *hasher {
 	h := hasherPool.Get().(*hasher)
-	h.parallel = parallel
+	h.parallel = parallel && runtime.NumCPU() > 1
 	return h
 }
 
@@ -187,6 +187,14 @@ func (h *hasher) hashData(data []byte) hashNode {
 	h.sha.Write(data)
 	h.sha.Read(n)
 	return n
+}
+
+// hashDataTo hashes the provided data to the given destination buffer. The caller
+// must ensure that the dst buffer is of appropriate size.
+func (h *hasher) hashDataTo(dst, data []byte) {
+	h.sha.Reset()
+	h.sha.Write(data)
+	h.sha.Read(dst)
 }
 
 // proofHash is used to construct trie proofs, and returns the 'collapsed'

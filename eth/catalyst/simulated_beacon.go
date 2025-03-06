@@ -18,18 +18,21 @@ package catalyst
 
 import (
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
-	"math/big"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
 )
 
@@ -38,36 +41,46 @@ const devEpochLength = 32
 // withdrawalQueue implements a FIFO queue which holds withdrawals that are
 // pending inclusion.
 type withdrawalQueue struct {
-	pending chan *types.Withdrawal
+	pending types.Withdrawals
+	mu      sync.Mutex
+	feed    event.Feed
+	subs    event.SubscriptionScope
 }
+
+type newWithdrawalsEvent struct{ Withdrawals types.Withdrawals }
 
 // add queues a withdrawal for future inclusion.
 func (w *withdrawalQueue) add(withdrawal *types.Withdrawal) error {
-	select {
-	case w.pending <- withdrawal:
-		break
-	default:
-		return errors.New("withdrawal queue full")
-	}
+	w.mu.Lock()
+	w.pending = append(w.pending, withdrawal)
+	w.mu.Unlock()
+
+	w.feed.Send(newWithdrawalsEvent{types.Withdrawals{withdrawal}})
 	return nil
 }
 
-// gatherPending returns a number of queued withdrawals up to a maximum count.
-func (w *withdrawalQueue) gatherPending(maxCount int) []*types.Withdrawal {
-	withdrawals := []*types.Withdrawal{}
-	for {
-		select {
-		case withdrawal := <-w.pending:
-			withdrawals = append(withdrawals, withdrawal)
-			if len(withdrawals) == maxCount {
-				break
-			}
-		default:
-			return withdrawals
-		}
-	}
+// pop dequeues the specified number of withdrawals from the queue.
+func (w *withdrawalQueue) pop(count int) types.Withdrawals {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+
+	count = min(count, len(w.pending))
+	popped := w.pending[0:count]
+	w.pending = w.pending[count:]
+
+	return popped
 }
 
+// subscribe allows a listener to be updated when new withdrawals are added to
+// the queue.
+func (w *withdrawalQueue) subscribe(ch chan<- newWithdrawalsEvent) event.Subscription {
+	sub := w.feed.Subscribe(ch)
+	return w.subs.Track(sub)
+}
+
+// SimulatedBeacon drives an Ethereum instance as if it were a real beacon
+// client. It can run in period mode where it mines a new block every period
+// (seconds) or on every transaction via Commit, Fork and AdjustTime.
 type SimulatedBeacon struct {
 	shutdownCh  chan struct{}
 	eth         *eth.Ethereum
@@ -83,10 +96,6 @@ type SimulatedBeacon struct {
 }
 
 // NewSimulatedBeacon constructs a new simulated beacon chain.
-// Period sets the period in which blocks should be produced.
-//
-//   - If period is set to 0, a block is produced on every transaction.
-//     via Commit, Fork and AdjustTime.
 func NewSimulatedBeacon(period uint64, eth *eth.Ethereum) (*SimulatedBeacon, error) {
 	block := eth.BlockChain().CurrentBlock()
 	current := engine.ForkchoiceStateV1{
@@ -98,7 +107,7 @@ func NewSimulatedBeacon(period uint64, eth *eth.Ethereum) (*SimulatedBeacon, err
 
 	// if genesis block, send forkchoiceUpdated to trigger transition to PoS
 	if block.Number.Sign() == 0 {
-		if _, err := engineAPI.ForkchoiceUpdatedV2(current, nil); err != nil {
+		if _, err := engineAPI.ForkchoiceUpdatedV3(current, nil); err != nil {
 			return nil, err
 		}
 	}
@@ -109,7 +118,6 @@ func NewSimulatedBeacon(period uint64, eth *eth.Ethereum) (*SimulatedBeacon, err
 		engineAPI:          engineAPI,
 		lastBlockTime:      block.Time,
 		curForkchoiceState: current,
-		withdrawals:        withdrawalQueue{make(chan *types.Withdrawal, 20)},
 	}, nil
 }
 
@@ -153,6 +161,16 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 		c.setCurrentState(header.Hash(), *finalizedHash)
 	}
 
+	// Because transaction insertion, block insertion, and block production will
+	// happen without any timing delay between them in simulator mode and the
+	// transaction pool will be running its internal reset operation on a
+	// background thread, flaky executions can happen. To avoid the racey
+	// behavior, the pool will be explicitly blocked on its reset before
+	// continuing to the block production below.
+	if err := c.eth.APIBackend.TxPool().Sync(); err != nil {
+		return fmt.Errorf("failed to sync txpool: %w", err)
+	}
+
 	var random [32]byte
 	rand.Read(random[:])
 	fcResponse, err := c.engineAPI.forkchoiceUpdated(c.curForkchoiceState, &engine.PayloadAttributes{
@@ -160,7 +178,8 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 		SuggestedFeeRecipient: feeRecipient,
 		Withdrawals:           withdrawals,
 		Random:                random,
-	}, engine.PayloadV2, true)
+		BeaconRoot:            &common.Hash{},
+	}, engine.PayloadV3, false)
 	if err != nil {
 		return err
 	}
@@ -171,6 +190,7 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 	if err := c.engineAPI.localBlocks.waitFull(*fcResponse.PayloadID); err != nil {
 		return err
 	}
+
 	envelope, err := c.engineAPI.getPayload(*fcResponse.PayloadID, true)
 	if err != nil {
 		return err
@@ -188,14 +208,28 @@ func (c *SimulatedBeacon) sealBlock(withdrawals []*types.Withdrawal, timestamp u
 		}
 	}
 
+	// Independently calculate the blob hashes from sidecars.
+	blobHashes := make([]common.Hash, 0)
+	if envelope.BlobsBundle != nil {
+		hasher := sha256.New()
+		for _, commit := range envelope.BlobsBundle.Commitments {
+			var c kzg4844.Commitment
+			if len(commit) != len(c) {
+				return errors.New("invalid commitment length")
+			}
+			copy(c[:], commit)
+			blobHashes = append(blobHashes, kzg4844.CalcBlobHashV1(hasher, &c))
+		}
+	}
 	// Mark the payload as canon
-	if _, err = c.engineAPI.NewPayloadV2(*payload); err != nil {
+	_, err = c.engineAPI.newPayload(*payload, blobHashes, &common.Hash{}, envelope.Requests, false)
+	if err != nil {
 		return err
 	}
 	c.setCurrentState(payload.BlockHash, finalizedHash)
 
 	// Mark the block containing the payload as canonical
-	if _, err = c.engineAPI.ForkchoiceUpdatedV2(c.curForkchoiceState, nil); err != nil {
+	if _, err = c.engineAPI.ForkchoiceUpdatedV3(c.curForkchoiceState, nil); err != nil {
 		return err
 	}
 	c.lastBlockTime = payload.Timestamp
@@ -210,8 +244,7 @@ func (c *SimulatedBeacon) loop() {
 		case <-c.shutdownCh:
 			return
 		case <-timer.C:
-			withdrawals := c.withdrawals.gatherPending(10)
-			if err := c.sealBlock(withdrawals, uint64(time.Now().Unix())); err != nil {
+			if err := c.sealBlock(c.withdrawals.pop(10), uint64(time.Now().Unix())); err != nil {
 				log.Warn("Error performing sealing work", "err", err)
 			} else {
 				timer.Reset(time.Second * time.Duration(c.period))
@@ -247,7 +280,7 @@ func (c *SimulatedBeacon) setCurrentState(headHash, finalizedHash common.Hash) {
 
 // Commit seals a block on demand.
 func (c *SimulatedBeacon) Commit() common.Hash {
-	withdrawals := c.withdrawals.gatherPending(10)
+	withdrawals := c.withdrawals.pop(10)
 	if err := c.sealBlock(withdrawals, uint64(time.Now().Unix())); err != nil {
 		log.Warn("Error performing sealing work", "err", err)
 	}
@@ -256,45 +289,42 @@ func (c *SimulatedBeacon) Commit() common.Hash {
 
 // Rollback un-sends previously added transactions.
 func (c *SimulatedBeacon) Rollback() {
-	// Flush all transactions from the transaction pools
-	maxUint256 := new(big.Int).Sub(new(big.Int).Lsh(common.Big1, 256), common.Big1)
-	c.eth.TxPool().SetGasTip(maxUint256)
-	// Set the gas tip back to accept new transactions
-	// TODO (Marius van der Wijden): set gas tip to parameter passed by config
-	c.eth.TxPool().SetGasTip(big.NewInt(params.GWei))
+	c.eth.TxPool().Clear()
 }
 
 // Fork sets the head to the provided hash.
 func (c *SimulatedBeacon) Fork(parentHash common.Hash) error {
-	if len(c.eth.TxPool().Pending(false)) != 0 {
+	// Ensure no pending transactions.
+	c.eth.TxPool().Sync()
+	if len(c.eth.TxPool().Pending(txpool.PendingFilter{})) != 0 {
 		return errors.New("pending block dirty")
 	}
+
 	parent := c.eth.BlockChain().GetBlockByHash(parentHash)
 	if parent == nil {
 		return errors.New("parent not found")
 	}
-	return c.eth.BlockChain().SetHead(parent.NumberU64())
+	_, err := c.eth.BlockChain().SetCanonical(parent)
+	return err
 }
 
 // AdjustTime creates a new block with an adjusted timestamp.
 func (c *SimulatedBeacon) AdjustTime(adjustment time.Duration) error {
-	if len(c.eth.TxPool().Pending(false)) != 0 {
+	if len(c.eth.TxPool().Pending(txpool.PendingFilter{})) != 0 {
 		return errors.New("could not adjust time on non-empty block")
 	}
 	parent := c.eth.BlockChain().CurrentBlock()
 	if parent == nil {
 		return errors.New("parent not found")
 	}
-	withdrawals := c.withdrawals.gatherPending(10)
-	return c.sealBlock(withdrawals, parent.Time+uint64(adjustment))
+	withdrawals := c.withdrawals.pop(10)
+	return c.sealBlock(withdrawals, parent.Time+uint64(adjustment/time.Second))
 }
 
+// RegisterSimulatedBeaconAPIs registers the simulated beacon's API with the
+// stack.
 func RegisterSimulatedBeaconAPIs(stack *node.Node, sim *SimulatedBeacon) {
-	api := &api{sim}
-	if sim.period == 0 {
-		// mine on demand if period is set to 0
-		go api.loop()
-	}
+	api := newSimulatedBeaconAPI(sim)
 	stack.RegisterAPIs([]rpc.API{
 		{
 			Namespace: "dev",

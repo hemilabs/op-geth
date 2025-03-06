@@ -22,6 +22,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
@@ -36,15 +37,19 @@ type ChainContext interface {
 
 	// GetHeader returns the header corresponding to the hash/number argument pair.
 	GetHeader(common.Hash, uint64) *types.Header
+
+	// Config returns the chain's configuration.
+	Config() *params.ChainConfig
 }
 
 // NewEVMBlockContext creates a new context for use in the EVM.
 func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common.Address, config *params.ChainConfig, statedb types.StateGetter) vm.BlockContext {
 	var (
-		beneficiary common.Address
-		baseFee     *big.Int
-		blobBaseFee *big.Int
-		random      *common.Hash
+		beneficiary    common.Address
+		baseFee        *big.Int
+		blobBaseFee    *big.Int
+		random         *common.Hash
+		operatorCostFn types.OperatorCostFunc
 	)
 
 	// If we don't have an explicit author (i.e. not mining), extract from the header
@@ -57,10 +62,13 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		baseFee = new(big.Int).Set(header.BaseFee)
 	}
 	if header.ExcessBlobGas != nil {
-		blobBaseFee = eip4844.CalcBlobFee(*header.ExcessBlobGas)
+		blobBaseFee = eip4844.CalcBlobFee(chain.Config(), header)
 	}
-	if header.Difficulty.Cmp(common.Big0) == 0 {
+	if header.Difficulty.Sign() == 0 {
 		random = &header.MixDigest
+	}
+	if config.IsOptimismIsthmus(header.Time) {
+		operatorCostFn = types.NewOperatorCostFunc(config, statedb)
 	}
 	return vm.BlockContext{
 		CanTransfer: CanTransfer,
@@ -74,7 +82,10 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		BlobBaseFee: blobBaseFee,
 		GasLimit:    header.GasLimit,
 		Random:      random,
-		L1CostFunc:  types.NewL1CostFunc(config, statedb),
+
+		// OP-Stack additions
+		L1CostFunc:       types.NewL1CostFunc(config, statedb),
+		OperatorCostFunc: operatorCostFn,
 	}
 }
 
@@ -138,6 +149,6 @@ func CanTransfer(db vm.StateDB, addr common.Address, amount *uint256.Int) bool {
 
 // Transfer subtracts amount from sender and adds amount to recipient using the given Db
 func Transfer(db vm.StateDB, sender, recipient common.Address, amount *uint256.Int) {
-	db.SubBalance(sender, amount)
-	db.AddBalance(recipient, amount)
+	db.SubBalance(sender, amount, tracing.BalanceChangeTransfer)
+	db.AddBalance(recipient, amount, tracing.BalanceChangeTransfer)
 }
