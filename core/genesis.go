@@ -290,7 +290,7 @@ func (e *GenesisMismatchError) Error() string {
 
 // ChainOverrides contains the changes to chain config.
 type ChainOverrides struct {
-	OverrideOsaka  *uint64
+	OverridePrague *uint64
 	OverrideVerkle *uint64
 
 	// OP-Stack additions
@@ -313,36 +313,8 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 	if o == nil || cfg == nil {
 		return nil
 	}
-
-	// OP-Stack: If applying the superchain-registry to a known OP-Stack chain,
-	// then override the local chain-config with that from the registry.
-	if o.ApplySuperchainUpgrades && cfg.IsOptimism() && cfg.ChainID != nil && cfg.ChainID.IsUint64() {
-		log.Info("Applying superchain upgrades")
-		getChainConfig := func() (*params.ChainConfig, error) {
-			chain, err := superchain.GetChain(cfg.ChainID.Uint64())
-			if err != nil {
-				return nil, err
-			}
-			chainConf, err := chain.Config()
-			if err != nil {
-				return nil, err
-			}
-			genConf, err := params.LoadOPStackChainConfig(chainConf)
-			if err != nil {
-				return nil, err
-			}
-			return genConf, err
-		}
-
-		if genConf, err := getChainConfig(); err == nil {
-			*cfg = *genConf
-		} else {
-			log.Warn("failed to load chain config from superchain-registry, skipping override", "err", err, "chain_id", cfg.ChainID)
-		}
-	}
-
-	if o.OverrideOsaka != nil {
-		cfg.OsakaTime = o.OverrideOsaka
+	if o.OverridePrague != nil {
+		cfg.PragueTime = o.OverridePrague
 	}
 	if o.OverrideVerkle != nil {
 		cfg.VerkleTime = o.OverrideVerkle
