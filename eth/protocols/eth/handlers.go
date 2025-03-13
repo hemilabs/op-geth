@@ -21,6 +21,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/common"
@@ -270,7 +271,7 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 			continue // Keep searching for other valid blocks
 		}
 
-		block, err := vm.TBCFullNode.BlockByHash(context.Background(), &ch)
+		block, err := vm.TBCFullNode.BlockByHash(context.Background(), ch)
 		if err != nil {
 			log.Error(fmt.Sprintf("did not find BTC block %s requested by peer", hash.String()), "err", err)
 			continue
@@ -403,7 +404,7 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 
 		hash := msgBlock.BlockHash()
 
-		exists, err := vm.TBCFullNode.FullBlockAvailable(context.Background(), &hash)
+		exists, err := vm.TBCFullNode.FullBlockAvailable(context.Background(), hash)
 		if err != nil {
 			log.Error("Unable to check whether TBC has BTC block received over P2P", "badIndex", i, "block", hash.String(), "err", err)
 			// Still attempt to add block if unable to determine

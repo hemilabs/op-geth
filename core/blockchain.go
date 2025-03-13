@@ -1080,7 +1080,7 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		// stateTransitionTargetHash is already set to the previous block or the genesis upstream state ID
 		// depending on whether previous parent had hVM Phase 0 active or not.
 		if bc.chainConfig.IsHvm0(header.Time) {
-			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &stateTransitionTargetHash)
+			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), stateTransitionTargetHash)
 			if err != nil {
 				// TODO: Recovery mode that resets TBC header mode to genesis configuration and rebuilds it from hVM activation block
 				log.Crit(fmt.Sprintf("Error while updating the upstream state id in TBC with no corresponding "+
@@ -1155,9 +1155,13 @@ func (bc *BlockChain) unapplyHvmHeaderConsensusUpdate(header *types.Header) erro
 		log.Warn(fmt.Sprintf("Unable to create blockhash from %x", expectedPreviousTipHash[:]), "err", err)
 	}
 
+	if expectedPreviousTipHashParsed == nil {
+		log.Crit("expectedPreviousTipHashParsed is nil")
+	}
+
 	// Get the actual header represented by the previous canonical tip hash
 	expectedPreviousTip, expectedPreviousTipHeight, err :=
-		bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), expectedPreviousTipHashParsed)
+		bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), *expectedPreviousTipHashParsed)
 
 	if err != nil {
 		// This should never happen, it means TBC doesn't have a header which either:
@@ -1312,7 +1316,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		// TBC's current state is correct after processing this block if hVM Phase 0 is active at
 		// this block's timestamp
 		if bc.chainConfig.IsHvm0(header.Time) {
-			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), &stateTransitionTargetHash)
+			err := bc.tbcHeaderNode.SetUpstreamStateId(context2.Background(), stateTransitionTargetHash)
 			if err != nil {
 				// Being unable to set the upstream state id implies possible data corruption
 				log.Error(fmt.Sprintf("Error while updating the upstream state id in TBC with no corresponding "+
@@ -1681,7 +1685,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// Walk back the light cursor until we get to the same height if it's ahead
 	for lightCursorHeight > fullCursorHeight {
 		// Get height even though we could calculate it as a sanity check
-		header, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &lightCursorHeader.PrevBlock)
+		header, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), lightCursorHeader.PrevBlock)
 		if err != nil {
 			// Should never happen, implies lightweight TBC has a header before its current
 			// canonical tip which it is unable to return, probably signals corruption.
@@ -1702,7 +1706,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// Walk back the full cursor until we get to the same height if it's ahead
 	for fullCursorHeight > lightCursorHeight {
 		// Get height even though we could calculate it as a sanity check
-		header, height, err := vm.TBCFullNode.BlockHeaderByHash(context2.Background(), &fullCursorHeader.PrevBlock)
+		header, height, err := vm.TBCFullNode.BlockHeaderByHash(context2.Background(), fullCursorHeader.PrevBlock)
 		if err != nil {
 			// Should never happen, implies full TBC node has a header before its current
 			// canonical tip which it is unable to return, probably signals corruption.
@@ -1767,7 +1771,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		// could move to a walkback function where caller can specify whether height
 		// or hash is used as exit condition and return all final cursors?
 		for !bytes.Equal(fullCursorHash[:], lightCursorHash[:]) {
-			lHeader, lHeight, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &lightCursorHeader.PrevBlock)
+			lHeader, lHeight, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), lightCursorHeader.PrevBlock)
 			if err != nil {
 				// Should never happen, implies lightweight TBC has a header before its current
 				// canonical tip which it is unable to return, probably signals corruption.
@@ -1782,7 +1786,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 					"expected %d but got %d", lightCursorHeader.PrevBlock[:], lightCursorHeight-1, lHeight))
 			}
 
-			fHeader, fHeight, err := vm.TBCFullNode.BlockHeaderByHash(context2.Background(), &fullCursorHeader.PrevBlock)
+			fHeader, fHeight, err := vm.TBCFullNode.BlockHeaderByHash(context2.Background(), fullCursorHeader.PrevBlock)
 			if err != nil {
 				// Should never happen, implies full TBC node has a header before its current
 				// canonical tip which it is unable to return, probably signals corruption.
@@ -1828,7 +1832,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// Loop until cursor's hash matches the common ancestor
 	for !bytes.Equal(commonAncestorHash[:], cursorHash[:]) {
 		headersToTip = append(headersToTip, *cursorHeader)
-		tHeader, tHeight, err := vm.TBCFullNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
+		tHeader, tHeight, err := vm.TBCFullNode.BlockHeaderByHash(context2.Background(), cursorHeader.PrevBlock)
 		if err != nil {
 			// Should never happen, implies full TBC node has a header before its current
 			// canonical tip which it is unable to return, probably signals corruption.
@@ -1865,7 +1869,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	for index := len(headersToTip) - 1; index >= 0; index-- {
 		headerToAdd := headersToTip[index]
 		headerToAddHash := headerToAdd.BlockHash()
-		_, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &headerToAddHash)
+		_, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), headerToAddHash)
 		if err != nil { // Error means header was not found
 			// TODO: Make sure the error is a NotFoundError, not some other failure
 			headersToAdd = append(headersToAdd, headerToAdd)
@@ -1891,7 +1895,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	// Walk up headersToAdd, and truncate blocks that TBC Full Node does not have complete information for
 	for i := 0; i < len(headersToAdd); i++ {
 		hashToCheck := headersToAdd[i].BlockHash()
-		headerAvailable, err := vm.TBCFullNode.FullBlockAvailable(context2.Background(), &hashToCheck)
+		headerAvailable, err := vm.TBCFullNode.FullBlockAvailable(context2.Background(), hashToCheck)
 		if err != nil {
 			log.Warn(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for the next block after "+
 				"%s @ %d, but TBC full node was unable to determine whether the full block for hash %s is available",
@@ -2173,7 +2177,7 @@ func (bc *BlockChain) calculateHvmIndexerTipLagTestnet3(cursorHeader *wire.Block
 		if cursorHeight > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
 			// Grab previous block's difficulty.
 			var err error
-			prevHeader, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
+			prevHeader, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), cursorHeader.PrevBlock)
 			if err != nil {
 				return 0, err
 			}
@@ -2212,7 +2216,7 @@ func (bc *BlockChain) calculateHvmIndexerTipLagTestnet3(cursorHeader *wire.Block
 					break
 				}
 
-				tempCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &lookbackCursor.PrevBlock)
+				tempCursor, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), lookbackCursor.PrevBlock)
 				if err != nil {
 					return 0, err
 				}
@@ -2296,7 +2300,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 	// configured genesis.
 	if cursorHeight-effectiveHVMIndexerTipLag > bc.tbcHeaderNodeConfig.GenesisHeightOffset {
 		for i := uint64(0); i < effectiveHVMIndexerTipLag; i++ {
-			head, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), &cursorHeader.PrevBlock)
+			head, height, err := bc.tbcHeaderNode.BlockHeaderByHash(context2.Background(), cursorHeader.PrevBlock)
 			if err != nil {
 				// Being unable to walk back through header-only TBC node's best block indicates data corruption
 				// which could be solved by recovering the lightweight TBC node
@@ -2341,7 +2345,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 
 			for count := 0; count < 100; count++ {
 				hash := headerCursor.BlockHash()
-				header, _, err := vm.TBCFullNode.BlockHeaderByHash(context.Background(), &hash)
+				header, _, err := vm.TBCFullNode.BlockHeaderByHash(context.Background(), hash)
 				if err != nil || header == nil {
 					// Prepend so headers are in correct (ascending) order
 					headers = append([]*wire.BlockHeader{headerCursor}, headers...)
@@ -2349,7 +2353,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 				} else {
 					break
 				}
-				headerCursor, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), &headerCursor.PrevBlock)
+				headerCursor, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), headerCursor.PrevBlock)
 			}
 
 			msgHeaders := &wire.MsgHeaders{

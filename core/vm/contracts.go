@@ -23,14 +23,15 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"math/big"
+	"reflect"
+	"time"
+
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/hemilabs/heminetwork/database"
-	"math/big"
-	"reflect"
-	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
@@ -159,7 +160,7 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 	}
 
 	if a.Hash.IsEqual(&b.Hash) {
-		header, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), &a.Hash)
+		header, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), a.Hash)
 		if err != nil {
 			return nil, 0, &a.Hash, false, err
 		}
@@ -175,19 +176,19 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 		lowerHash = b.Hash
 	}
 
-	highCursorHeader, highCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &higherHash)
+	highCursorHeader, highCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), higherHash)
 	if err != nil {
 		return nil, 0, &higherHash, false, err
 	}
 
-	lowCursorHeader, lowCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &lowerHash)
+	lowCursorHeader, lowCursorHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), lowerHash)
 	if err != nil {
 		return nil, 0, &lowerHash, false, err
 	}
 
 	for highCursorHeight > lowCursorHeight {
 		prevBlockHash := highCursorHeader.PrevBlock // Temp variable so we can return hash as not found on error
-		highCursorHeader, highCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), &prevBlockHash)
+		highCursorHeader, highCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), prevBlockHash)
 		if err != nil {
 			return nil, 0, &prevBlockHash, false, err
 		}
@@ -201,13 +202,13 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 	// Cursors are at the same height but on different forks, walk both of them back until they match
 	for !hashEquals(lowCursorHeader.BlockHash(), highCursorHeader.BlockHash()) {
 		lowCursorPrevBlock := lowCursorHeader.PrevBlock // Temp variable so we can return hash as not found on error
-		lowCursorHeader, lowCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), &lowCursorPrevBlock)
+		lowCursorHeader, lowCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), lowCursorPrevBlock)
 		if err != nil {
 			return nil, 0, &lowCursorPrevBlock, false, err
 		}
 
 		highCursorPrevBlock := highCursorHeader.PrevBlock // Temp variable so we can return hash as not found on error
-		highCursorHeader, highCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), &highCursorPrevBlock)
+		highCursorHeader, highCursorHeight, err = TBCFullNode.BlockHeaderByHash(context.Background(), highCursorPrevBlock)
 		if err != nil {
 			return nil, 0, &highCursorPrevBlock, false, err
 		}
@@ -273,7 +274,7 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 		log.Debug(fmt.Sprintf("Moving full TBC indexers forward from %s to %s @ %d", ancestor.BlockHash().String(),
 			targetHH.Hash.String(), targetHH.Height))
 
-		err = TBCFullNode.SyncIndexersToHash(context.Background(), &targetHH.Hash)
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), targetHH.Hash)
 		if err != nil {
 			// Upstream caller should have checked that the TBC full node had the required block information to perform
 			// this indexer update, but bubble the error upstream to handle rather than assuming a critical error here.
@@ -289,7 +290,7 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 		log.Debug(fmt.Sprintf("Moving full TBC indexers backward from %s @ %d to %s",
 			tIndexInfo.Hash.String(), tIndexInfo.Height, ancestor.BlockHash().String()))
 
-		err = TBCFullNode.SyncIndexersToHash(context.Background(), &ancestorHash)
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), ancestorHash)
 		if err != nil {
 			// Being unable to unwind the indexers to a previous point in the chain should never happen as all
 			// data should be available, so this indicates either a bug or data corruption.
@@ -301,7 +302,7 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 		// We unwound to common ancestor, now need to wind forward
 		log.Debug(fmt.Sprintf("Moving full TBC indexers forward from %s to %s @ %d", ancestor.BlockHash().String(),
 			targetHH.Hash.String(), targetHH.Height))
-		err = TBCFullNode.SyncIndexersToHash(context.Background(), &targetHH.Hash)
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), targetHH.Hash)
 		if err != nil {
 			// Was able to unwind to common ancestor but unable to wind forward to requested target, attempt to
 			//restore indexers to their original state
@@ -310,7 +311,7 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 				"%s @ %d", ancestor.BlockHash().String(), targetHH.Hash.String(), tIndexInfo.Hash.String(),
 				tIndexInfo.Height), "err", err)
 
-			errDuringFix := TBCFullNode.SyncIndexersToHash(context.Background(), &tIndexInfo.Hash)
+			errDuringFix := TBCFullNode.SyncIndexersToHash(context.Background(), tIndexInfo.Hash)
 			if errDuringFix != nil {
 				// Unable to undo our previous unwind, this should never happen as all data should be available
 				// so this indicates either a bug or data corruption
@@ -385,7 +386,7 @@ func FixMismatchedIndexesIfRequired() error {
 		ancestorHash := ancestor.BlockHash()
 
 		// Rewind both to common ancestor
-		err = TBCFullNode.SyncIndexersToHash(context.Background(), &ancestorHash)
+		err = TBCFullNode.SyncIndexersToHash(context.Background(), ancestorHash)
 		if err != nil {
 			// Critical as
 			log.Crit(fmt.Sprintf("Unable to repair indexer desync by moving indexers "+
@@ -402,7 +403,7 @@ func FixMismatchedIndexesIfRequired() error {
 // a Bitcoin header provided.
 func TBCIndexToHeader(header *wire.BlockHeader) error {
 	targetHash := header.BlockHash()
-	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), &targetHash)
+	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(context.Background(), targetHash)
 	if err != nil {
 		// Passed in header is not available
 		return err
@@ -420,7 +421,7 @@ func TBCIndexToHeader(header *wire.BlockHeader) error {
 
 func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.HashHeight, error) {
 	hash := header.BlockHash()
-	_, height, err := TBCFullNode.BlockHeaderByHash(ctx, &hash)
+	_, height, err := TBCFullNode.BlockHeaderByHash(ctx, hash)
 	if err != nil {
 		return nil, err
 	}
@@ -433,7 +434,7 @@ func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 	bh := header.BlockHash()
 	log.Info(fmt.Sprintf("Attempting to refetch block %s for TBC full node over P2P", bh.String()))
 
-	block, err := TBCFullNode.DownloadBlockFromRandomPeers(ctx, &bh, 8)
+	block, err := TBCFullNode.DownloadBlockFromRandomPeers(ctx, bh, 8)
 	if err != nil {
 		log.Error(fmt.Sprintf("Encountered error attempting to refetch block %s", bh.String()), "err", err)
 	}
@@ -514,7 +515,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	}
 
 	ancestorToTargetHash := ancestorToTarget.BlockHash()
-	_, ancestorHeight, err := TBCFullNode.BlockHeaderByHash(ctx, &ancestorToTargetHash)
+	_, ancestorHeight, err := TBCFullNode.BlockHeaderByHash(ctx, ancestorToTargetHash)
 	if err != nil {
 		if errors.As(err, &database.ErrNotFound) {
 			// Should be impossible, as if the ancestor header is not available FindCommonAncestor
@@ -538,7 +539,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		log.Trace(fmt.Sprintf("Cursor of %s does not match ancestorToTarget of %s, continuing to walk backwards",
 			cursorHash.String(), ancestorToTargetHash.String()))
 
-		available, err := TBCFullNode.FullBlockAvailable(ctx, &cursorHash)
+		available, err := TBCFullNode.FullBlockAvailable(ctx, cursorHash)
 		if err != nil {
 			log.Warn(fmt.Sprintf("Got error while getting full block for cursor %s", cursorHash.String()),
 				"err", err)
@@ -556,7 +557,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		}
 
 		prevBlockHash := cursor.PrevBlock // Temp variable to allow returning it on error since cursor is overwritten
-		cursor, height, err = TBCFullNode.BlockHeaderByHash(ctx, &cursor.PrevBlock)
+		cursor, height, err = TBCFullNode.BlockHeaderByHash(ctx, cursor.PrevBlock)
 		if err != nil {
 			// Should be impossible as a missing header would have been identified when finding the
 			// common ancestor between target and lowest indexed tip.
@@ -895,13 +896,17 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 	}
 
 	// This only returns information about the canonical chain
-	blockHash, err := TBCFullNode.BlockHashByTxId(context.Background(), &txHash)
+	blockHash, err := TBCFullNode.BlockHashByTxId(context.Background(), txHash)
 	if err != nil {
 		log.Error("Unable to lookup transaction confirmations by txid", "txid", txid, "err", err)
 		return nil, err
 	}
 
-	_, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), blockHash)
+	if blockHash == nil {
+		log.Crit("block hash is nil")
+	}
+
+	_, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), *blockHash)
 	if err != nil {
 		log.Error(fmt.Sprintf("Unable to get block header by hash %x", blockHash[:]))
 		return nil, err
@@ -1015,7 +1020,7 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 	}
 
 	// Get header and height that UTXO indexer (and assumed Tx indexer) is synced to
-	bestHeader, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), &utxoIndex.Hash)
+	bestHeader, height, err := TBCFullNode.BlockHeaderByHash(context.Background(), utxoIndex.Hash)
 
 	if err != nil {
 		log.Error("Unable to lookup best header!")
@@ -1108,7 +1113,7 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	// Find which (if any) header at specified height is represented by the Tx Index (so is part of hVM's view)
 	for i, header := range headers {
 		headerHash := header.BlockHash()
-		canonical, err := TBCFullNode.BlockInTxIndex(context.Background(), &headerHash)
+		canonical, err := TBCFullNode.BlockInTxIndex(context.Background(), headerHash)
 		if err != nil {
 			log.Error(fmt.Sprintf("Unable to lookup whether header %s is in the tx index!",
 				headerHash.String()), "err", err)
@@ -1289,7 +1294,7 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(context.Background(), &ch)
+	tx, err := TBCFullNode.TxById(context.Background(), ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -1322,7 +1327,7 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 		return nil, nil
 	}
 
-	sourceTx, err := TBCFullNode.TxById(context.Background(), &pih)
+	sourceTx, err := TBCFullNode.TxById(context.Background(), pih)
 	if err != nil {
 		log.Warn("unable to lookup input transaction",
 			"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
@@ -1415,7 +1420,7 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(context.Background(), &ch)
+	tx, err := TBCFullNode.TxById(context.Background(), ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -1446,7 +1451,7 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 	resp = binary.BigEndian.AppendUint16(resp, uint16(pkScriptLength))
 	resp = append(resp, choppedOutputScript...)
 
-	spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), &ch, outputIdx)
+	spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), ch, outputIdx)
 	if err != nil {
 		log.Warn("Unable to lookup output spend status", "txid", txid, "err", err)
 		return nil, nil
@@ -1517,7 +1522,7 @@ func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]by
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(context.Background(), &ch)
+	tx, err := TBCFullNode.TxById(context.Background(), ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -1638,13 +1643,13 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(context.Background(), &ch)
+	tx, err := TBCFullNode.TxById(context.Background(), ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
 	}
 
-	block, err := TBCFullNode.BlockHashByTxId(context.Background(), &ch)
+	block, err := TBCFullNode.BlockHashByTxId(context.Background(), ch)
 	if err != nil || block == nil {
 		log.Error("Unable to lookup block containing tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -1707,7 +1712,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				return nil, nil
 			}
 
-			sourceTx, err := TBCFullNode.TxById(context.Background(), &pih)
+			sourceTx, err := TBCFullNode.TxById(context.Background(), pih)
 			if err != nil {
 				log.Warn("unable to lookup input transaction",
 					"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
@@ -1790,7 +1795,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 			}
 
 			if includeOutputSpent {
-				spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), &ch, uint32(idx))
+				spentBool, err := TBCFullNode.ScriptHashAvailableToSpend(context.Background(), ch, uint32(idx))
 
 				if err != nil {
 					log.Warn("Unable to lookup output spend status", "txid", txid, "err", err)
