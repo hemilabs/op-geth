@@ -99,9 +99,6 @@ var (
 		utils.TxLookupLimitFlag, // deprecated
 		utils.TransactionHistoryFlag,
 		utils.ChainHistoryFlag,
-		utils.LogHistoryFlag,
-		utils.LogNoHistoryFlag,
-		utils.LogExportCheckpointsFlag,
 		utils.StateHistoryFlag,
 		utils.LightKDFFlag,
 		utils.EthRequiredBlocksFlag,

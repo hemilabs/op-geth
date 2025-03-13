@@ -169,14 +169,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	}
 	log.Info("Allocated trie memory caches", "clean", common.StorageSize(config.TrieCleanCache)*1024*1024, "dirty", common.StorageSize(config.TrieDirtyCache)*1024*1024)
 
-	dbOptions := node.DatabaseOptions{
-		Cache:             config.DatabaseCache,
-		Handles:           config.DatabaseHandles,
-		AncientsDirectory: config.DatabaseFreezer,
-		EraDirectory:      config.DatabaseEra,
-		MetricsNamespace:  "eth/db/chaindata/",
-	}
-	chainDb, err := stack.OpenDatabaseWithOptions("chaindata", dbOptions)
+	chainDb, err := stack.OpenDatabaseWithFreezer("chaindata", config.DatabaseCache, config.DatabaseHandles, config.DatabaseFreezer, "eth/db/chaindata/", false)
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +186,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 
 	// Here we determine genesis hash and active ChainConfig.
 	// We need these to figure out the consensus parameters and to set up history pruning.
-	chainConfig, _, err := core.LoadChainConfig(chainDb, config.Genesis)
+	chainConfig, genesisHash, err := core.LoadChainConfig(chainDb, config.Genesis)
 	if err != nil {
 		return nil, err
 	}
@@ -201,6 +194,17 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	if err != nil {
 		return nil, err
 	}
+
+	// Validate history pruning configuration.
+	var historyPruningCutoff uint64
+	if config.HistoryMode == ethconfig.PostMergeHistory {
+		prunecfg, ok := ethconfig.HistoryPrunePoints[genesisHash]
+		if !ok {
+			return nil, fmt.Errorf("no history pruning point is defined for genesis %x", genesisHash)
+		}
+		historyPruningCutoff = prunecfg.BlockNumber
+	}
+
 	// Set networkID to chainID by default.
 	networkID := config.NetworkId
 	if networkID == 0 {
@@ -241,26 +245,20 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		}
 	}
 	var (
-		options = &core.BlockChainConfig{
-			TrieCleanLimit:   config.TrieCleanCache,
-			NoPrefetch:       config.NoPrefetch,
-			TrieDirtyLimit:   config.TrieDirtyCache,
-			ArchiveMode:      config.NoPruning,
-			TrieTimeLimit:    config.TrieTimeout,
-			SnapshotLimit:    config.SnapshotCache,
-			Preimages:        config.Preimages,
-			StateHistory:     config.StateHistory,
-			StateScheme:      scheme,
-			ChainHistoryMode: config.HistoryMode,
-			TxLookupLimit:    int64(min(config.TransactionHistory, math.MaxInt64)),
-			VmConfig: vm.Config{
-				EnablePreimageRecording: config.EnablePreimageRecording,
-			},
-			// Enables file journaling for the trie database. The journal files will be stored
-			// within the data directory. The corresponding paths will be either:
-			// - DATADIR/triedb/merkle.journal
-			// - DATADIR/triedb/verkle.journal
-			TrieJournalDirectory: stack.ResolvePath("triedb"),
+		vmConfig = vm.Config{
+			EnablePreimageRecording: config.EnablePreimageRecording,
+		}
+		cacheConfig = &core.CacheConfig{
+			TrieCleanLimit:       config.TrieCleanCache,
+			TrieCleanNoPrefetch:  config.NoPrefetch,
+			TrieDirtyLimit:       config.TrieDirtyCache,
+			TrieDirtyDisabled:    config.NoPruning,
+			TrieTimeLimit:        config.TrieTimeout,
+			SnapshotLimit:        config.SnapshotCache,
+			Preimages:            config.Preimages,
+			StateHistory:         config.StateHistory,
+			StateScheme:          scheme,
+			HistoryPruningCutoff: historyPruningCutoff,
 		}
 	)
 	if config.VMTrace != "" {

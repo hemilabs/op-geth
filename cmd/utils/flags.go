@@ -339,23 +339,6 @@ var (
 		Value:    ethconfig.Defaults.HistoryMode.String(),
 		Category: flags.StateCategory,
 	}
-	LogHistoryFlag = &cli.Uint64Flag{
-		Name:     "history.logs",
-		Usage:    "Number of recent blocks to maintain log search index for (default = about one year, 0 = entire chain)",
-		Value:    ethconfig.Defaults.LogHistory,
-		Category: flags.StateCategory,
-	}
-	LogNoHistoryFlag = &cli.BoolFlag{
-		Name:     "history.logs.disable",
-		Usage:    "Do not maintain log search index",
-		Category: flags.StateCategory,
-	}
-	LogExportCheckpointsFlag = &cli.StringFlag{
-		Name:     "history.logs.export",
-		Usage:    "Export checkpoints to file in go source file format",
-		Category: flags.StateCategory,
-		Value:    "",
-	}
 	// Beacon client light sync settings
 	BeaconApiFlag = &cli.StringSliceFlag{
 		Name:     "beacon.api",
