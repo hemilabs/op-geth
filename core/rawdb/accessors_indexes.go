@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -433,6 +432,128 @@ func WriteFilterMapExtRow(db ethdb.KeyValueWriter, mapRowIndex uint64, row []uin
 	}
 }
 
+// ReadFilterMapRow retrieves a filter map row at the given mapRowIndex
+// (see filtermaps.mapRowIndex for the storage index encoding).
+// Note that zero length rows are not stored in the database and therefore all
+// non-existent entries are interpreted as empty rows and return no error.
+// Also note that the mapRowIndex indexing scheme is the same as the one
+// proposed in EIP-7745 for tree-hashing the filter map structure and for the
+// same data proximity reasons it is also suitable for database representation.
+// See also:
+// https://eips.ethereum.org/EIPS/eip-7745#hash-tree-structure
+func ReadFilterMapExtRow(db ethdb.KeyValueReader, mapRowIndex uint64, bitLength uint) ([]uint32, error) {
+	byteLength := int(bitLength) / 8
+	if int(bitLength) != byteLength*8 {
+		panic("invalid bit length")
+	}
+	key := filterMapRowKey(mapRowIndex, false)
+	has, err := db.Has(key)
+	if err != nil {
+		return nil, err
+	}
+	if !has {
+		return nil, nil
+	}
+	encRow, err := db.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	if len(encRow)%byteLength != 0 {
+		return nil, errors.New("Invalid encoded extended filter row length")
+	}
+	row := make([]uint32, len(encRow)/byteLength)
+	var b [4]byte
+	for i := range row {
+		copy(b[:byteLength], encRow[i*byteLength:(i+1)*byteLength])
+		row[i] = binary.LittleEndian.Uint32(b[:])
+	}
+	return row, nil
+}
+
+func ReadFilterMapBaseRows(db ethdb.KeyValueReader, mapRowIndex uint64, rowCount uint32, bitLength uint) ([][]uint32, error) {
+	byteLength := int(bitLength) / 8
+	if int(bitLength) != byteLength*8 {
+		panic("invalid bit length")
+	}
+	key := filterMapRowKey(mapRowIndex, true)
+	has, err := db.Has(key)
+	if err != nil {
+		return nil, err
+	}
+	rows := make([][]uint32, rowCount)
+	if !has {
+		return rows, nil
+	}
+	encRows, err := db.Get(key)
+	if err != nil {
+		return nil, err
+	}
+	encLen := len(encRows)
+	var (
+		entryCount, entriesInRow, rowIndex, headerLen, headerBits int
+		headerByte                                                byte
+	)
+	for headerLen+byteLength*entryCount < encLen {
+		if headerBits == 0 {
+			headerByte = encRows[headerLen]
+			headerLen++
+			headerBits = 8
+		}
+		if headerByte&1 > 0 {
+			entriesInRow++
+			entryCount++
+		} else {
+			if entriesInRow > 0 {
+				rows[rowIndex] = make([]uint32, entriesInRow)
+				entriesInRow = 0
+			}
+			rowIndex++
+		}
+		headerByte >>= 1
+		headerBits--
+	}
+	if headerLen+byteLength*entryCount > encLen {
+		return nil, errors.New("Invalid encoded base filter rows length")
+	}
+	if entriesInRow > 0 {
+		rows[rowIndex] = make([]uint32, entriesInRow)
+	}
+	nextEntry := headerLen
+	for _, row := range rows {
+		for i := range row {
+			var b [4]byte
+			copy(b[:byteLength], encRows[nextEntry:nextEntry+byteLength])
+			row[i] = binary.LittleEndian.Uint32(b[:])
+			nextEntry += byteLength
+		}
+	}
+	return rows, nil
+}
+
+// WriteFilterMapRow stores a filter map row at the given mapRowIndex or deletes
+// any existing entry if the row is empty.
+func WriteFilterMapExtRow(db ethdb.KeyValueWriter, mapRowIndex uint64, row []uint32, bitLength uint) {
+	byteLength := int(bitLength) / 8
+	if int(bitLength) != byteLength*8 {
+		panic("invalid bit length")
+	}
+	var err error
+	if len(row) > 0 {
+		encRow := make([]byte, len(row)*byteLength)
+		for i, c := range row {
+			var b [4]byte
+			binary.LittleEndian.PutUint32(b[:], c)
+			copy(encRow[i*byteLength:(i+1)*byteLength], b[:byteLength])
+		}
+		err = db.Put(filterMapRowKey(mapRowIndex, false), encRow)
+	} else {
+		err = db.Delete(filterMapRowKey(mapRowIndex, false))
+	}
+	if err != nil {
+		log.Crit("Failed to store extended filter map row", "err", err)
+	}
+}
+
 func WriteFilterMapBaseRows(db ethdb.KeyValueWriter, mapRowIndex uint64, rows [][]uint32, bitLength uint) {
 	byteLength := int(bitLength) / 8
 	if int(bitLength) != byteLength*8 {
@@ -485,8 +606,10 @@ func WriteFilterMapBaseRows(db ethdb.KeyValueWriter, mapRowIndex uint64, rows []
 	}
 }
 
-func DeleteFilterMapRows(db ethdb.KeyValueStore, mapRows common.Range[uint64], hashScheme bool, stopCallback func(bool) bool) error {
-	return SafeDeleteRange(db, filterMapRowKey(mapRows.First(), false), filterMapRowKey(mapRows.AfterLast(), false), hashScheme, stopCallback)
+func DeleteFilterMapRows(db ethdb.KeyValueRangeDeleter, firstMapRowIndex, afterLastMapRowIndex uint64) {
+	if err := db.DeleteRange(filterMapRowKey(firstMapRowIndex, false), filterMapRowKey(afterLastMapRowIndex, false)); err != nil {
+		log.Crit("Failed to delete range of filter map rows", "err", err)
+	}
 }
 
 // ReadFilterMapLastBlock retrieves the number of the block that generated the
@@ -497,7 +620,7 @@ func ReadFilterMapLastBlock(db ethdb.KeyValueReader, mapIndex uint32) (uint64, c
 		return 0, common.Hash{}, err
 	}
 	if len(enc) != 40 {
-		return 0, common.Hash{}, errors.New("invalid block number and id encoding")
+		return 0, common.Hash{}, errors.New("Invalid block number and id encoding")
 	}
 	var id common.Hash
 	copy(id[:], enc[8:])
@@ -523,8 +646,10 @@ func DeleteFilterMapLastBlock(db ethdb.KeyValueWriter, mapIndex uint32) {
 	}
 }
 
-func DeleteFilterMapLastBlocks(db ethdb.KeyValueStore, maps common.Range[uint32], hashScheme bool, stopCallback func(bool) bool) error {
-	return SafeDeleteRange(db, filterMapLastBlockKey(maps.First()), filterMapLastBlockKey(maps.AfterLast()), hashScheme, stopCallback)
+func DeleteFilterMapLastBlocks(db ethdb.KeyValueRangeDeleter, firstMapIndex, afterLastMapIndex uint32) {
+	if err := db.DeleteRange(filterMapLastBlockKey(firstMapIndex), filterMapLastBlockKey(afterLastMapIndex)); err != nil {
+		log.Crit("Failed to delete range of filter map last block pointers", "err", err)
+	}
 }
 
 // ReadBlockLvPointer retrieves the starting log value index where the log values
@@ -535,7 +660,7 @@ func ReadBlockLvPointer(db ethdb.KeyValueReader, blockNumber uint64) (uint64, er
 		return 0, err
 	}
 	if len(encPtr) != 8 {
-		return 0, errors.New("invalid log value pointer encoding")
+		return 0, errors.New("Invalid log value pointer encoding")
 	}
 	return binary.BigEndian.Uint64(encPtr), nil
 }
@@ -558,26 +683,26 @@ func DeleteBlockLvPointer(db ethdb.KeyValueWriter, blockNumber uint64) {
 	}
 }
 
-func DeleteBlockLvPointers(db ethdb.KeyValueStore, blocks common.Range[uint64], hashScheme bool, stopCallback func(bool) bool) error {
-	return SafeDeleteRange(db, filterMapBlockLVKey(blocks.First()), filterMapBlockLVKey(blocks.AfterLast()), hashScheme, stopCallback)
+func DeleteBlockLvPointers(db ethdb.KeyValueRangeDeleter, firstBlockNumber, afterLastBlockNumber uint64) {
+	if err := db.DeleteRange(filterMapBlockLVKey(firstBlockNumber), filterMapBlockLVKey(afterLastBlockNumber)); err != nil {
+		log.Crit("Failed to delete range of block log value pointers", "err", err)
+	}
 }
 
 // FilterMapsRange is a storage representation of the block range covered by the
 // filter maps structure and the corresponting log value index range.
 type FilterMapsRange struct {
-	Version                      uint32
-	HeadIndexed                  bool
-	HeadDelimiter                uint64
-	BlocksFirst, BlocksAfterLast uint64
-	MapsFirst, MapsAfterLast     uint32
-	TailPartialEpoch             uint32
+	HeadBlockIndexed                                         bool
+	HeadBlockDelimiter                                       uint64
+	FirstIndexedBlock, AfterLastIndexedBlock                 uint64
+	FirstRenderedMap, AfterLastRenderedMap, TailPartialEpoch uint32
 }
 
 // ReadFilterMapsRange retrieves the filter maps range data. Note that if the
 // database entry is not present, that is interpreted as a valid non-initialized
 // state and returns a blank range structure and no error.
 func ReadFilterMapsRange(db ethdb.KeyValueReader) (FilterMapsRange, bool, error) {
-	if has, err := db.Has(filterMapsRangeKey); err != nil || !has {
+	if has, err := db.Has(filterMapsRangeKey); !has || err != nil {
 		return FilterMapsRange{}, false, err
 	}
 	encRange, err := db.Get(filterMapsRangeKey)
@@ -588,8 +713,7 @@ func ReadFilterMapsRange(db ethdb.KeyValueReader) (FilterMapsRange, bool, error)
 	if err := rlp.DecodeBytes(encRange, &fmRange); err != nil {
 		return FilterMapsRange{}, false, err
 	}
-
-	return fmRange, true, nil
+	return fmRange, true, err
 }
 
 // WriteFilterMapsRange stores the filter maps range data.
@@ -609,25 +733,4 @@ func DeleteFilterMapsRange(db ethdb.KeyValueWriter) {
 	if err := db.Delete(filterMapsRangeKey); err != nil {
 		log.Crit("Failed to delete filter maps range", "err", err)
 	}
-}
-
-// deletePrefixRange deletes everything with the given prefix from the database.
-func deletePrefixRange(db ethdb.KeyValueStore, prefix []byte, hashScheme bool, stopCallback func(bool) bool) error {
-	end := bytes.Clone(prefix)
-	end[len(end)-1]++
-	return SafeDeleteRange(db, prefix, end, hashScheme, stopCallback)
-}
-
-// DeleteFilterMapsDb removes the entire filter maps database
-func DeleteFilterMapsDb(db ethdb.KeyValueStore, hashScheme bool, stopCallback func(bool) bool) error {
-	return deletePrefixRange(db, []byte(filterMapsPrefix), hashScheme, stopCallback)
-}
-
-// DeleteBloomBitsDb removes the old bloombits database and the associated
-// chain indexer database.
-func DeleteBloomBitsDb(db ethdb.KeyValueStore, hashScheme bool, stopCallback func(bool) bool) error {
-	if err := deletePrefixRange(db, bloomBitsPrefix, hashScheme, stopCallback); err != nil {
-		return err
-	}
-	return deletePrefixRange(db, bloomBitsMetaPrefix, hashScheme, stopCallback)
 }

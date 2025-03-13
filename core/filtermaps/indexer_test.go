@@ -17,10 +17,8 @@
 package filtermaps
 
 import (
-	"context"
 	crand "crypto/rand"
 	"crypto/sha256"
-	"encoding/binary"
 	"math/big"
 	"math/rand"
 	"sync"
@@ -33,7 +31,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/ethereum/go-ethereum/rlp"
 )
 
 var testParams = Params{
@@ -41,7 +38,7 @@ var testParams = Params{
 	logMapWidth:        24,
 	logMapsPerEpoch:    4,
 	logValuesPerMap:    4,
-	baseRowGroupSize:   4,
+	baseRowGroupLength: 4,
 	baseRowLengthRatio: 2,
 	logLayerDiff:       2,
 }
@@ -51,35 +48,16 @@ func TestIndexerRandomRange(t *testing.T) {
 	defer ts.close()
 
 	forks := make([][]common.Hash, 10)
-	ts.chain.addBlocks(1000, 5, 2, 4, false)
+	ts.chain.addBlocks(1000, 5, 2, 4, false) // 51 log values per block
 	for i := range forks {
 		if i != 0 {
 			forkBlock := rand.Intn(1000)
 			ts.chain.setHead(forkBlock)
-			ts.chain.addBlocks(1000-forkBlock, 5, 2, 4, false)
+			ts.chain.addBlocks(1000-forkBlock, 5, 2, 4, false) // 51 log values per block
 		}
 		forks[i] = ts.chain.getCanonicalChain()
 	}
-	expspos := func(block uint64) uint64 { // expected position of block start
-		if block == 0 {
-			return 0
-		}
-		logCount := (block - 1) * 5 * 2
-		mapIndex := logCount / 3
-		spos := mapIndex*16 + (logCount%3)*5
-		if mapIndex == 0 || logCount%3 != 0 {
-			spos++
-		}
-		return spos
-	}
-	expdpos := func(block uint64) uint64 { // expected position of delimiter
-		if block == 0 {
-			return 0
-		}
-		logCount := block * 5 * 2
-		mapIndex := (logCount - 1) / 3
-		return mapIndex*16 + (logCount-mapIndex*3)*5
-	}
+	lvPerBlock := uint64(51)
 	ts.setHistory(0, false)
 	var (
 		history       int
@@ -107,7 +85,6 @@ func TestIndexerRandomRange(t *testing.T) {
 			fork, head = rand.Intn(len(forks)), rand.Intn(1001)
 			ts.chain.setCanonicalChain(forks[fork][:head+1])
 		case 2:
-			checkSnapshot = false
 			if head < 1000 {
 				checkSnapshot = !noHistory && head != 0 // no snapshot generated for block 0
 				// add blocks after the current head
@@ -138,136 +115,24 @@ func TestIndexerRandomRange(t *testing.T) {
 		}
 		var tailEpoch uint32
 		if tailBlock > 0 {
-			tailLvPtr := expspos(tailBlock) - 1
+			tailLvPtr := (tailBlock - 1) * lvPerBlock // no logs in genesis block, only delimiter
 			tailEpoch = uint32(tailLvPtr >> (testParams.logValuesPerMap + testParams.logMapsPerEpoch))
 		}
-		tailLvPtr := uint64(tailEpoch) << (testParams.logValuesPerMap + testParams.logMapsPerEpoch) // first available lv ptr
 		var expTailBlock uint64
 		if tailEpoch > 0 {
-			for expspos(expTailBlock) <= tailLvPtr {
-				expTailBlock++
-			}
+			tailLvPtr := uint64(tailEpoch) << (testParams.logValuesPerMap + testParams.logMapsPerEpoch) // first available lv ptr
+			// (expTailBlock-1)*lvPerBlock >= tailLvPtr
+			expTailBlock = (tailLvPtr + lvPerBlock*2 - 1) / lvPerBlock
 		}
-		if ts.fm.indexedRange.blocks.Last() != uint64(head) {
-			ts.t.Fatalf("Invalid index head (expected #%d, got #%d)", head, ts.fm.indexedRange.blocks.Last())
+		if ts.fm.indexedRange.afterLastIndexedBlock != uint64(head+1) {
+			ts.t.Fatalf("Invalid index head (expected #%d, got #%d)", head, ts.fm.indexedRange.afterLastIndexedBlock-1)
 		}
-		expHeadDelimiter := expdpos(uint64(head))
-		if ts.fm.indexedRange.headDelimiter != expHeadDelimiter {
-			ts.t.Fatalf("Invalid index head delimiter pointer (expected %d, got %d)", expHeadDelimiter, ts.fm.indexedRange.headDelimiter)
+		if ts.fm.indexedRange.headBlockDelimiter != uint64(head)*lvPerBlock {
+			ts.t.Fatalf("Invalid index head delimiter pointer (expected %d, got %d)", uint64(head)*lvPerBlock, ts.fm.indexedRange.headBlockDelimiter)
 		}
-
-		if ts.fm.indexedRange.blocks.First() != expTailBlock {
-			ts.t.Fatalf("Invalid index tail block (expected #%d, got #%d)", expTailBlock, ts.fm.indexedRange.blocks.First())
+		if ts.fm.indexedRange.firstIndexedBlock != expTailBlock {
+			ts.t.Fatalf("Invalid index tail block (expected #%d, got #%d)", expTailBlock, ts.fm.indexedRange.firstIndexedBlock)
 		}
-	}
-}
-
-func TestIndexerMatcherView(t *testing.T) {
-	testIndexerMatcherView(t, false)
-}
-
-func TestIndexerMatcherViewWithConcurrentRead(t *testing.T) {
-	testIndexerMatcherView(t, true)
-}
-
-func testIndexerMatcherView(t *testing.T, concurrentRead bool) {
-	ts := newTestSetup(t)
-	defer ts.close()
-
-	forks := make([][]common.Hash, 20)
-	hashes := make([]common.Hash, 20)
-	ts.chain.addBlocks(100, 5, 2, 4, true)
-	ts.setHistory(0, false)
-	for i := range forks {
-		if i != 0 {
-			ts.chain.setHead(100 - i)
-			ts.chain.addBlocks(i, 5, 2, 4, true)
-		}
-		ts.fm.WaitIdle()
-		forks[i] = ts.chain.getCanonicalChain()
-		hashes[i] = ts.matcherViewHash()
-	}
-	fork := len(forks) - 1
-	for i := 0; i < 5000; i++ {
-		oldFork := fork
-		fork = rand.Intn(len(forks))
-		stopCh := make(chan chan struct{})
-		if concurrentRead {
-			go func() {
-				for {
-					ts.matcherViewHash()
-					select {
-					case ch := <-stopCh:
-						close(ch)
-						return
-					default:
-					}
-				}
-			}()
-		}
-		ts.chain.setCanonicalChain(forks[fork])
-		ts.fm.WaitIdle()
-		if concurrentRead {
-			ch := make(chan struct{})
-			stopCh <- ch
-			<-ch
-		}
-		hash := ts.matcherViewHash()
-		if hash != hashes[fork] {
-			t.Fatalf("Matcher view hash mismatch when switching from for %d to %d", oldFork, fork)
-		}
-	}
-}
-
-func TestLogsByIndex(t *testing.T) {
-	ts := newTestSetup(t)
-	defer func() {
-		ts.fm.testProcessEventsHook = nil
-		ts.close()
-	}()
-
-	ts.chain.addBlocks(1000, 10, 3, 4, true)
-	ts.setHistory(0, false)
-	ts.fm.WaitIdle()
-	firstLog := make([]uint64, 1001) // first valid log position per block
-	lastLog := make([]uint64, 1001)  // last valid log position per block
-	for i := uint64(0); i <= ts.fm.indexedRange.headDelimiter; i++ {
-		log, err := ts.fm.getLogByLvIndex(i)
-		if err != nil {
-			t.Fatalf("Error getting log by index %d: %v", i, err)
-		}
-		if log != nil {
-			if firstLog[log.BlockNumber] == 0 {
-				firstLog[log.BlockNumber] = i
-			}
-			lastLog[log.BlockNumber] = i
-		}
-	}
-	var failed bool
-	ts.fm.testProcessEventsHook = func() {
-		if ts.fm.indexedRange.blocks.IsEmpty() {
-			return
-		}
-		if lvi := firstLog[ts.fm.indexedRange.blocks.First()]; lvi != 0 {
-			log, err := ts.fm.getLogByLvIndex(lvi)
-			if log == nil || err != nil {
-				t.Errorf("Error getting first log of indexed block range: %v", err)
-				failed = true
-			}
-		}
-		if lvi := lastLog[ts.fm.indexedRange.blocks.Last()]; lvi != 0 {
-			log, err := ts.fm.getLogByLvIndex(lvi)
-			if log == nil || err != nil {
-				t.Errorf("Error getting last log of indexed block range: %v", err)
-				failed = true
-			}
-		}
-	}
-	chain := ts.chain.getCanonicalChain()
-	for i := 0; i < 1000 && !failed; i++ {
-		head := rand.Intn(len(chain))
-		ts.chain.setCanonicalChain(chain[:head+1])
-		ts.fm.WaitIdle()
 	}
 }
 
@@ -370,7 +235,7 @@ func (ts *testSetup) setHistory(history uint64, noHistory bool) {
 		History:  history,
 		Disabled: noHistory,
 	}
-	ts.fm, _ = NewFilterMaps(ts.db, view, 0, 0, ts.params, config)
+	ts.fm = NewFilterMaps(ts.db, view, ts.params, config)
 	ts.fm.testDisableSnapshots = ts.testDisableSnapshots
 	ts.fm.Start()
 }
@@ -402,57 +267,6 @@ func (ts *testSetup) fmDbHash() common.Hash {
 	var result common.Hash
 	hasher.Sum(result[:0])
 	return result
-}
-
-func (ts *testSetup) matcherViewHash() common.Hash {
-	mb := ts.fm.NewMatcherBackend()
-	defer mb.Close()
-
-	ctx := context.Background()
-	params := mb.GetParams()
-	hasher := sha256.New()
-	var headPtr uint64
-	for b := uint64(0); ; b++ {
-		lvptr, err := mb.GetBlockLvPointer(ctx, b)
-		if err != nil || (b > 0 && lvptr == headPtr) {
-			break
-		}
-		var enc [8]byte
-		binary.LittleEndian.PutUint64(enc[:], lvptr)
-		hasher.Write(enc[:])
-		headPtr = lvptr
-	}
-	headMap := uint32(headPtr >> params.logValuesPerMap)
-	var enc [12]byte
-	for r := uint32(0); r < params.mapHeight; r++ {
-		binary.LittleEndian.PutUint32(enc[:4], r)
-		for m := uint32(0); m <= headMap; m++ {
-			binary.LittleEndian.PutUint32(enc[4:8], m)
-			rows, _ := mb.GetFilterMapRows(ctx, []uint32{m}, r, false)
-			for _, row := range rows {
-				for _, v := range row {
-					binary.LittleEndian.PutUint32(enc[8:], v)
-					hasher.Write(enc[:])
-				}
-			}
-		}
-	}
-	var hash common.Hash
-	hasher.Sum(hash[:0])
-	for i := 0; i < 50; i++ {
-		hasher.Reset()
-		hasher.Write(hash[:])
-		lvptr := binary.LittleEndian.Uint64(hash[:8]) % headPtr
-		if log, _ := mb.GetLogByLvIndex(ctx, lvptr); log != nil {
-			enc, err := rlp.EncodeToBytes(log)
-			if err != nil {
-				panic(err)
-			}
-			hasher.Write(enc)
-		}
-		hasher.Sum(hash[:0])
-	}
-	return hash
 }
 
 func (ts *testSetup) close() {
@@ -511,13 +325,6 @@ func (tc *testChain) GetCanonicalHash(number uint64) common.Hash {
 }
 
 func (tc *testChain) GetReceiptsByHash(hash common.Hash) types.Receipts {
-	tc.lock.RLock()
-	defer tc.lock.RUnlock()
-
-	return tc.receipts[hash]
-}
-
-func (tc *testChain) GetRawReceipts(hash common.Hash, number uint64) types.Receipts {
 	tc.lock.RLock()
 	defer tc.lock.RUnlock()
 
@@ -613,7 +420,7 @@ func (tc *testChain) setTargetHead() {
 	if tc.ts.fm != nil {
 		if !tc.ts.fm.disabled {
 			//tc.ts.fm.targetViewCh <- NewChainView(tc, head.Number.Uint64(), head.Hash())
-			tc.ts.fm.SetTarget(NewChainView(tc, head.Number.Uint64(), head.Hash()), 0, 0)
+			tc.ts.fm.SetTargetView(NewChainView(tc, head.Number.Uint64(), head.Hash()))
 		}
 	}
 }

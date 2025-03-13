@@ -399,30 +399,25 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		total atomic.Uint64
 
 		// Key-value store statistics
-		headers            stat
-		bodies             stat
-		receipts           stat
-		tds                stat
-		numHashPairings    stat
-		hashNumPairings    stat
-		legacyTries        stat
-		stateLookups       stat
-		accountTries       stat
-		storageTries       stat
-		codes              stat
-		txLookups          stat
-		accountSnaps       stat
-		storageSnaps       stat
-		preimages          stat
-		beaconHeaders      stat
-		cliqueSnaps        stat
-		bloomBits          stat
-		filterMapRows      stat
-		filterMapLastBlock stat
-		filterMapBlockLV   stat
-
-		// Path-mode archive data
-		stateIndex stat
+		headers         stat
+		bodies          stat
+		receipts        stat
+		tds             stat
+		numHashPairings stat
+		hashNumPairings stat
+		legacyTries     stat
+		stateLookups    stat
+		accountTries    stat
+		storageTries    stat
+		codes           stat
+		txLookups       stat
+		accountSnaps    stat
+		storageSnaps    stat
+		preimages       stat
+		bloomBits       stat
+		filterMaps      stat
+		beaconHeaders   stat
+		cliqueSnaps     stat
 
 		// Verkle statistics
 		verkleTries        stat
@@ -438,6 +433,66 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		unaccountedKeys = make(map[[2]byte][]byte)
 		unaccountedMu   sync.Mutex
 	)
+	// Inspect key-value database first.
+	for it.Next() {
+		var (
+			key  = it.Key()
+			size = common.StorageSize(len(key) + len(it.Value()))
+		)
+		total += size
+		switch {
+		case bytes.HasPrefix(key, headerPrefix) && len(key) == (len(headerPrefix)+8+common.HashLength):
+			headers.Add(size)
+		case bytes.HasPrefix(key, blockBodyPrefix) && len(key) == (len(blockBodyPrefix)+8+common.HashLength):
+			bodies.Add(size)
+		case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
+			receipts.Add(size)
+		case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix):
+			tds.Add(size)
+		case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix):
+			numHashPairings.Add(size)
+		case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
+			hashNumPairings.Add(size)
+		case IsLegacyTrieNode(key, it.Value()):
+			legacyTries.Add(size)
+		case bytes.HasPrefix(key, stateIDPrefix) && len(key) == len(stateIDPrefix)+common.HashLength:
+			stateLookups.Add(size)
+		case IsAccountTrieNode(key):
+			accountTries.Add(size)
+		case IsStorageTrieNode(key):
+			storageTries.Add(size)
+		case bytes.HasPrefix(key, CodePrefix) && len(key) == len(CodePrefix)+common.HashLength:
+			codes.Add(size)
+		case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
+			txLookups.Add(size)
+		case bytes.HasPrefix(key, SnapshotAccountPrefix) && len(key) == (len(SnapshotAccountPrefix)+common.HashLength):
+			accountSnaps.Add(size)
+		case bytes.HasPrefix(key, SnapshotStoragePrefix) && len(key) == (len(SnapshotStoragePrefix)+2*common.HashLength):
+			storageSnaps.Add(size)
+		case bytes.HasPrefix(key, PreimagePrefix) && len(key) == (len(PreimagePrefix)+common.HashLength):
+			preimages.Add(size)
+		case bytes.HasPrefix(key, configPrefix) && len(key) == (len(configPrefix)+common.HashLength):
+			metadata.Add(size)
+		case bytes.HasPrefix(key, genesisPrefix) && len(key) == (len(genesisPrefix)+common.HashLength):
+			metadata.Add(size)
+		case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
+			bloomBits.Add(size)
+		case bytes.HasPrefix(key, BloomBitsIndexPrefix):
+			bloomBits.Add(size)
+		case bytes.HasPrefix(key, []byte(FilterMapsPrefix)):
+			filterMaps.Add(size)
+		case bytes.HasPrefix(key, skeletonHeaderPrefix) && len(key) == (len(skeletonHeaderPrefix)+8):
+			beaconHeaders.Add(size)
+		case bytes.HasPrefix(key, CliqueSnapshotPrefix) && len(key) == 7+common.HashLength:
+			cliqueSnaps.Add(size)
+		case bytes.HasPrefix(key, ChtTablePrefix) ||
+			bytes.HasPrefix(key, ChtIndexTablePrefix) ||
+			bytes.HasPrefix(key, ChtPrefix): // Canonical hash trie
+			chtTrieNodes.Add(size)
+		case bytes.HasPrefix(key, BloomTrieTablePrefix) ||
+			bytes.HasPrefix(key, BloomTrieIndexPrefix) ||
+			bytes.HasPrefix(key, BloomTriePrefix): // Bloomtrie sub
+			bloomTrieNodes.Add(size)
 
 	inspectRange := func(ctx context.Context, r byte) error {
 		var s []byte
@@ -599,31 +654,30 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 
 	// Display the database statistic of key-value store.
 	stats := [][]string{
-		{"Key-Value store", "Headers", headers.sizeString(), headers.countString()},
-		{"Key-Value store", "Bodies", bodies.sizeString(), bodies.countString()},
-		{"Key-Value store", "Receipt lists", receipts.sizeString(), receipts.countString()},
-		{"Key-Value store", "Difficulties (deprecated)", tds.sizeString(), tds.countString()},
-		{"Key-Value store", "Block number->hash", numHashPairings.sizeString(), numHashPairings.countString()},
-		{"Key-Value store", "Block hash->number", hashNumPairings.sizeString(), hashNumPairings.countString()},
-		{"Key-Value store", "Transaction index", txLookups.sizeString(), txLookups.countString()},
-		{"Key-Value store", "Log index filter-map rows", filterMapRows.sizeString(), filterMapRows.countString()},
-		{"Key-Value store", "Log index last-block-of-map", filterMapLastBlock.sizeString(), filterMapLastBlock.countString()},
-		{"Key-Value store", "Log index block-lv", filterMapBlockLV.sizeString(), filterMapBlockLV.countString()},
-		{"Key-Value store", "Log bloombits (deprecated)", bloomBits.sizeString(), bloomBits.countString()},
-		{"Key-Value store", "Contract codes", codes.sizeString(), codes.countString()},
-		{"Key-Value store", "Hash trie nodes", legacyTries.sizeString(), legacyTries.countString()},
-		{"Key-Value store", "Path trie state lookups", stateLookups.sizeString(), stateLookups.countString()},
-		{"Key-Value store", "Path trie account nodes", accountTries.sizeString(), accountTries.countString()},
-		{"Key-Value store", "Path trie storage nodes", storageTries.sizeString(), storageTries.countString()},
-		{"Key-Value store", "Path state history indexes", stateIndex.sizeString(), stateIndex.countString()},
-		{"Key-Value store", "Verkle trie nodes", verkleTries.sizeString(), verkleTries.countString()},
-		{"Key-Value store", "Verkle trie state lookups", verkleStateLookups.sizeString(), verkleStateLookups.countString()},
-		{"Key-Value store", "Trie preimages", preimages.sizeString(), preimages.countString()},
-		{"Key-Value store", "Account snapshot", accountSnaps.sizeString(), accountSnaps.countString()},
-		{"Key-Value store", "Storage snapshot", storageSnaps.sizeString(), storageSnaps.countString()},
-		{"Key-Value store", "Beacon sync headers", beaconHeaders.sizeString(), beaconHeaders.countString()},
-		{"Key-Value store", "Clique snapshots", cliqueSnaps.sizeString(), cliqueSnaps.countString()},
-		{"Key-Value store", "Singleton metadata", metadata.sizeString(), metadata.countString()},
+		{"Key-Value store", "Headers", headers.Size(), headers.Count()},
+		{"Key-Value store", "Bodies", bodies.Size(), bodies.Count()},
+		{"Key-Value store", "Receipt lists", receipts.Size(), receipts.Count()},
+		{"Key-Value store", "Difficulties (deprecated)", tds.Size(), tds.Count()},
+		{"Key-Value store", "Block number->hash", numHashPairings.Size(), numHashPairings.Count()},
+		{"Key-Value store", "Block hash->number", hashNumPairings.Size(), hashNumPairings.Count()},
+		{"Key-Value store", "Transaction index", txLookups.Size(), txLookups.Count()},
+		{"Key-Value store", "Bloombit index", bloomBits.Size(), bloomBits.Count()},
+		{"Key-Value store", "Log search index", filterMaps.Size(), filterMaps.Count()},
+		{"Key-Value store", "Contract codes", codes.Size(), codes.Count()},
+		{"Key-Value store", "Hash trie nodes", legacyTries.Size(), legacyTries.Count()},
+		{"Key-Value store", "Path trie state lookups", stateLookups.Size(), stateLookups.Count()},
+		{"Key-Value store", "Path trie account nodes", accountTries.Size(), accountTries.Count()},
+		{"Key-Value store", "Path trie storage nodes", storageTries.Size(), storageTries.Count()},
+		{"Key-Value store", "Verkle trie nodes", verkleTries.Size(), verkleTries.Count()},
+		{"Key-Value store", "Verkle trie state lookups", verkleStateLookups.Size(), verkleStateLookups.Count()},
+		{"Key-Value store", "Trie preimages", preimages.Size(), preimages.Count()},
+		{"Key-Value store", "Account snapshot", accountSnaps.Size(), accountSnaps.Count()},
+		{"Key-Value store", "Storage snapshot", storageSnaps.Size(), storageSnaps.Count()},
+		{"Key-Value store", "Beacon sync headers", beaconHeaders.Size(), beaconHeaders.Count()},
+		{"Key-Value store", "Clique snapshots", cliqueSnaps.Size(), cliqueSnaps.Count()},
+		{"Key-Value store", "Singleton metadata", metadata.Size(), metadata.Count()},
+		{"Light client", "CHT trie nodes", chtTrieNodes.Size(), chtTrieNodes.Count()},
+		{"Light client", "Bloom trie nodes", bloomTrieNodes.Size(), bloomTrieNodes.Count()},
 	}
 
 	// Inspect all registered append-only file store then.

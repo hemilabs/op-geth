@@ -145,6 +145,12 @@ var (
 	FixedCommitteeRootKey = []byte("fixedRoot-") // bigEndian64(syncPeriod) -> committee root hash
 	SyncCommitteeKey      = []byte("committee-") // bigEndian64(syncPeriod) -> serialized committee
 
+	FilterMapsPrefix         = "fm-"
+	filterMapsRangeKey       = []byte(FilterMapsPrefix + "R")
+	filterMapRowPrefix       = []byte(FilterMapsPrefix + "r") // filterMapRowPrefix + mapRowIndex (uint64 big endian) -> filter row
+	filterMapLastBlockPrefix = []byte(FilterMapsPrefix + "b") // filterMapLastBlockPrefix + mapIndex (uint32 big endian) -> block number (uint64 big endian)
+	filterMapBlockLVPrefix   = []byte(FilterMapsPrefix + "p") // filterMapBlockLVPrefix + num (uint64 big endian) -> log value pointer (uint64 big endian)
+
 	preimageCounter     = metrics.NewRegisteredCounter("db/preimage/total", nil)
 	preimageHitsCounter = metrics.NewRegisteredCounter("db/preimage/hits", nil)
 	preimageMissCounter = metrics.NewRegisteredCounter("db/preimage/miss", nil)
@@ -362,60 +368,4 @@ func filterMapBlockLVKey(number uint64) []byte {
 	copy(key[:l], filterMapBlockLVPrefix)
 	binary.BigEndian.PutUint64(key[l:], number)
 	return key
-}
-
-// accountHistoryIndexKey = StateHistoryAccountMetadataPrefix + addressHash
-func accountHistoryIndexKey(addressHash common.Hash) []byte {
-	return append(StateHistoryAccountMetadataPrefix, addressHash.Bytes()...)
-}
-
-// storageHistoryIndexKey = StateHistoryStorageMetadataPrefix + addressHash + storageHash
-func storageHistoryIndexKey(addressHash common.Hash, storageHash common.Hash) []byte {
-	totalLen := len(StateHistoryStorageMetadataPrefix) + 2*common.HashLength
-	out := make([]byte, totalLen)
-
-	off := 0
-	off += copy(out[off:], StateHistoryStorageMetadataPrefix)
-	off += copy(out[off:], addressHash.Bytes())
-	copy(out[off:], storageHash.Bytes())
-
-	return out
-}
-
-// accountHistoryIndexBlockKey = StateHistoryAccountBlockPrefix + addressHash + blockID
-func accountHistoryIndexBlockKey(addressHash common.Hash, blockID uint32) []byte {
-	var buf4 [4]byte
-	binary.BigEndian.PutUint32(buf4[:], blockID)
-
-	totalLen := len(StateHistoryAccountBlockPrefix) + common.HashLength + 4
-	out := make([]byte, totalLen)
-
-	off := 0
-	off += copy(out[off:], StateHistoryAccountBlockPrefix)
-	off += copy(out[off:], addressHash.Bytes())
-	copy(out[off:], buf4[:])
-
-	return out
-}
-
-// storageHistoryIndexBlockKey = StateHistoryStorageBlockPrefix + addressHash + storageHash + blockID
-func storageHistoryIndexBlockKey(addressHash common.Hash, storageHash common.Hash, blockID uint32) []byte {
-	var buf4 [4]byte
-	binary.BigEndian.PutUint32(buf4[:], blockID)
-
-	totalLen := len(StateHistoryStorageBlockPrefix) + 2*common.HashLength + 4
-	out := make([]byte, totalLen)
-
-	off := 0
-	off += copy(out[off:], StateHistoryStorageBlockPrefix)
-	off += copy(out[off:], addressHash.Bytes())
-	off += copy(out[off:], storageHash.Bytes())
-	copy(out[off:], buf4[:])
-
-	return out
-}
-
-// transitionStateKey = transitionStatusKey + hash
-func transitionStateKey(hash common.Hash) []byte {
-	return append(VerkleTransitionStatePrefix, hash.Bytes()...)
 }
