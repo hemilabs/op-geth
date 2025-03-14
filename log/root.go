@@ -12,7 +12,7 @@ var (
 )
 
 func init() {
-	root = NewLogger(DiscardHandler())
+	root = &logger{slog.New(DiscardHandler())}
 }
 
 // SetDefault sets the default global logger
