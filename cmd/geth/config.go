@@ -338,7 +338,12 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				// off the UTXO one. Check whether the indexers are above the genesis height, and if not index
 				// up to that height.
 
-				if utxoHH.Height < genesisHeight {
+				bhFullAvailable, err := vm.TBCFullNode.FullBlockAvailable(ctx.Context, genesisHash)
+				if err != nil {
+					log.Crit("Unable to check if hVM Phase 0 genesis is activated")
+				}
+
+				if utxoHH.Height < genesisHeight && bhFullAvailable {
 					// Safe to assume that a higher height means we are indexed past the effective genesis block
 					// (rather than indexed on a fork before the genesis) as the hVM protocol makes the assumption
 					// that the effective genesis block will never be forked, and should be set far enough in the
