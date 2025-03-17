@@ -790,26 +790,9 @@ func (b testBackend) SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) 
 func (b testBackend) SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription {
 	panic("implement me")
 }
-func (b testBackend) CurrentView() *filtermaps.ChainView {
-	panic("implement me")
-}
 func (b testBackend) NewMatcherBackend() filtermaps.MatcherBackend {
 	panic("implement me")
 }
-
-func (b testBackend) HistoryPruningCutoff() uint64 {
-	bn, _ := b.chain.HistoryPruningCutoff()
-	return bn
-}
-
-// OP-Stack additions
-func (b testBackend) HistoricalRPCService() *rpc.Client {
-	panic("implement me")
-}
-func (b testBackend) Genesis() *types.Block {
-	panic("implement me")
-}
-
 func TestEstimateGas(t *testing.T) {
 	t.Parallel()
 	// Initialize test accounts

@@ -100,12 +100,6 @@ type Backend interface {
 	SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription
 	SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription
 
-	// Hemi specific functions
-	KeystoneFeed() *event.Feed
-	GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error)
-	GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error)
-
-	CurrentView() *filtermaps.ChainView
 	NewMatcherBackend() filtermaps.MatcherBackend
 }
 

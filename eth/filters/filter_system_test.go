@@ -81,10 +81,6 @@ func (b *testBackend) GetReceiptsByHash(hash common.Hash) types.Receipts {
 	return r
 }
 
-func (b *testBackend) GetRawReceipts(hash common.Hash, number uint64) types.Receipts {
-	return rawdb.ReadRawReceipts(b.db, hash, number)
-}
-
 func (b *testBackend) HeaderByNumber(ctx context.Context, blockNr rpc.BlockNumber) (*types.Header, error) {
 	var (
 		hash common.Hash
@@ -159,11 +155,6 @@ func (b *testBackend) SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subsc
 	return b.chainFeed.Subscribe(ch)
 }
 
-func (b *testBackend) CurrentView() *filtermaps.ChainView {
-	head := b.CurrentBlock()
-	return filtermaps.NewChainView(b, head.Number.Uint64(), head.Hash())
-}
-
 func (b *testBackend) NewMatcherBackend() filtermaps.MatcherBackend {
 	return b.fm.NewMatcherBackend()
 }
@@ -176,7 +167,7 @@ func (b *testBackend) startFilterMaps(history uint64, disabled bool, params filt
 		Disabled:       disabled,
 		ExportFileName: "",
 	}
-	b.fm, _ = filtermaps.NewFilterMaps(b.db, chainView, 0, 0, params, config)
+	b.fm = filtermaps.NewFilterMaps(b.db, chainView, 0, 0, params, config)
 	b.fm.Start()
 	b.fm.WaitIdle()
 }
@@ -191,23 +182,7 @@ func (b *testBackend) setPending(block *types.Block, receipts types.Receipts) {
 	b.pendingReceipts = receipts
 }
 
-func (b *testBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
-	return nil, nil
-}
-
-func (b *testBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
-	return nil, nil
-}
-
-func (b *testBackend) KeystoneFeed() *event.Feed {
-	return nil
-}
-
-func (b *testBackend) HistoryPruningCutoff() uint64 {
-	return 0
-}
-
-func newTestFilterSystem(t testing.TB, db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
+func newTestFilterSystem(db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {
 	backend := &testBackend{db: db}
 	sys := NewFilterSystem(backend, cfg)
 	return backend, sys
@@ -463,15 +438,10 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 	t.Parallel()
 
 	var (
-		genesis = &core.Genesis{
-			Config:  params.TestChainConfig,
-			BaseFee: big.NewInt(params.InitialBaseFee),
-		}
-		db, blocks, _    = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
-		_, sys           = newTestFilterSystem(db, Config{})
-		api              = NewFilterAPI(sys)
-		blockHash        = blocks[0].Hash()
-		unknownBlockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
+		db        = rawdb.NewMemoryDatabase()
+		_, sys    = newTestFilterSystem(db, Config{})
+		api       = NewFilterAPI(sys)
+		blockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
 	)
 
 	// Insert the blocks into the chain so filter can look them up

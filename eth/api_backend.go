@@ -30,8 +30,8 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
-	"github.com/ethereum/go-ethereum/core/history"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
@@ -466,6 +466,10 @@ func (b *EthAPIBackend) CurrentView() *filtermaps.ChainView {
 		return nil
 	}
 	return filtermaps.NewChainView(b.eth.blockchain, head.Number.Uint64(), head.Hash())
+}
+
+func (b *EthAPIBackend) NewMatcherBackend() filtermaps.MatcherBackend {
+	return b.eth.filterMaps.NewMatcherBackend()
 }
 
 func (b *EthAPIBackend) NewMatcherBackend() filtermaps.MatcherBackend {
