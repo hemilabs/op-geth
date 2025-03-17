@@ -33,10 +33,6 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-var (
-	intRegex = regexp.MustCompile(`(u)?int([0-9]*)`)
-)
-
 func isKeyWord(arg string) bool {
 	switch arg {
 	case "break":

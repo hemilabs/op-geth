@@ -91,7 +91,7 @@ func init() {
 	app.Action = generate
 }
 
-func abigen(c *cli.Context) error {
+func generate(c *cli.Context) error {
 	flags.CheckExclusive(c, abiFlag, jsonFlag) // Only one source can be selected.
 
 	if c.String(pkgFlag.Name) == "" {

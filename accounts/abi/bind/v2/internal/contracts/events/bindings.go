@@ -52,8 +52,7 @@ func (c *C) Instance(backend bind.ContractBackend, addr common.Address) *bind.Bo
 }
 
 // PackEmitMulti is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xcb493749.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0xcb493749.
 //
 // Solidity: function EmitMulti() returns()
 func (c *C) PackEmitMulti() []byte {
@@ -64,18 +63,8 @@ func (c *C) PackEmitMulti() []byte {
 	return enc
 }
 
-// TryPackEmitMulti is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xcb493749.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function EmitMulti() returns()
-func (c *C) TryPackEmitMulti() ([]byte, error) {
-	return c.abi.Pack("EmitMulti")
-}
-
 // PackEmitOne is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xe8e49a71.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0xe8e49a71.
 //
 // Solidity: function EmitOne() returns()
 func (c *C) PackEmitOne() []byte {
@@ -84,15 +73,6 @@ func (c *C) PackEmitOne() []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackEmitOne is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xe8e49a71.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function EmitOne() returns()
-func (c *C) TryPackEmitOne() ([]byte, error) {
-	return c.abi.Pack("EmitOne")
 }
 
 // CBasic1 represents a basic1 event raised by the C contract.
@@ -115,7 +95,7 @@ func (CBasic1) ContractEventName() string {
 // Solidity: event basic1(uint256 indexed id, uint256 data)
 func (c *C) UnpackBasic1Event(log *types.Log) (*CBasic1, error) {
 	event := "basic1"
-	if len(log.Topics) == 0 || log.Topics[0] != c.abi.Events[event].ID {
+	if log.Topics[0] != c.abi.Events[event].ID {
 		return nil, errors.New("event signature mismatch")
 	}
 	out := new(CBasic1)
@@ -157,7 +137,7 @@ func (CBasic2) ContractEventName() string {
 // Solidity: event basic2(bool indexed flag, uint256 data)
 func (c *C) UnpackBasic2Event(log *types.Log) (*CBasic2, error) {
 	event := "basic2"
-	if len(log.Topics) == 0 || log.Topics[0] != c.abi.Events[event].ID {
+	if log.Topics[0] != c.abi.Events[event].ID {
 		return nil, errors.New("event signature mismatch")
 	}
 	out := new(CBasic2)

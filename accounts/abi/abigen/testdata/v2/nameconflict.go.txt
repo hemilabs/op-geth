@@ -58,8 +58,7 @@ func (c *NameConflict) Instance(backend bind.ContractBackend, addr common.Addres
 }
 
 // PackAddRequest is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xcce7b048.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0xcce7b048.
 //
 // Solidity: function addRequest((bytes,bytes) req) pure returns()
 func (nameConflict *NameConflict) PackAddRequest(req Oraclerequest) []byte {
@@ -70,18 +69,8 @@ func (nameConflict *NameConflict) PackAddRequest(req Oraclerequest) []byte {
 	return enc
 }
 
-// TryPackAddRequest is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xcce7b048.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function addRequest((bytes,bytes) req) pure returns()
-func (nameConflict *NameConflict) TryPackAddRequest(req Oraclerequest) ([]byte, error) {
-	return nameConflict.abi.Pack("addRequest", req)
-}
-
 // PackGetRequest is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xc2bb515f.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0xc2bb515f.
 //
 // Solidity: function getRequest() pure returns((bytes,bytes))
 func (nameConflict *NameConflict) PackGetRequest() []byte {
@@ -90,15 +79,6 @@ func (nameConflict *NameConflict) PackGetRequest() []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackGetRequest is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0xc2bb515f.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function getRequest() pure returns((bytes,bytes))
-func (nameConflict *NameConflict) TryPackGetRequest() ([]byte, error) {
-	return nameConflict.abi.Pack("getRequest")
 }
 
 // UnpackGetRequest is the Go binding that unpacks the parameters returned
@@ -111,7 +91,7 @@ func (nameConflict *NameConflict) UnpackGetRequest(data []byte) (Oraclerequest, 
 		return *new(Oraclerequest), err
 	}
 	out0 := *abi.ConvertType(out[0], new(Oraclerequest)).(*Oraclerequest)
-	return out0, nil
+	return out0, err
 }
 
 // NameConflictLog represents a log event raised by the NameConflict contract.
@@ -134,7 +114,7 @@ func (NameConflictLog) ContractEventName() string {
 // Solidity: event log(int256 msg, int256 _msg)
 func (nameConflict *NameConflict) UnpackLogEvent(log *types.Log) (*NameConflictLog, error) {
 	event := "log"
-	if len(log.Topics) == 0 || log.Topics[0] != nameConflict.abi.Events[event].ID {
+	if log.Topics[0] != nameConflict.abi.Events[event].ID {
 		return nil, errors.New("event signature mismatch")
 	}
 	out := new(NameConflictLog)

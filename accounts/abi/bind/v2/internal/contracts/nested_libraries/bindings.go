@@ -68,8 +68,7 @@ func (c1 *C1) PackConstructor(v1 *big.Int, v2 *big.Int) []byte {
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256 res)
 func (c1 *C1) PackDo(val *big.Int) []byte {
@@ -78,15 +77,6 @@ func (c1 *C1) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256 res)
-func (c1 *C1) TryPackDo(val *big.Int) ([]byte, error) {
-	return c1.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -99,7 +89,7 @@ func (c1 *C1) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
 
 // C2MetaData contains all meta data concerning the C2 contract.
@@ -146,8 +136,7 @@ func (c2 *C2) PackConstructor(v1 *big.Int, v2 *big.Int) []byte {
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256 res)
 func (c2 *C2) PackDo(val *big.Int) []byte {
@@ -156,15 +145,6 @@ func (c2 *C2) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256 res)
-func (c2 *C2) TryPackDo(val *big.Int) ([]byte, error) {
-	return c2.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -177,7 +157,7 @@ func (c2 *C2) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
 
 // L1MetaData contains all meta data concerning the L1 contract.
@@ -208,8 +188,7 @@ func (c *L1) Instance(backend bind.ContractBackend, addr common.Address) *bind.B
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256)
 func (l1 *L1) PackDo(val *big.Int) []byte {
@@ -218,15 +197,6 @@ func (l1 *L1) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256)
-func (l1 *L1) TryPackDo(val *big.Int) ([]byte, error) {
-	return l1.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -239,7 +209,7 @@ func (l1 *L1) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
 
 // L2MetaData contains all meta data concerning the L2 contract.
@@ -273,8 +243,7 @@ func (c *L2) Instance(backend bind.ContractBackend, addr common.Address) *bind.B
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256)
 func (l2 *L2) PackDo(val *big.Int) []byte {
@@ -283,15 +252,6 @@ func (l2 *L2) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256)
-func (l2 *L2) TryPackDo(val *big.Int) ([]byte, error) {
-	return l2.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -304,7 +264,7 @@ func (l2 *L2) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
 
 // L2bMetaData contains all meta data concerning the L2b contract.
@@ -338,8 +298,7 @@ func (c *L2b) Instance(backend bind.ContractBackend, addr common.Address) *bind.
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256)
 func (l2b *L2b) PackDo(val *big.Int) []byte {
@@ -348,15 +307,6 @@ func (l2b *L2b) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256)
-func (l2b *L2b) TryPackDo(val *big.Int) ([]byte, error) {
-	return l2b.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -369,7 +319,7 @@ func (l2b *L2b) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
 
 // L3MetaData contains all meta data concerning the L3 contract.
@@ -400,8 +350,7 @@ func (c *L3) Instance(backend bind.ContractBackend, addr common.Address) *bind.B
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256)
 func (l3 *L3) PackDo(val *big.Int) []byte {
@@ -410,15 +359,6 @@ func (l3 *L3) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256)
-func (l3 *L3) TryPackDo(val *big.Int) ([]byte, error) {
-	return l3.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -431,7 +371,7 @@ func (l3 *L3) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
 
 // L4MetaData contains all meta data concerning the L4 contract.
@@ -466,8 +406,7 @@ func (c *L4) Instance(backend bind.ContractBackend, addr common.Address) *bind.B
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256)
 func (l4 *L4) PackDo(val *big.Int) []byte {
@@ -476,15 +415,6 @@ func (l4 *L4) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256)
-func (l4 *L4) TryPackDo(val *big.Int) ([]byte, error) {
-	return l4.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -497,7 +427,7 @@ func (l4 *L4) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
 
 // L4bMetaData contains all meta data concerning the L4b contract.
@@ -531,8 +461,7 @@ func (c *L4b) Instance(backend bind.ContractBackend, addr common.Address) *bind.
 }
 
 // PackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will panic if any
-// invalid/nil inputs are passed.
+// the contract method with ID 0x2ad11272.
 //
 // Solidity: function Do(uint256 val) pure returns(uint256)
 func (l4b *L4b) PackDo(val *big.Int) []byte {
@@ -541,15 +470,6 @@ func (l4b *L4b) PackDo(val *big.Int) []byte {
 		panic(err)
 	}
 	return enc
-}
-
-// TryPackDo is the Go binding used to pack the parameters required for calling
-// the contract method with ID 0x2ad11272.  This method will return an error
-// if any inputs are invalid/nil.
-//
-// Solidity: function Do(uint256 val) pure returns(uint256)
-func (l4b *L4b) TryPackDo(val *big.Int) ([]byte, error) {
-	return l4b.abi.Pack("Do", val)
 }
 
 // UnpackDo is the Go binding that unpacks the parameters returned
@@ -562,5 +482,5 @@ func (l4b *L4b) UnpackDo(data []byte) (*big.Int, error) {
 		return new(big.Int), err
 	}
 	out0 := abi.ConvertType(out[0], new(big.Int)).(*big.Int)
-	return out0, nil
+	return out0, err
 }
