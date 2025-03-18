@@ -248,11 +248,11 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	block := api.eth.BlockChain().GetBlockByHash(update.HeadBlockHash)
 	if block != nil {
 		log.Info(fmt.Sprintf("ForkchoiceUpdated command requests we set head to %s @ %d", block.Hash().String(), block.NumberU64()))
-	} else {
-		log.Info("ForkchoiceUpdated command requests we set head to nil block")
 	}
 
 	if block == nil {
+		log.Info("ForkchoiceUpdated command requests we set head to nil block")
+
 		// If this block was previously invalidated, keep rejecting it here too
 		if res := api.checkInvalidAncestor(update.HeadBlockHash, update.HeadBlockHash); res != nil {
 			return engine.ForkChoiceResponse{PayloadStatus: *res, PayloadID: nil}, nil
