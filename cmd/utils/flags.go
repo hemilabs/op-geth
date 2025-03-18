@@ -2373,15 +2373,7 @@ func MakeChainDatabase(ctx *cli.Context, stack *node.Node, readonly bool) ethdb.
 		}
 		chainDb = remotedb.New(client)
 	default:
-		options := node.DatabaseOptions{
-			ReadOnly:          readonly,
-			Cache:             cache,
-			Handles:           handles,
-			AncientsDirectory: ctx.String(AncientFlag.Name),
-			MetricsNamespace:  "eth/db/chaindata/",
-			EraDirectory:      ctx.String(EraFlag.Name),
-		}
-		chainDb, err = stack.OpenDatabaseWithOptions("chaindata", options)
+		chainDb, err = stack.OpenDatabaseWithFreezer("chaindata", cache, handles, ctx.String(AncientFlag.Name), "eth/db/chaindata/", readonly)
 	}
 	if err != nil {
 		Fatalf("Could not open database: %v", err)
