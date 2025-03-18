@@ -164,16 +164,6 @@ var (
 		Usage:    "Hoodi network: pre-configured proof-of-stake test network",
 		Category: flags.EthCategory,
 	}
-
-	// OP-Stack addition
-	OPNetworkFlag = &cli.StringFlag{
-		Name:    "op-network",
-		Aliases: []string{"beta.op-network"},
-		Usage: "Select a pre-configured OP-Stack network (warning: op-mainnet and op-goerli require special sync," +
-			" datadir is recommended), options: " + strings.Join(superchain.ChainNames(), ", "),
-		Category: flags.EthCategory,
-	}
-
 	// Dev mode
 	DeveloperFlag = &cli.BoolFlag{
 		Name:     "dev",
@@ -1233,12 +1223,6 @@ func MakeDataDir(ctx *cli.Context) string {
 		if ctx.Bool(HoodiFlag.Name) {
 			return filepath.Join(path, "hoodi")
 		}
-
-		// OP-Stack addition
-		if ctx.IsSet(OPNetworkFlag.Name) {
-			return filepath.Join(path, ctx.String(OPNetworkFlag.Name))
-		}
-
 		return path
 	}
 	Fatalf("Cannot determine default data directory, please set manually (--datadir)")
@@ -1673,8 +1657,6 @@ func SetDataDir(ctx *cli.Context, cfg *node.Config) {
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "holesky")
 	case ctx.Bool(HoodiFlag.Name) && cfg.DataDir == node.DefaultDataDir():
 		cfg.DataDir = filepath.Join(node.DefaultDataDir(), "hoodi")
-	case ctx.IsSet(OPNetworkFlag.Name) && cfg.DataDir == node.DefaultDataDir():
-		cfg.DataDir = filepath.Join(node.DefaultDataDir(), ctx.String(OPNetworkFlag.Name))
 	}
 }
 
@@ -1821,7 +1803,7 @@ func setRequiredBlocks(ctx *cli.Context, cfg *ethconfig.Config) {
 // SetEthConfig applies eth-related command line flags to the config.
 func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 	// Avoid conflicting network flags
-	flags.CheckExclusive(ctx, MainnetFlag, DeveloperFlag, SepoliaFlag, HoleskyFlag)
+	flags.CheckExclusive(ctx, MainnetFlag, DeveloperFlag, SepoliaFlag, HoleskyFlag, HoodiFlag)
 	flags.CheckExclusive(ctx, DeveloperFlag, ExternalSignerFlag) // Can't use both ephemeral unlocked and external signer
 
 	// Set configurations from CLI flags
@@ -2032,7 +2014,9 @@ func SetEthConfig(ctx *cli.Context, stack *node.Node, cfg *ethconfig.Config) {
 		cfg.Genesis = core.DefaultSepoliaGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.SepoliaGenesisHash)
 	case ctx.Bool(HoodiFlag.Name):
-		cfg.NetworkId = 560048
+		if !ctx.IsSet(NetworkIdFlag.Name) {
+			cfg.NetworkId = 560048
+		}
 		cfg.Genesis = core.DefaultHoodiGenesisBlock()
 		SetDNSDiscoveryDefaults(cfg, params.HoodiGenesisHash)
 	case ctx.Bool(DeveloperFlag.Name):
@@ -2461,17 +2445,6 @@ func MakeGenesis(ctx *cli.Context) *core.Genesis {
 		genesis = core.DefaultSepoliaGenesisBlock()
 	case ctx.Bool(HoodiFlag.Name):
 		genesis = core.DefaultHoodiGenesisBlock()
-	case ctx.IsSet(OPNetworkFlag.Name):
-		name := ctx.String(OPNetworkFlag.Name)
-		ch, err := superchain.ChainIDByName(name)
-		if err != nil {
-			Fatalf("failed to load OP-Stack chain %q: %v", name, err)
-		}
-		genesis, err := core.LoadOPStackGenesis(ch)
-		if err != nil {
-			Fatalf("failed to load genesis for OP-Stack chain %q (%d): %v", name, ch, err)
-		}
-		return genesis
 	case ctx.Bool(DeveloperFlag.Name):
 		Fatalf("Developer chains are ephemeral")
 	}

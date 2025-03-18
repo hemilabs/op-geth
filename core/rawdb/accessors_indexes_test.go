@@ -202,98 +202,50 @@ func TestFindTxInBlockBody(t *testing.T) {
 
 	block := types.NewBlock(&types.Header{Number: big.NewInt(314)}, &types.Body{Transactions: txs, Withdrawals: []*types.Withdrawal{}}, nil, newTestHasher(), types.IsthmusBlockConfig)
 	db := NewMemoryDatabase()
-	WriteBlock(db, block)
-
-	rlp := ReadBodyRLP(db, block.Hash(), block.NumberU64())
-	for i := 0; i < len(txs); i++ {
-		tx, txIndex, err := findTxInBlockBody(rlp, txs[i].Hash())
-		if err != nil {
-			t.Fatalf("Failed to retrieve tx, err: %v", err)
-		}
-		if txIndex != uint64(i) {
-			t.Fatalf("Unexpected transaction index, want: %d, got: %d", i, txIndex)
-		}
-		if tx.Hash() != txs[i].Hash() {
-			want := spew.Sdump(txs[i])
-			got := spew.Sdump(tx)
-			t.Fatalf("Unexpected transaction, want: %s, got: %s", want, got)
+	for i := uint(0); i < 2; i++ {
+		for s := uint64(0); s < 2; s++ {
+			WriteBloomBits(db, i, s, params.MainnetGenesisHash, []byte{0x01, 0x02})
+			WriteBloomBits(db, i, s, params.SepoliaGenesisHash, []byte{0x01, 0x02})
+			WriteBloomBits(db, i, s, params.HoodiGenesisHash, []byte{0x01, 0x02})
 		}
 	}
-}
-
-func TestExtractReceiptFields(t *testing.T) {
-	receiptWithPostState := types.ReceiptForStorage(types.Receipt{
-		Type:              types.LegacyTxType,
-		PostState:         []byte{0x1, 0x2, 0x3},
-		CumulativeGasUsed: 100,
-	})
-	receiptWithPostStateBlob, _ := rlp.EncodeToBytes(&receiptWithPostState)
-
-	receiptNoLogs := types.ReceiptForStorage(types.Receipt{
-		Type:              types.LegacyTxType,
-		Status:            types.ReceiptStatusSuccessful,
-		CumulativeGasUsed: 100,
-	})
-	receiptNoLogBlob, _ := rlp.EncodeToBytes(&receiptNoLogs)
-
-	receiptWithLogs := types.ReceiptForStorage(types.Receipt{
-		Type:              types.LegacyTxType,
-		Status:            types.ReceiptStatusSuccessful,
-		CumulativeGasUsed: 100,
-		Logs: []*types.Log{
-			{
-				Address: common.BytesToAddress([]byte{0x1}),
-				Topics: []common.Hash{
-					common.BytesToHash([]byte{0x1}),
-				},
-				Data: []byte{0x1},
-			},
-			{
-				Address: common.BytesToAddress([]byte{0x2}),
-				Topics: []common.Hash{
-					common.BytesToHash([]byte{0x2}),
-				},
-				Data: []byte{0x2},
-			},
-		},
-	})
-	receiptWithLogBlob, _ := rlp.EncodeToBytes(&receiptWithLogs)
-
-	invalidReceipt := types.ReceiptForStorage(types.Receipt{
-		Type:              types.LegacyTxType,
-		Status:            types.ReceiptStatusSuccessful,
-		CumulativeGasUsed: 100,
-	})
-	invalidReceiptBlob, _ := rlp.EncodeToBytes(&invalidReceipt)
-	invalidReceiptBlob[len(invalidReceiptBlob)-1] = 0xf
-
-	var cases = []struct {
-		logs       rlp.RawValue
-		expErr     error
-		expGasUsed uint64
-		expLogs    uint
-	}{
-		{receiptWithPostStateBlob, nil, 100, 0},
-		{receiptNoLogBlob, nil, 100, 0},
-		{receiptWithLogBlob, nil, 100, 2},
-		{invalidReceiptBlob, rlp.ErrExpectedList, 100, 0},
-	}
-	for _, c := range cases {
-		gasUsed, logs, err := extractReceiptFields(c.logs)
-		if c.expErr != nil {
-			if !errors.Is(err, c.expErr) {
-				t.Fatalf("Unexpected error, want: %v, got: %v", c.expErr, err)
-			}
-		} else {
-			if err != nil {
-				t.Fatalf("Unexpected error %v", err)
-			}
-			if gasUsed != c.expGasUsed {
-				t.Fatalf("Unexpected gas used, want %d, got %d", c.expGasUsed, gasUsed)
-			}
-			if logs != c.expLogs {
-				t.Fatalf("Unexpected logs, want %d, got %d", c.expLogs, logs)
-			}
+	check := func(bit uint, section uint64, head common.Hash, exist bool) {
+		bits, _ := ReadBloomBits(db, bit, section, head)
+		if exist && !bytes.Equal(bits, []byte{0x01, 0x02}) {
+			t.Fatalf("Bloombits mismatch")
+		}
+		if !exist && len(bits) > 0 {
+			t.Fatalf("Bloombits should be removed")
 		}
 	}
+	// Check the existence of written data.
+	check(0, 0, params.MainnetGenesisHash, true)
+	check(0, 0, params.SepoliaGenesisHash, true)
+	check(0, 0, params.HoodiGenesisHash, true)
+
+	// Check the existence of deleted data.
+	DeleteBloombits(db, 0, 0, 1)
+	check(0, 0, params.MainnetGenesisHash, false)
+	check(0, 0, params.SepoliaGenesisHash, false)
+	check(0, 0, params.HoodiGenesisHash, false)
+	check(0, 1, params.MainnetGenesisHash, true)
+	check(0, 1, params.SepoliaGenesisHash, true)
+	check(0, 1, params.HoodiGenesisHash, true)
+
+	// Check the existence of deleted data.
+	DeleteBloombits(db, 0, 0, 2)
+	check(0, 0, params.MainnetGenesisHash, false)
+	check(0, 0, params.SepoliaGenesisHash, false)
+	check(0, 0, params.HoodiGenesisHash, false)
+	check(0, 1, params.MainnetGenesisHash, false)
+	check(0, 1, params.SepoliaGenesisHash, false)
+	check(0, 1, params.HoodiGenesisHash, false)
+
+	// Bit1 shouldn't be affect.
+	check(1, 0, params.MainnetGenesisHash, true)
+	check(1, 0, params.SepoliaGenesisHash, true)
+	check(1, 0, params.HoodiGenesisHash, true)
+	check(1, 1, params.MainnetGenesisHash, true)
+	check(1, 1, params.SepoliaGenesisHash, true)
+	check(1, 1, params.HoodiGenesisHash, true)
 }

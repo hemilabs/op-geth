@@ -35,12 +35,6 @@ var (
 	HoodiGenesisHash   = common.HexToHash("0xbbe312868b376a3001692a646dd2d7d1e4406380dfd86b98aa8a34d1557c971b")
 )
 
-const (
-	OPMainnetChainID   = 10
-	BaseMainnetChainID = 8453
-	baseSepoliaChainID = 84532
-)
-
 func newUint64(val uint64) *uint64 { return &val }
 
 var (
@@ -187,6 +181,36 @@ var (
 			Osaka:  DefaultOsakaBlobConfig,
 			BPO1:   DefaultBPO1BlobConfig,
 			BPO2:   DefaultBPO2BlobConfig,
+		},
+	}
+	// HoodiChainConfig contains the chain parameters to run a node on the Hoodi test network.
+	HoodiChainConfig = &ChainConfig{
+		ChainID:                 big.NewInt(560048),
+		HomesteadBlock:          big.NewInt(0),
+		DAOForkBlock:            nil,
+		DAOForkSupport:          true,
+		EIP150Block:             big.NewInt(0),
+		EIP155Block:             big.NewInt(0),
+		EIP158Block:             big.NewInt(0),
+		ByzantiumBlock:          big.NewInt(0),
+		ConstantinopleBlock:     big.NewInt(0),
+		PetersburgBlock:         big.NewInt(0),
+		IstanbulBlock:           big.NewInt(0),
+		MuirGlacierBlock:        big.NewInt(0),
+		BerlinBlock:             big.NewInt(0),
+		LondonBlock:             big.NewInt(0),
+		ArrowGlacierBlock:       nil,
+		GrayGlacierBlock:        nil,
+		TerminalTotalDifficulty: big.NewInt(0),
+		MergeNetsplitBlock:      big.NewInt(0),
+		ShanghaiTime:            newUint64(0),
+		CancunTime:              newUint64(0),
+		PragueTime:              newUint64(1742999832),
+		DepositContractAddress:  common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
+		Ethash:                  new(EthashConfig),
+		BlobScheduleConfig: &BlobScheduleConfig{
+			Cancun: DefaultCancunBlobConfig,
+			Prague: DefaultPragueBlobConfig,
 		},
 	}
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
