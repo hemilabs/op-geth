@@ -707,7 +707,7 @@ func (api *API) traceBlockParallel(ctx context.Context, block *types.Block, stat
 				// as the GetHash function of BlockContext is not safe for
 				// concurrent use.
 				// See: https://github.com/ethereum/go-ethereum/issues/29114
-				blockCtx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil, api.backend.ChainConfig(), task.statedb)
+				blockCtx := core.NewEVMBlockContext(block.Header(), api.chainContext(ctx), nil)
 				res, err := api.traceTx(ctx, txs[task.index], msg, txctx, blockCtx, task.statedb, config, nil)
 				if err != nil {
 					results[task.index] = &txTraceResult{TxHash: txs[task.index].Hash(), Error: err.Error()}
@@ -1006,21 +1006,9 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	blockContext := core.NewEVMBlockContext(h, api.chainContext(ctx), nil, api.backend.ChainConfig(), statedb)
 	// Apply the customization rules if required.
 	if config != nil {
-		if config.BlockOverrides != nil && config.BlockOverrides.Number.ToInt().Uint64() == h.Number.Uint64()+1 {
-			// Overriding the block number to n+1 is a common way for wallets to
-			// simulate transactions, however without the following fix, a contract
-			// can assert it is being simulated by checking if blockhash(n) == 0x0 and
-			// can behave differently during the simulation. (#32175 for more info)
-			// --
-			// Modify the parent hash and number so that downstream, blockContext's
-			// GetHash function can correctly return n.
-			h.ParentHash = h.Hash()
-			h.Number.Add(h.Number, big.NewInt(1))
-		}
-		if err := config.BlockOverrides.Apply(&blockContext); err != nil {
-			return nil, err
-		}
-		rules := api.backend.ChainConfig().Rules(blockContext.BlockNumber, blockContext.Random != nil, blockContext.Time)
+		config.BlockOverrides.Apply(&vmctx)
+		rules := api.backend.ChainConfig().Rules(vmctx.BlockNumber, vmctx.Random != nil, vmctx.Time)
+
 		precompiles = vm.ActivePrecompiledContracts(rules)
 		if err := config.StateOverrides.Apply(statedb, precompiles); err != nil {
 			return nil, err
@@ -1047,7 +1035,7 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	if config != nil {
 		traceConfig = &config.TraceConfig
 	}
-	return api.traceTx(ctx, tx, msg, new(Context), blockContext, statedb, traceConfig, precompiles)
+	return api.traceTx(ctx, tx, msg, new(Context), vmctx, statedb, traceConfig, precompiles)
 }
 
 // traceTx configures a new tracer according to the provided configuration, and
