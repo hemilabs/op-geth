@@ -6,7 +6,8 @@
 name: "Docker"
 on:
   push:
-    branches: [ "hemi" ]
+    # change back before merge
+    # branches: [ "hemi" ]
 
 concurrency:
   group: "docker-${{ github.workflow }}-${{ github.event.number || github.ref }}"
