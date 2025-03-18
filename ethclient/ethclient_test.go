@@ -753,21 +753,6 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	if gas != 21000 {
 		t.Fatalf("unexpected gas limit: %v", gas)
 	}
-
-	// Verify that sender address of pending transaction is saved in cache.
-	pendingBlock, err := ec.BlockByNumber(context.Background(), big.NewInt(int64(rpc.PendingBlockNumber)))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	// No additional RPC should be required, ensure the server is not asked by
-	// canceling the context.
-	sender, err := ec.TransactionSender(newCanceledContext(), pendingBlock.Transactions()[0], pendingBlock.Hash(), 0)
-	if err != nil {
-		t.Fatal("unable to recover sender:", err)
-	}
-	if sender != testAddr {
-		t.Fatal("wrong sender:", sender)
-	}
 }
 
 func testTransactionSender(t *testing.T, client *rpc.Client) {
