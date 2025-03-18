@@ -297,7 +297,6 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 			txHash = tx.Hash()
 		)
 		txes[i] = tx
-		senders[txHash] = call.from()
 		tracer.reset(txHash, uint(i))
 		sim.state.SetTxContext(txHash, i)
 		// EoA check is always skipped, even in validation mode.
