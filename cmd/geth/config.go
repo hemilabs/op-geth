@@ -253,6 +253,8 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			fullNodeTbcCfg.Seeds = ctx.StringSlice(utils.TBCSeeds.Name)
 		}
 
+		fullNodeTbcCfg.PeersWanted = 16
+
 		logLevel := "INFO"  // Anything 0-3 (silent to info) maps to "INFO" for TBC
 		if verbosity == 4 { // Geth debug = TBC TRACE
 			logLevel = "DEBUG"
@@ -302,7 +304,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				log.Crit("could not get best block header from TBC full node", "err", err)
 			}
 
-			log.Info(fmt.Sprintf("got best block header of %s",
+			log.Trace(fmt.Sprintf("got best block header of %s",
 				bhb.BlockHash().String()))
 
 			// Get the current indexer information and make sure both indexers are at the same height
@@ -335,6 +337,16 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				// At this point UTXO and Tx indexers are at the same height, so we can do everything based
 				// off the UTXO one. Check whether the indexers are above the genesis height, and if not index
 				// up to that height.
+
+				bhFullAvailable, err := vm.TBCFullNode.FullBlockAvailable(ctx.Context, genesisHash)
+				if err != nil {
+					log.Crit("Unable to check if hVM Phase 0 genesis is activated")
+				}
+
+				if !bhFullAvailable {
+					// Still in IBD and have not progressed to the hVM Phase 0 activation block
+					continue
+				}
 
 				if utxoHH.Height < genesisHeight {
 					// Safe to assume that a higher height means we are indexed past the effective genesis block
@@ -385,9 +397,10 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 								genesisHeader.BlockHash().String(), genesisHeight, missingHeaderHash.String()))
 						}
 
-						// If there are one or more blocks missing, attempt to refetch them
+						// If there are one or more blocks missing, attempt to refetch them, but only if there are
+						// not a lot of known missing blocks
 						if missingFullBlockHeaders != nil {
-							if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 {
+							if missingFullBlockHeaders != nil && len(*missingFullBlockHeaders) > 0 && len(*missingFullBlockHeaders) < 16 {
 								for i := 0; i < len(*missingFullBlockHeaders); i++ {
 									log.Warn(fmt.Sprintf("\tTBC missing full block: %s",
 										(*missingFullBlockHeaders)[i].BlockHash().String()))

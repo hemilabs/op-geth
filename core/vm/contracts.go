@@ -535,6 +535,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	height := targetHH.Height
 
 	// Walk backwards until our cursor matches the ancestor
+	missingCount := 0
 	for !bytes.Equal(cursorHash[:], ancestorToTargetHash[:]) {
 		log.Trace(fmt.Sprintf("Cursor of %s does not match ancestorToTarget of %s, continuing to walk backwards",
 			cursorHash.String(), ancestorToTargetHash.String()))
@@ -548,9 +549,16 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 			// missing full blocks as there could have previously been one or more missing full blocks identified.
 			return false, &missingFullBlocks, nil, err
 		}
+
 		if !available {
-			log.Warn(fmt.Sprintf("Full block for cursor %s not available",
-				cursorHash.String()))
+			missingCount++
+
+			if missingCount < 5 {
+				log.Trace(fmt.Sprintf("Full block for cursor %s not available",
+					cursorHash.String()))
+			} else if missingCount == 5 {
+				log.Trace(fmt.Sprintf("More than 5 full blocks missing, not printing additional missing blocks"))
+			}
 
 			missingFullBlocks = append(missingFullBlocks, *cursor)
 			// Do not return yet, so we can collect potentially multiple missing full blocks
