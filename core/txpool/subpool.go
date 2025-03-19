@@ -137,15 +137,10 @@ type SubPool interface {
 	// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
 	GetRLP(hash common.Hash) []byte
 
-	// GetMetadata returns the transaction type and transaction size with the
-	// given transaction hash.
-	GetMetadata(hash common.Hash) *TxMetadata
-
-	// ValidateTxBasics checks whether a transaction is valid according to the consensus
-	// rules, but does not check state-dependent validation such as sufficient balance.
-	// This check is meant as a static check which can be performed without holding the
-	// pool mutex.
-	ValidateTxBasics(tx *types.Transaction) error
+	// GetBlobs returns a number of blobs are proofs for the given versioned hashes.
+	// This is a utility method for the engine API, enabling consensus clients to
+	// retrieve blobs from the pools directly instead of the network.
+	GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof)
 
 	// ValidateTxBasics checks whether a transaction is valid according to the consensus
 	// rules, but does not check state-dependent validation such as sufficient balance.

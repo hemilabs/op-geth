@@ -1265,26 +1265,7 @@ func (p *BlobPool) GetRLP(hash common.Hash) []byte {
 	return p.getRLP(hash)
 }
 
-// GetMetadata returns the transaction type and transaction size with the
-// given transaction hash.
-//
-// The size refers the length of the 'rlp encoding' of a blob transaction
-// including the attached blobs.
-func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
-	p.lock.RLock()
-	defer p.lock.RUnlock()
-
-	size, ok := p.lookup.sizeOfTx(hash)
-	if !ok {
-		return nil
-	}
-	return &txpool.TxMetadata{
-		Type: types.BlobTxType,
-		Size: size,
-	}
-}
-
-// GetBlobs returns a number of blobs and proofs for the given versioned hashes.
+// GetBlobs returns a number of blobs are proofs for the given versioned hashes.
 // This is a utility method for the engine API, enabling consensus clients to
 // retrieve blobs from the pools directly instead of the network.
 func (p *BlobPool) GetBlobs(vhashes []common.Hash, version byte) ([]*kzg4844.Blob, []kzg4844.Commitment, [][]kzg4844.Proof, error) {
