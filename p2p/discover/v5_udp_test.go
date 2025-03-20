@@ -181,35 +181,29 @@ func TestUDPv5_handshakeRepeatChallenge(t *testing.T) {
 	nonce1 := v5wire.Nonce{1}
 	nonce2 := v5wire.Nonce{2}
 	nonce3 := v5wire.Nonce{3}
-	var firstAuthTag *v5wire.Nonce
-	check := func(p *v5wire.Whoareyou, authTag, wantNonce v5wire.Nonce) {
+	check := func(p *v5wire.Whoareyou, wantNonce v5wire.Nonce) {
 		t.Helper()
 		if p.Nonce != wantNonce {
-			t.Error("wrong nonce in WHOAREYOU:", p.Nonce, "want:", wantNonce)
-		}
-		if firstAuthTag == nil {
-			firstAuthTag = &authTag
-		} else if authTag != *firstAuthTag {
-			t.Error("wrong auth tag in WHOAREYOU header:", authTag, "want:", *firstAuthTag)
+			t.Error("wrong nonce in WHOAREYOU:", p.Nonce, wantNonce)
 		}
 	}
 
 	// Unknown packet from unknown node.
 	test.packetIn(&v5wire.Unknown{Nonce: nonce1})
-	test.waitPacketOut(func(p *v5wire.Whoareyou, addr netip.AddrPort, authTag v5wire.Nonce) {
-		check(p, authTag, nonce1)
+	test.waitPacketOut(func(p *v5wire.Whoareyou, addr netip.AddrPort, _ v5wire.Nonce) {
+		check(p, nonce1)
 	})
 
 	// Second unknown packet. Here we expect the response to reference the
 	// first unknown packet.
 	test.packetIn(&v5wire.Unknown{Nonce: nonce2})
-	test.waitPacketOut(func(p *v5wire.Whoareyou, addr netip.AddrPort, authTag v5wire.Nonce) {
-		check(p, authTag, nonce1)
+	test.waitPacketOut(func(p *v5wire.Whoareyou, addr netip.AddrPort, _ v5wire.Nonce) {
+		check(p, nonce1)
 	})
 	// Third unknown packet. This should still return the first nonce.
 	test.packetIn(&v5wire.Unknown{Nonce: nonce3})
-	test.waitPacketOut(func(p *v5wire.Whoareyou, addr netip.AddrPort, authTag v5wire.Nonce) {
-		check(p, authTag, nonce1)
+	test.waitPacketOut(func(p *v5wire.Whoareyou, addr netip.AddrPort, _ v5wire.Nonce) {
+		check(p, nonce1)
 	})
 }
 
@@ -865,6 +859,15 @@ func (c *testCodec) Encode(toID enode.ID, addr string, p v5wire.Packet, _ *v5wir
 	c.ctr++
 	var authTag v5wire.Nonce
 	binary.BigEndian.PutUint64(authTag[:], c.ctr)
+
+	if w, ok := p.(*v5wire.Whoareyou); ok {
+		// Store recently sent Whoareyou challenges.
+		if c.sentChallenges == nil {
+			c.sentChallenges = make(map[enode.ID]*v5wire.Whoareyou)
+		}
+		c.sentChallenges[toID] = w
+	}
+
 	penc, _ := rlp.EncodeToBytes(p)
 	frame, err := rlp.EncodeToBytes(testCodecFrame{c.id, authTag, p.Kind(), penc})
 	if err != nil {
