@@ -67,6 +67,10 @@ var (
 	// nonce received from the accounts with delegation or pending delegation.
 	ErrOutOfOrderTxFromDelegated = errors.New("gapped-nonce tx from delegated accounts")
 
+	// ErrOutOfOrderTxFromDelegated is returned when the transaction with gapped
+	// nonce received from the accounts with delegation or pending delegation.
+	ErrOutOfOrderTxFromDelegated = errors.New("gapped-nonce tx from delegated accounts")
+
 	// ErrAuthorityReserved is returned if a transaction has an authorization
 	// signed by an address which already has in-flight transactions known to the
 	// pool.
@@ -697,7 +701,7 @@ func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
 	from, _ := types.Sender(pool.signer, tx) // validated
 
 	// Short circuit if the sender has neither delegation nor pending delegation.
-	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && !pool.all.hasAuth(from) {
+	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && len(pool.all.auths[from]) == 0 {
 		return nil
 	}
 	pending := pool.pending[from]
@@ -712,7 +716,7 @@ func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
 	if pending.Contains(tx.Nonce()) {
 		return nil
 	}
-	return txpool.ErrInflightTxLimitReached
+	return ErrInflightTxLimitReached
 }
 
 // validateAuth verifies that the transaction complies with code authorization
