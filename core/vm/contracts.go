@@ -226,12 +226,7 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 	log.Info("TBCIndexToHashHight called with target", "target", targetHH.String())
 	// Check for indexer desync and attempt to fix.
-	err := FixMismatchedIndexesIfRequired()
-	if err != nil {
-		// Critical error as TBC full node indexers are in a bad state
-		log.Crit(fmt.Sprintf("Unable to fix mismatched indexes when attempting to move TBC full node indexers "+
-			"to %s @ %d", targetHH.Hash.String(), targetHH.Height))
-	}
+	FixMismatchedIndexesIfRequired(context.Background())
 
 	targetHash := targetHH.Hash
 
@@ -339,64 +334,26 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 	return nil
 }
 
-// FixMismatchedIndexesIfRequired checks if the UTXO and TX indexers do not match,
-// and if they don't walks both of them back to the highest common ancestor.
-// This should only ever be required if something like an unclean
-// shutdown resulted in TBC's indexers being off.
-func FixMismatchedIndexesIfRequired() error {
-	// Critical error if error encountered getting either UTXO or Tx indexing information
-	// as this indicates TBC is unable to get basic indexing metadata or the header
-	//corresponding to a block that should already be indexed, likely data corruption.
-	uIndexInfo, err := TBCFullNode.UtxoIndexHash(context.Background())
+// FixMismatchedIndexesIfRequired moves both utxo and tx index to the utxo
+// index's hash
+func FixMismatchedIndexesIfRequired(ctx context.Context) {
+	uIndexInfo, err := TBCFullNode.UtxoIndexHash(ctx)
 	if err != nil {
 		log.Crit("Unable to get UtxoIndexHash", "err", err)
 	}
-	tIndexInfo, err := TBCFullNode.TxIndexHash(context.Background())
+
+	log.Info("going to sync indexers to utxo hash")
+	err = TBCFullNode.SyncIndexersToHash(context.Background(), uIndexInfo.Hash)
 	if err != nil {
-		log.Crit("Unable to get TxIndexHash", "err", err)
-	}
-
-	if !hashEquals(uIndexInfo.Hash, tIndexInfo.Hash) {
-		// Find the common ancestor
-		ancestor, ancestorHeight, missingHash, _, err := FindCommonAncestor(uIndexInfo, tIndexInfo)
-
-		missingHashStr := "" // For logging, here to avoid redundancy
-		if missingHash != nil {
-			missingHashStr = missingHash.String()
-		}
+		tIndexInfo, err := TBCFullNode.TxIndexHash(ctx)
 		if err != nil {
-			log.Error(fmt.Sprintf("Unable to find common ancestor between Utxo and Tx indexers! "+
-				"Utxo indexed to: %s, Tx indexed to: %s, encountered error fetching header for block %s",
-				uIndexInfo.Hash.String(), tIndexInfo.Hash.String(), missingHashStr), "err", err)
-			return err
-		}
-		if ancestor == nil {
-			// Should not be possible as FindCommonAncestor should always return an error if the ancestor not found
-			log.Error(fmt.Sprintf("Unable to find common ancestor between Utxo and Tx indexers but "+
-				"no error was encountered! Utxo indexed to: %s, Tx indexed to: %s, encountered error fetching "+
-				"header for block %s", uIndexInfo.Hash.String(), tIndexInfo.Hash.String(), missingHashStr))
-			return fmt.Errorf("unable to find common ancestor between indexers but no error returned")
+			log.Crit("Unable to get TxIndexHash", "err", err)
 		}
 
-		// Warn as this indicates something went wrong, but we can probably recover
-		log.Warn(fmt.Sprintf("Fixing mismatched UTXO and Tx indexes, UTXO indexer is at %s @ %d, "+
-			"Tx indexer is at %s @ %d, common ancestor is %s @ %d", uIndexInfo.Hash.String(), uIndexInfo.Height,
-			tIndexInfo.Hash.String(), tIndexInfo.Height, ancestor.BlockHash().String(), ancestorHeight))
-
-		ancestorHash := ancestor.BlockHash()
-
-		// Rewind both to common ancestor
-		err = TBCFullNode.SyncIndexersToHash(context.Background(), ancestorHash)
-		if err != nil {
-			// Critical as
-			log.Crit(fmt.Sprintf("Unable to repair indexer desync by moving indexers "+
-				"from utxo: %s @ %d and tx: %s @ %d to common ancestor %s @ %d", uIndexInfo.Hash.String(),
-				uIndexInfo.Height, tIndexInfo.Hash.String(), tIndexInfo.Height, ancestor.BlockHash().String(),
-				ancestorHeight), "err", err)
-		}
+		log.Crit(fmt.Sprintf("Unable to move tx indexer up to utxo indexer "+
+			"utxo: %s @ %d, tx: %s @ %d", uIndexInfo.Hash.String(),
+			uIndexInfo.Height, tIndexInfo.Hash.String(), tIndexInfo.Height), "err", err)
 	}
-
-	return nil
 }
 
 // TBCIndexToHeader is a convenience pass-through to TBCIndexToHashHeight with
