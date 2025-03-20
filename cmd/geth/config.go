@@ -311,7 +311,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			syncInfo = *vm.GetTBCFullNodeSyncStatus()
 
 			utxoHH := syncInfo.Utxo
-			txHH := syncInfo.Tx
 
 			vm.FixMismatchedIndexesIfRequired(ctx.Context)
 
