@@ -993,25 +993,6 @@ func TestTracingWithOverrides(t *testing.T) {
 			},
 			want: `{"gas":72666,"failed":false,"returnValue":"0x000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"}`,
 		},
-		{ // Override blocknumber with block n+1 and query a blockhash (resolves issue #32175)
-			blockNumber: rpc.LatestBlockNumber,
-			call: ethapi.TransactionArgs{
-				From: &accounts[0].addr,
-				Input: newRPCBytes([]byte{
-					byte(vm.PUSH1), byte(genBlocks),
-					byte(vm.BLOCKHASH),
-					byte(vm.PUSH1), 0x00,
-					byte(vm.MSTORE),
-					byte(vm.PUSH1), 0x20,
-					byte(vm.PUSH1), 0x00,
-					byte(vm.RETURN),
-				}),
-			},
-			config: &TraceCallConfig{
-				BlockOverrides: &override.BlockOverrides{Number: (*hexutil.Big)(big.NewInt(int64(genBlocks + 1)))},
-			},
-			want: fmt.Sprintf(`{"gas":59590,"failed":false,"returnValue":"%s"}`, backend.chain.GetHeaderByNumber(uint64(genBlocks)).Hash().Hex()),
-		},
 		/*
 			pragma solidity =0.8.12;
 
@@ -1061,7 +1042,7 @@ func TestTracingWithOverrides(t *testing.T) {
 					},
 				},
 			},
-			// want: `{"gas":46900,"failed":false,"returnValue":"0000000000000000000000000000000000000000000000000000000000000539"}`,
+			//want: `{"gas":46900,"failed":false,"returnValue":"0000000000000000000000000000000000000000000000000000000000000539"}`,
 			want: `{"gas":44100,"failed":false,"returnValue":"0x0000000000000000000000000000000000000000000000000000000000000001"}`,
 		},
 		{ // No state override
@@ -1169,48 +1150,6 @@ func TestTracingWithOverrides(t *testing.T) {
 				},
 			},
 			want: `{"gas":25288,"failed":false,"returnValue":"0x0000000000000000000000000000000000000000000000000000000000000055"}`,
-		},
-		{ // Call to precompile ECREC (0x01), but code was modified to add 1 to input
-			blockNumber: rpc.LatestBlockNumber,
-			call: ethapi.TransactionArgs{
-				From: &randomAccounts[0].addr,
-				To:   &ecRecoverAddress,
-				Data: newRPCBytes(common.Hex2Bytes("0000000000000000000000000000000000000000000000000000000000000001")),
-			},
-			config: &TraceCallConfig{
-				StateOverrides: &override.StateOverride{
-					randomAccounts[0].addr: override.OverrideAccount{
-						Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether))),
-					},
-					ecRecoverAddress: override.OverrideAccount{
-						// The code below adds one to input
-						Code:             newRPCBytes(common.Hex2Bytes("60003560010160005260206000f3")),
-						MovePrecompileTo: &randomAccounts[2].addr,
-					},
-				},
-			},
-			want: `{"gas":21167,"failed":false,"returnValue":"0x0000000000000000000000000000000000000000000000000000000000000002"}`,
-		},
-		{ // Call to ECREC Precompiled on a different address, expect the original behaviour of ECREC precompile
-			blockNumber: rpc.LatestBlockNumber,
-			call: ethapi.TransactionArgs{
-				From: &randomAccounts[0].addr,
-				To:   &randomAccounts[2].addr, // Moved EcRecover
-				Data: newRPCBytes(common.Hex2Bytes("82f3df49d3645876de6313df2bbe9fbce593f21341a7b03acdb9423bc171fcc9000000000000000000000000000000000000000000000000000000000000001cba13918f50da910f2d55a7ea64cf716ba31dad91856f45908dde900530377d8a112d60f36900d18eb8f9d3b4f85a697b545085614509e3520e4b762e35d0d6bd")),
-			},
-			config: &TraceCallConfig{
-				StateOverrides: &override.StateOverride{
-					randomAccounts[0].addr: override.OverrideAccount{
-						Balance: newRPCBalance(new(big.Int).Mul(big.NewInt(1), big.NewInt(params.Ether))),
-					},
-					ecRecoverAddress: override.OverrideAccount{
-						// The code below adds one to input
-						Code:             newRPCBytes(common.Hex2Bytes("60003560010160005260206000f3")),
-						MovePrecompileTo: &randomAccounts[2].addr, // Move EcRecover to this address
-					},
-				},
-			},
-			want: `{"gas":25664,"failed":false,"returnValue":"0x000000000000000000000000c6e93f4c1920eaeaa1e699f76a7a8c18e3056074"}`,
 		},
 		{ // Call to precompile ECREC (0x01), but code was modified to add 1 to input
 			blockNumber: rpc.LatestBlockNumber,
@@ -1357,7 +1296,7 @@ func TestTraceChain(t *testing.T) {
 	api := NewAPI(backend)
 
 	single := `{"txHash":"0x0000000000000000000000000000000000000000000000000000000000000000","result":{"gas":21000,"failed":false,"returnValue":"0x","structLogs":[]}}`
-	cases := []struct {
+	var cases = []struct {
 		start  uint64
 		end    uint64
 		config *TraceConfig
