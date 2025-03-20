@@ -343,7 +343,7 @@ func FixMismatchedIndexesIfRequired(ctx context.Context) {
 	}
 
 	log.Info("going to sync indexers to utxo hash")
-	err = TBCFullNode.SyncIndexersToHash(context.Background(), uIndexInfo.Hash)
+	err = TBCFullNode.SyncIndexersToHash(ctx, uIndexInfo.Hash)
 	if err != nil {
 		tIndexInfo, err := TBCFullNode.TxIndexHash(ctx)
 		if err != nil {
