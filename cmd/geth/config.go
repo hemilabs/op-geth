@@ -225,7 +225,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	// TODO: expose debug.verbosityFlag or pass verbosity setting up the stack
 	verbosity := ctx.Int("verbosity")
 
-	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+	backend, eth := utils.RegisterEthService(stack, &cfg.Eth, ctx.Context)
 
 	if cfg.Eth.HvmEnabled {
 		// Before starting up any other services, make sure TBC is in correct initial state

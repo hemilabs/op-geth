@@ -65,6 +65,8 @@ const (
 	ReceiptsMsg                   = 0x10
 	GetBtcBlocksMsg               = 0x11
 	BtcBlocksMsg                  = 0x12
+	GetHvmLightStateMsg           = 0x13
+	HvmLightStateMsg              = 0x14
 )
 
 var (
@@ -368,6 +370,57 @@ func (p *BTCBlocksResponse) Unpack() []*common.BitcoinBlock {
 	return blockset
 }
 
+func HashToHvmLightStateRequest(hash common.Hash) GetHvmLightStateRequest {
+	var h GetHvmLightStateRequest
+	h.SetBytes(hash.Bytes())
+	return h
+}
+
+func (h *GetHvmLightStateRequest) SetBytes(b []byte) {
+	if len(b) > len(h) {
+		b = b[len(b)-32:]
+	}
+
+	copy(h[32-len(b):], b)
+}
+
+// GetHvmLightStateRequest represents a hVM Light State query.
+// Caller sends the hash of their current tip block and receives back the
+// last full block containing a BTCAttrDep tx and headers connecting that
+// block to their tip
+type GetHvmLightStateRequest common.Hash
+
+// GetHvmLightStatePacket represents a hVM Light State query with request ID wrapping.
+type GetHvmLightStatePacket struct {
+	RequestId uint64
+	GetHvmLightStateRequest
+}
+
+// HvmLightStateResponse is the network packet for communicating a backwards
+// lightweight proof to the most recent Bitcoin Attributes Deposited tx
+type HvmLightStateResponse struct {
+	Headers []*types.Header // Headers connecting the block
+	Block   *types.Block    // The block containing the most recent hVM state
+}
+
+// HvmLightStatePacket is the network packet for communicating a backwards
+// lightweight proof to the most recent Bitcoin Attributes Deposited tx
+type HvmLightStatePacket struct {
+	RequestId uint64
+	HvmLightStateResponse
+}
+
+// HvmLightStateRLPResponse is used for replying to hVM Light State requests, in cases
+// where we already have them RLP-encoded, and thus can avoid the decode-encode
+// roundtrip.
+type HvmLightStateRLPResponse []rlp.RawValue
+
+// HvmLightStateRLPPacket is the HvmLightStateRLPResponse with request ID wrapping.
+type HvmLightStateRLPPacket struct {
+	RequestId uint64
+	HvmLightStateRLPResponse
+}
+
 func (*StatusPacket) Name() string { return "Status" }
 func (*StatusPacket) Kind() byte   { return StatusMsg }
 
@@ -414,3 +467,9 @@ func (*GetBTCBlocksRequest) Kind() byte   { return GetBtcBlocksMsg }
 
 func (*BTCBlocksResponse) Name() string { return "BtcBlocks" }
 func (*BTCBlocksResponse) Kind() byte   { return BtcBlocksMsg }
+
+func (*GetHvmLightStateRequest) Name() string { return "GetHvmLightState" }
+func (*GetHvmLightStateRequest) Kind() byte   { return GetHvmLightStateMsg }
+
+func (*HvmLightStateResponse) Name() string { return "HvmLightState" }
+func (*HvmLightStateResponse) Kind() byte   { return HvmLightStateMsg }
