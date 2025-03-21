@@ -38,7 +38,6 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state/pruner"
@@ -116,9 +115,6 @@ type Ethereum struct {
 	eventMux       *event.TypeMux
 	engine         consensus.Engine
 	accountManager *accounts.Manager
-
-	filterMaps      *filtermaps.FilterMaps
-	closeFilterMaps chan chan struct{}
 
 	filterMaps      *filtermaps.FilterMaps
 	closeFilterMaps chan chan struct{}
@@ -225,11 +221,8 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		networkID:       networkID,
 		gasPrice:        config.Miner.GasPrice,
 		p2pServer:       stack.Server(),
-		discmix:         enode.NewFairMix(discmixTimeout),
+		discmix:         enode.NewFairMix(0),
 		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
-
-		// OP-Stack addition
-		nodeCloser: stack.Close,
 	}
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
 	dbVer := "<nil>"
@@ -361,7 +354,6 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	if err != nil {
 		return nil, err
 	}
-	eth.bloomIndexer.Start(eth.blockchain)
 	fmConfig := filtermaps.Config{History: config.LogHistory, Disabled: config.LogNoHistory, ExportFileName: config.LogExportCheckpoints}
 	chainView := eth.newChainView(eth.blockchain.CurrentBlock())
 	eth.filterMaps = filtermaps.NewFilterMaps(chainDb, chainView, 0, 0, filtermaps.DefaultParams, fmConfig)
@@ -720,8 +712,6 @@ func (s *Ethereum) Stop() error {
 	s.handler.Stop()
 
 	// Then stop everything else.
-	s.bloomIndexer.Close()
-	close(s.closeBloomHandler)
 	ch := make(chan struct{})
 	s.closeFilterMaps <- ch
 	<-ch

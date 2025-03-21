@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/bloombits"
 	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
@@ -458,18 +457,6 @@ func (b *EthAPIBackend) RPCEVMTimeout() time.Duration {
 
 func (b *EthAPIBackend) RPCTxFeeCap() float64 {
 	return b.eth.config.RPCTxFeeCap
-}
-
-func (b *EthAPIBackend) CurrentView() *filtermaps.ChainView {
-	head := b.eth.blockchain.CurrentBlock()
-	if head == nil {
-		return nil
-	}
-	return filtermaps.NewChainView(b.eth.blockchain, head.Number.Uint64(), head.Hash())
-}
-
-func (b *EthAPIBackend) NewMatcherBackend() filtermaps.MatcherBackend {
-	return b.eth.filterMaps.NewMatcherBackend()
 }
 
 func (b *EthAPIBackend) NewMatcherBackend() filtermaps.MatcherBackend {

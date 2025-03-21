@@ -226,212 +226,6 @@ func ReadCanonicalReceipt(db ethdb.Reader, hash common.Hash, config *params.Chai
 	return nil, common.Hash{}, 0, 0
 }
 
-// extractReceiptFields takes a raw RLP-encoded receipt blob and extracts
-// specific fields from it.
-func extractReceiptFields(receiptRLP rlp.RawValue) (uint64, uint, error) {
-	receiptList, _, err := rlp.SplitList(receiptRLP)
-	if err != nil {
-		return 0, 0, err
-	}
-	// Decode the field: receipt status
-	// for receipt before the byzantium fork:
-	// - bytes: post state root
-	// for receipt after the byzantium fork:
-	// - bytes: receipt status flag
-	_, _, rest, err := rlp.Split(receiptList)
-	if err != nil {
-		return 0, 0, err
-	}
-	// Decode the field: cumulative gas used (type: uint64)
-	gasUsed, rest, err := rlp.SplitUint64(rest)
-	if err != nil {
-		return 0, 0, err
-	}
-	// Decode the field: logs (type: rlp list)
-	logList, _, err := rlp.SplitList(rest)
-	if err != nil {
-		return 0, 0, err
-	}
-	logCount, err := rlp.CountValues(logList)
-	if err != nil {
-		return 0, 0, err
-	}
-	return gasUsed, uint(logCount), nil
-}
-
-// RawReceiptContext carries the contextual information that is needed to derive
-// a complete receipt from a raw one.
-type RawReceiptContext struct {
-	GasUsed  uint64 // Amount of gas used by the associated transaction
-	LogIndex uint   // Starting index of the logs within the block
-}
-
-// ReadCanonicalRawReceipt reads a raw receipt at the specified position. It also
-// returns the gas used by the associated transaction and the starting index of
-// the logs within the block. The main difference with ReadCanonicalReceipt is
-// that the additional positional fields are not directly included in the receipt.
-// Notably, only receipts from the canonical chain are visible.
-func ReadCanonicalRawReceipt(db ethdb.Reader, blockHash common.Hash, blockNumber, txIndex uint64) (*types.Receipt, RawReceiptContext, error) {
-	receiptIt, err := rlp.NewListIterator(ReadCanonicalReceiptsRLP(db, blockNumber, &blockHash))
-	if err != nil {
-		return nil, RawReceiptContext{}, err
-	}
-	var (
-		cumulativeGasUsed uint64
-		logIndex          uint
-	)
-	for i := uint64(0); i <= txIndex; i++ {
-		// Unexpected iteration error
-		if receiptIt.Err() != nil {
-			return nil, RawReceiptContext{}, receiptIt.Err()
-		}
-		// Unexpected end of iteration
-		if !receiptIt.Next() {
-			return nil, RawReceiptContext{}, fmt.Errorf("receipt not found, %d, %x, %d", blockNumber, blockHash, txIndex)
-		}
-		if i == txIndex {
-			var stored types.ReceiptForStorage
-			if err := rlp.DecodeBytes(receiptIt.Value(), &stored); err != nil {
-				return nil, RawReceiptContext{}, err
-			}
-			return (*types.Receipt)(&stored), RawReceiptContext{
-				GasUsed:  stored.CumulativeGasUsed - cumulativeGasUsed,
-				LogIndex: logIndex,
-			}, nil
-		} else {
-			gas, logs, err := extractReceiptFields(receiptIt.Value())
-			if err != nil {
-				return nil, RawReceiptContext{}, err
-			}
-			cumulativeGasUsed = gas
-			logIndex += logs
-		}
-	}
-	return nil, RawReceiptContext{}, fmt.Errorf("receipt not found, %d, %x, %d", blockNumber, blockHash, txIndex)
-}
-
-// ReadFilterMapExtRow retrieves a filter map row at the given mapRowIndex
-// (see filtermaps.mapRowIndex for the storage index encoding).
-// Note that zero length rows are not stored in the database and therefore all
-// non-existent entries are interpreted as empty rows and return no error.
-// Also note that the mapRowIndex indexing scheme is the same as the one
-// proposed in EIP-7745 for tree-hashing the filter map structure and for the
-// same data proximity reasons it is also suitable for database representation.
-// See also:
-// https://eips.ethereum.org/EIPS/eip-7745#hash-tree-structure
-func ReadFilterMapExtRow(db ethdb.KeyValueReader, mapRowIndex uint64, bitLength uint) ([]uint32, error) {
-	byteLength := int(bitLength) / 8
-	if int(bitLength) != byteLength*8 {
-		panic("invalid bit length")
-	}
-	key := filterMapRowKey(mapRowIndex, false)
-	has, err := db.Has(key)
-	if err != nil {
-		return nil, err
-	}
-	if !has {
-		return nil, nil
-	}
-	encRow, err := db.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	if len(encRow)%byteLength != 0 {
-		return nil, errors.New("invalid encoded extended filter row length")
-	}
-	row := make([]uint32, len(encRow)/byteLength)
-	var b [4]byte
-	for i := range row {
-		copy(b[:byteLength], encRow[i*byteLength:(i+1)*byteLength])
-		row[i] = binary.LittleEndian.Uint32(b[:])
-	}
-	return row, nil
-}
-
-func ReadFilterMapBaseRows(db ethdb.KeyValueReader, mapRowIndex uint64, rowCount uint32, bitLength uint) ([][]uint32, error) {
-	byteLength := int(bitLength) / 8
-	if int(bitLength) != byteLength*8 {
-		panic("invalid bit length")
-	}
-	key := filterMapRowKey(mapRowIndex, true)
-	has, err := db.Has(key)
-	if err != nil {
-		return nil, err
-	}
-	rows := make([][]uint32, rowCount)
-	if !has {
-		return rows, nil
-	}
-	encRows, err := db.Get(key)
-	if err != nil {
-		return nil, err
-	}
-	encLen := len(encRows)
-	var (
-		entryCount, entriesInRow, rowIndex, headerLen, headerBits int
-		headerByte                                                byte
-	)
-	for headerLen+byteLength*entryCount < encLen {
-		if headerBits == 0 {
-			headerByte = encRows[headerLen]
-			headerLen++
-			headerBits = 8
-		}
-		if headerByte&1 > 0 {
-			entriesInRow++
-			entryCount++
-		} else {
-			if entriesInRow > 0 {
-				rows[rowIndex] = make([]uint32, entriesInRow)
-				entriesInRow = 0
-			}
-			rowIndex++
-		}
-		headerByte >>= 1
-		headerBits--
-	}
-	if headerLen+byteLength*entryCount > encLen {
-		return nil, errors.New("invalid encoded base filter rows length")
-	}
-	if entriesInRow > 0 {
-		rows[rowIndex] = make([]uint32, entriesInRow)
-	}
-	nextEntry := headerLen
-	for _, row := range rows {
-		for i := range row {
-			var b [4]byte
-			copy(b[:byteLength], encRows[nextEntry:nextEntry+byteLength])
-			row[i] = binary.LittleEndian.Uint32(b[:])
-			nextEntry += byteLength
-		}
-	}
-	return rows, nil
-}
-
-// WriteFilterMapExtRow stores an extended filter map row at the given mapRowIndex
-// or deletes any existing entry if the row is empty.
-func WriteFilterMapExtRow(db ethdb.KeyValueWriter, mapRowIndex uint64, row []uint32, bitLength uint) {
-	byteLength := int(bitLength) / 8
-	if int(bitLength) != byteLength*8 {
-		panic("invalid bit length")
-	}
-	var err error
-	if len(row) > 0 {
-		encRow := make([]byte, len(row)*byteLength)
-		for i, c := range row {
-			var b [4]byte
-			binary.LittleEndian.PutUint32(b[:], c)
-			copy(encRow[i*byteLength:(i+1)*byteLength], b[:byteLength])
-		}
-		err = db.Put(filterMapRowKey(mapRowIndex, false), encRow)
-	} else {
-		err = db.Delete(filterMapRowKey(mapRowIndex, false))
-	}
-	if err != nil {
-		log.Crit("Failed to store extended filter map row", "err", err)
-	}
-}
-
 // ReadFilterMapRow retrieves a filter map row at the given mapRowIndex
 // (see filtermaps.mapRowIndex for the storage index encoding).
 // Note that zero length rows are not stored in the database and therefore all
@@ -734,4 +528,25 @@ func DeleteFilterMapsRange(db ethdb.KeyValueWriter) {
 	if err := db.Delete(filterMapsRangeKey); err != nil {
 		log.Crit("Failed to delete filter maps range", "err", err)
 	}
+}
+
+// deletePrefixRange deletes everything with the given prefix from the database.
+func deletePrefixRange(db ethdb.KeyValueRangeDeleter, prefix []byte) error {
+	end := bytes.Clone(prefix)
+	end[len(end)-1]++
+	return db.DeleteRange(prefix, end)
+}
+
+// DeleteFilterMapsDb removes the entire filter maps database
+func DeleteFilterMapsDb(db ethdb.KeyValueRangeDeleter) error {
+	return deletePrefixRange(db, []byte(filterMapsPrefix))
+}
+
+// DeleteFilterMapsDb removes the old bloombits database and the associated
+// chain indexer database.
+func DeleteBloomBitsDb(db ethdb.KeyValueRangeDeleter) error {
+	if err := deletePrefixRange(db, bloomBitsPrefix); err != nil {
+		return err
+	}
+	return deletePrefixRange(db, bloomBitsIndexPrefix)
 }
