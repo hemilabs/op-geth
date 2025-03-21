@@ -121,8 +121,9 @@ func TestTxIndexer(t *testing.T) {
 
 		// Index the initial blocks from ancient store
 		indexer := &txIndexer{
-			limit: 0,
-			db:    db,
+			limit:    0,
+			db:       db,
+			progress: make(chan chan TxIndexProgress),
 		}
 		for i, limit := range c.limits {
 			indexer.limit = limit
@@ -235,14 +236,14 @@ func TestTxIndexerRepair(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		db, _ := rawdb.Open(rawdb.NewMemoryDatabase(), rawdb.OpenOptions{})
-		encReceipts := types.EncodeBlockReceiptLists(append([]types.Receipts{{}}, receipts...))
-		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), encReceipts)
+		db, _ := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), "", "", false)
+		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), append([]types.Receipts{{}}, receipts...))
 
 		// Index the initial blocks from ancient store
 		indexer := &txIndexer{
-			limit: c.limit,
-			db:    db,
+			limit:    c.limit,
+			db:       db,
+			progress: make(chan chan TxIndexProgress),
 		}
 		indexer.run(chainHead, make(chan struct{}), make(chan struct{}))
 
@@ -426,17 +427,20 @@ func TestTxIndexerReport(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		db, _ := rawdb.Open(rawdb.NewMemoryDatabase(), rawdb.OpenOptions{})
-		encReceipts := types.EncodeBlockReceiptLists(append([]types.Receipts{{}}, receipts...))
-		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), encReceipts)
+		db, _ := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), "", "", false)
+		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), append([]types.Receipts{{}}, receipts...))
 
 		// Index the initial blocks from ancient store
 		indexer := &txIndexer{
-			limit:  c.limit,
-			cutoff: c.cutoff,
-			db:     db,
+			limit:    c.limit,
+			cutoff:   c.cutoff,
+			db:       db,
+			progress: make(chan chan TxIndexProgress),
 		}
-		p := indexer.report(c.head, c.tail)
+		if c.tail != nil {
+			rawdb.WriteTxIndexTail(db, *c.tail)
+		}
+		p := indexer.report(c.head)
 		if p.Indexed != c.expIndexed {
 			t.Fatalf("Unexpected indexed: %d, expected: %d", p.Indexed, c.expIndexed)
 		}

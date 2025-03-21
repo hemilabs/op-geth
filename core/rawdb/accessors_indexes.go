@@ -40,11 +40,7 @@ func DecodeTxLookupEntry(data []byte, db ethdb.Reader) *uint64 {
 	}
 	// Database v4-v5 tx lookup format just stores the hash
 	if len(data) == common.HashLength {
-		number, ok := ReadHeaderNumber(db, common.BytesToHash(data))
-		if !ok {
-			return nil
-		}
-		return &number
+		return ReadHeaderNumber(db, common.BytesToHash(data))
 	}
 	// Finally try database v3 tx lookup format
 	var entry LegacyTxLookupEntry
@@ -108,14 +104,13 @@ func DeleteTxLookupEntries(db ethdb.KeyValueWriter, hashes []common.Hash) {
 // DeleteAllTxLookupEntries purges all the transaction indexes in the database.
 // If condition is specified, only the entry with condition as True will be
 // removed; If condition is not specified, the entry is deleted.
-func DeleteAllTxLookupEntries(db ethdb.KeyValueStore, condition func(common.Hash, []byte) bool) {
+func DeleteAllTxLookupEntries(db ethdb.KeyValueStore, condition func([]byte) bool) {
 	iter := NewKeyLengthIterator(db.NewIterator(txLookupPrefix, nil), common.HashLength+len(txLookupPrefix))
 	defer iter.Release()
 
 	batch := db.NewBatch()
 	for iter.Next() {
-		txhash := common.Hash(iter.Key()[1:])
-		if condition == nil || condition(txhash, iter.Value()) {
+		if condition == nil || condition(iter.Value()) {
 			batch.Delete(iter.Key())
 		}
 		if batch.ValueSize() >= ethdb.IdealBatchSize {
@@ -133,50 +128,9 @@ func DeleteAllTxLookupEntries(db ethdb.KeyValueStore, condition func(common.Hash
 	}
 }
 
-// findTxInBlockBody traverses the given RLP-encoded block body, searching for
-// the transaction specified by its hash.
-func findTxInBlockBody(blockbody rlp.RawValue, target common.Hash) (*types.Transaction, uint64, error) {
-	txnListRLP, _, err := rlp.SplitList(blockbody)
-	if err != nil {
-		return nil, 0, err
-	}
-	iter, err := rlp.NewListIterator(txnListRLP)
-	if err != nil {
-		return nil, 0, err
-	}
-	txIndex := uint64(0)
-	for iter.Next() {
-		if iter.Err() != nil {
-			return nil, 0, err
-		}
-		// The preimage for the hash calculation of legacy transactions
-		// is just their RLP encoding. For typed (EIP-2718) transactions,
-		// which are encoded as byte arrays, the preimage is the content of
-		// the byte array, so trim their prefix here.
-		txRLP := iter.Value()
-		kind, txHashPayload, _, err := rlp.Split(txRLP)
-		if err != nil {
-			return nil, 0, err
-		}
-		if kind == rlp.List { // Legacy transaction
-			txHashPayload = txRLP
-		}
-		if crypto.Keccak256Hash(txHashPayload) == target {
-			var tx types.Transaction
-			if err := rlp.DecodeBytes(txRLP, &tx); err != nil {
-				return nil, 0, err
-			}
-			return &tx, txIndex, nil
-		}
-		txIndex++
-	}
-	return nil, 0, errors.New("transaction not found")
-}
-
-// ReadCanonicalTransaction retrieves a specific transaction from the database, along
-// with its added positional metadata. Notably, only the transaction in the canonical
-// chain is visible.
-func ReadCanonicalTransaction(db ethdb.Reader, hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
+// ReadTransaction retrieves a specific transaction from the database, along with
+// its added positional metadata.
+func ReadTransaction(db ethdb.Reader, hash common.Hash) (*types.Transaction, common.Hash, uint64, uint64) {
 	blockNumber := ReadTxLookupEntry(db, hash)
 	if blockNumber == nil {
 		return nil, common.Hash{}, 0, 0

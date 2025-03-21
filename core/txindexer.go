@@ -47,34 +47,25 @@ type txIndexer struct {
 	//       and all others shouldn't.
 	limit uint64
 
-	// The current head of blockchain for transaction indexing. This field
-	// is accessed by both the indexer and the indexing progress queries.
-	head atomic.Uint64
-
-	// The current tail of the indexed transactions, null indicates
-	// that no transactions have been indexed yet.
-	//
-	// This field is accessed by both the indexer and the indexing
-	// progress queries.
-	tail atomic.Pointer[uint64]
-
 	// cutoff denotes the block number before which the chain segment should
 	// be pruned and not available locally.
-	cutoff uint64
-	db     ethdb.Database
-	term   chan chan struct{}
-	closed chan struct{}
+	cutoff   uint64
+	db       ethdb.Database
+	progress chan chan TxIndexProgress
+	term     chan chan struct{}
+	closed   chan struct{}
 }
 
 // newTxIndexer initializes the transaction indexer.
 func newTxIndexer(limit uint64, chain *BlockChain) *txIndexer {
 	cutoff, _ := chain.HistoryPruningCutoff()
 	indexer := &txIndexer{
-		limit:  limit,
-		cutoff: cutoff,
-		db:     chain.db,
-		term:   make(chan chan struct{}),
-		closed: make(chan struct{}),
+		limit:    limit,
+		cutoff:   chain.HistoryPruningCutoff(),
+		db:       chain.db,
+		progress: make(chan chan TxIndexProgress),
+		term:     make(chan chan struct{}),
+		closed:   make(chan struct{}),
 	}
 	indexer.head.Store(indexer.resolveHead())
 	indexer.tail.Store(rawdb.ReadTxIndexTail(chain.db))
@@ -166,6 +157,67 @@ func (indexer *txIndexer) repair(head uint64) {
 		// A crash may occur between the two delete operations,
 		// potentially leaving dangling indexes in the database.
 		// However, this is considered acceptable.
+		rawdb.DeleteTxIndexTail(indexer.db)
+		rawdb.DeleteAllTxLookupEntries(indexer.db, nil)
+		log.Warn("Purge transaction indexes", "head", head, "tail", *tail)
+		return
+	}
+
+	// If the entire chain is below the configured cutoff point,
+	// removing the tail of transaction indexing and purges the
+	// transaction indexes. **It's not a common case, as the cutoff
+	// is usually defined below the chain head**.
+	if head < indexer.cutoff {
+		// A crash may occur between the two delete operations,
+		// potentially leaving dangling indexes in the database.
+		// However, this is considered acceptable.
+		//
+		// The leftover indexes can't be unindexed by scanning
+		// the blocks as they are not guaranteed to be available.
+		// Traversing the database directly within the transaction
+		// index namespace might be slow and expensive, but we
+		// have no choice.
+		rawdb.DeleteTxIndexTail(indexer.db)
+		rawdb.DeleteAllTxLookupEntries(indexer.db, nil)
+		log.Warn("Purge transaction indexes", "head", head, "cutoff", indexer.cutoff)
+		return
+	}
+
+	// The chain head is above the cutoff while the tail is below the
+	// cutoff. Shift the tail to the cutoff point and remove the indexes
+	// below.
+	if *tail < indexer.cutoff {
+		// A crash may occur between the two delete operations,
+		// potentially leaving dangling indexes in the database.
+		// However, this is considered acceptable.
+		rawdb.WriteTxIndexTail(indexer.db, indexer.cutoff)
+		rawdb.DeleteAllTxLookupEntries(indexer.db, func(blob []byte) bool {
+			n := rawdb.DecodeTxLookupEntry(blob, indexer.db)
+			return n != nil && *n < indexer.cutoff
+		})
+		log.Warn("Purge transaction indexes below cutoff", "tail", *tail, "cutoff", indexer.cutoff)
+	}
+}
+
+// repair ensures that transaction indexes are in a valid state and invalidates
+// them if they are not. The following cases are considered invalid:
+// * The index tail is higher than the chain head.
+// * The chain head is below the configured cutoff, but the index tail is not empty.
+// * The index tail is below the configured cutoff, but it is not empty.
+func (indexer *txIndexer) repair(head uint64) {
+	// If the transactions haven't been indexed yet, nothing to repair
+	tail := rawdb.ReadTxIndexTail(indexer.db)
+	if tail == nil {
+		return
+	}
+	// The transaction index tail is higher than the chain head, which may occur
+	// when the chain is rewound to a historical height below the index tail.
+	// Purge the transaction indexes from the database. **It's not a common case
+	// to rewind the chain head below the index tail**.
+	if *tail > head {
+		// A crash may occur between the two delete operations,
+		// potentially leaving dangling indexes in the database.
+		// However, this is considered acceptable.
 		indexer.tail.Store(nil)
 		rawdb.DeleteTxIndexTail(indexer.db)
 		rawdb.DeleteAllTxLookupEntries(indexer.db, nil)
@@ -231,15 +283,16 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 
 	// Listening to chain events and manipulate the transaction indexes.
 	var (
-		stop   chan struct{} // Non-nil if background routine is active
-		done   chan struct{} // Non-nil if background routine is active
+		stop chan struct{}                                 // Non-nil if background routine is active
+		done chan struct{}                                 // Non-nil if background routine is active
+		head = rawdb.ReadHeadBlock(indexer.db).NumberU64() // The latest announced chain head
+
 		headCh = make(chan ChainHeadEvent)
 		sub    = chain.SubscribeChainHeadEvent(headCh)
 	)
 	defer sub.Unsubscribe()
 
 	// Validate the transaction indexes and repair if necessary
-	head := indexer.head.Load()
 	indexer.repair(head)
 
 	// Launch the initial processing if chain is not empty (head != genesis).
@@ -252,18 +305,17 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 	for {
 		select {
 		case h := <-headCh:
-			indexer.head.Store(h.Header.Number.Uint64())
 			if done == nil {
 				stop = make(chan struct{})
 				done = make(chan struct{})
 				go indexer.run(h.Header.Number.Uint64(), stop, done)
 			}
-
+			head = h.Header.Number.Uint64()
 		case <-done:
 			stop = nil
 			done = nil
-			indexer.tail.Store(rawdb.ReadTxIndexTail(indexer.db))
-
+		case ch := <-indexer.progress:
+			ch <- indexer.report(head)
 		case ch := <-indexer.term:
 			if stop != nil {
 				close(stop)
@@ -279,7 +331,7 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 }
 
 // report returns the tx indexing progress.
-func (indexer *txIndexer) report(head uint64, tail *uint64) TxIndexProgress {
+func (indexer *txIndexer) report(head uint64) TxIndexProgress {
 	// Special case if the head is even below the cutoff,
 	// nothing to index.
 	if head < indexer.cutoff {
@@ -299,6 +351,7 @@ func (indexer *txIndexer) report(head uint64, tail *uint64) TxIndexProgress {
 	}
 	// Compute how many blocks have been indexed
 	var indexed uint64
+	tail := rawdb.ReadTxIndexTail(indexer.db)
 	if tail != nil {
 		indexed = head - *tail + 1
 	}
