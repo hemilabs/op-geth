@@ -18,7 +18,6 @@ package eth
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -272,7 +271,7 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 			continue // Keep searching for other valid blocks
 		}
 
-		block, err := vm.TBCFullNode.BlockByHash(context.Background(), &ch)
+		block, err := vm.TBCFullNode.BlockByHash(vm.MainCtx, &ch)
 		if err != nil {
 			log.Error(fmt.Sprintf("did not find BTC block %s requested by peer", hash.String()), "err", err)
 			continue
@@ -501,7 +500,7 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 
 		hash := msgBlock.BlockHash()
 
-		exists, err := vm.TBCFullNode.FullBlockAvailable(context.Background(), &hash)
+		exists, err := vm.TBCFullNode.FullBlockAvailable(vm.MainCtx, &hash)
 		if err != nil {
 			log.Error("Unable to check whether TBC has BTC block received over P2P", "badIndex", i, "block", hash.String(), "err", err)
 			// Still attempt to add block if unable to determine
@@ -517,13 +516,13 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 			Headers: headers,
 		}
 
-		_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(context.Background(), msgHeaders)
+		_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(vm.MainCtx, msgHeaders)
 		if err != nil {
 			// Do not exit, try to still insert block below regardless but log error
 			log.Error("Unable to add BTC header to TBC", "err", err)
 		}
 
-		insert, err := vm.TBCFullNode.BlockInsert(context.Background(), &msgBlock)
+		insert, err := vm.TBCFullNode.BlockInsert(vm.MainCtx, &msgBlock)
 		if err != nil {
 			// Note: if there is a race condition which inserts the block from elsewhere (either TBC peers or other geth peers)
 			// between the FullBlockAvailable call and this insert, it will produce an insert error (database.DuplicateError)
