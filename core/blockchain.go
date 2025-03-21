@@ -308,6 +308,7 @@ type BlockChain struct {
 	hvmEnabled          bool
 	tbcHeaderNode       *tbc.Server
 	tbcHeaderNodeConfig *tbc.Config
+	awaitingHvmSnapSync bool
 
 	// Temporary workaround to allow restarting TBC Full Node when its not progressing
 	fullBlockFailureCount       uint32
@@ -325,6 +326,8 @@ type BlockChain struct {
 	btcAttributesDepCacheEntry     *types.BtcAttributesDepositedTx
 
 	missingProgressionBlocks *wire.MsgHeaders
+
+	ctx context.Context
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -608,7 +611,7 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
-func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, overrides *ChainOverrides, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64) (*BlockChain, error) {
+func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, overrides *ChainOverrides, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64, ctx context.Context) (*BlockChain, error) {
 	if cacheConfig == nil {
 		cacheConfig = defaultCacheConfig
 	}
@@ -653,6 +656,7 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		tempHeaders:   make(map[string]*types.Header),
 		engine:        engine,
 		vmConfig:      vmConfig,
+		ctx:           ctx,
 	}
 	bc.flushInterval.Store(int64(cacheConfig.TrieTimeLimit))
 	bc.forker = NewForkChoice(bc, shouldPreserve)
@@ -1028,6 +1032,151 @@ func (bc *BlockChain) findCommonAncestor(a *types.Header, b *types.Header) (*typ
 
 	// high and low cursors match, found common ancestor
 	return highCursor, nil
+}
+
+// SetAwaitingHvmSnapSync is called when an Ethereum protocol snap-sync has
+// been completed to inform the blockchain to wait for an hVM snap sync instruction
+// before performing any chain progression.
+func (bc *BlockChain) SetAwaitingHvmSnapSync() {
+	bc.awaitingHvmSnapSync = true
+}
+
+// SnapSyncHvm is called when completing an initial snap sync, and uses
+// the headers from the full TBC node to reconstruct the lightweight
+// TBC node from scratch up to the point it should be based on the snap-synced
+// tip.
+func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
+	missing := make(map[string]uint8)
+
+	for {
+		header, _, err := vm.TBCFullNode.BlockHeaderByHash(bc.ctx, btcTipHeader)
+		if err != nil || header == nil {
+			log.Info(fmt.Sprintf("Unable to get hVM snap sync header %s from full TBC node, waiting...", btcTipHeader.String()))
+		} else {
+			// We have header, now check for all blocks
+			available, missingHeaders, missingHeaderHash, err := vm.TBCBlocksAvailableToHeader(bc.ctx, header)
+			if err != nil {
+				log.Crit(fmt.Sprintf("Encountered unrecoverable error while attempting hVM snap sync, "+
+					"unable to check block availability in full TBC to block %s", btcTipHeader.String()), "err", err)
+			}
+			if missingHeaderHash != nil {
+				log.Crit(fmt.Sprintf("Encountered unrecoverable error while attempting hVM snap sync, "+
+					"TBC full node missing header for block %s", missingHeaderHash.String()))
+			}
+
+			if !available {
+				log.Info("Full TBC missing blocks, checking if a refetch is required...")
+				for _, missingHeader := range *missingHeaders {
+					bh := missingHeader.BlockHash()
+					bhs := bh.String()
+					if seenCount, ok := missing[bhs]; ok {
+						seenCount++
+						missing[bhs] = seenCount
+						if seenCount >= 100 {
+							// If we have seen the same block missing for more than 100 loops,
+							// then assume we have to re-request
+							log.Info(fmt.Sprintf("During hVM snap sync, BTC block %s is not available,"+
+								" attempting to re-fetch over Bitcoin P2P", bhs))
+
+							_, err := vm.TBCFullNode.DownloadBlockFromRandomPeers(
+								bc.ctx, &bh, uint(vm.TBCFullNodeConfig.PeersWanted/4))
+
+							if err != nil {
+								log.Crit(fmt.Sprintf("Encountered unrecoverable error while attempting hVM "+
+									"snap sync and forcing Bitcoin P2P request for block %s", bhs), "err", err)
+							}
+
+							// Since we requested this block, remove from map so we don't constantly re-request
+							delete(missing, bhs)
+						}
+					} else {
+						missing[bhs] = uint8(1)
+					}
+				}
+
+				// If we are tracking more than 1000 missing blocks, then reset the array.
+				// Worst case we spend longer waiting before re-requesting a missing block.
+				if len(missing) >= 1000 {
+					clear(missing)
+				}
+			} else {
+				// All BTC blocks available, exit loop and continue
+				break
+			}
+		}
+
+		select {
+		case <-time.After(1000 * time.Millisecond):
+		case <-bc.ctx.Done():
+			log.Warn("Context exited while waiting for TBC full node data to finish hVM snap sync")
+		}
+	}
+
+	log.Info("All required BTC data available, resetting lightweight TBC and adding headers")
+	bc.resetHvmHeaderNodeToGenesis()
+
+	_, target, err := bc.tbcHeaderNode.BlockHeaderBest(bc.ctx)
+	if err != nil {
+		log.Crit(fmt.Sprintf("Unable to get best header from lighweight TBC node after reset"))
+	}
+	targetHash := target.BlockHash()
+
+	cursor, _, err := vm.TBCFullNode.BlockHeaderByHash(bc.ctx, btcTipHeader)
+	if err != nil {
+		// Should never happen as this is part of the check in the above loop, indicates some form of corruption
+		log.Crit(fmt.Sprintf("After finding all BTC data, unable to fetch ending tip %s", btcTipHeader.String()))
+	}
+
+	cursorHash := cursor.BlockHash()
+
+	headersToAdd := make([]*wire.BlockHeader, 0)
+	for !bytes.Equal(cursorHash[:], targetHash[:]) {
+		headersToAdd = append(headersToAdd, cursor)
+
+		// Move cursor back
+		prev := cursor.PrevBlock
+		cursor, _, err = vm.TBCFullNode.BlockHeaderByHash(bc.ctx, &prev)
+		if err != nil {
+			// Should never happen as these headers were already found above
+			log.Crit(fmt.Sprintf("Unable to get header %s from TBC full node", prev.String()), "err", err)
+		}
+		cursorHash = cursor.BlockHash()
+	}
+
+	slices.Reverse(headersToAdd)
+
+	msgHeaders := &wire.MsgHeaders{
+		Headers: headersToAdd,
+	}
+
+	// Add all headers between genesis and the hVM snap sync height, and set upstream ID to snap header
+	_, cbh, _, _, err := bc.tbcHeaderNode.AddExternalHeaders(bc.ctx, msgHeaders, hvmTipHeader.Hash().Bytes()[:])
+	if err != nil {
+		log.Crit(fmt.Sprintf("Encountered unrecoverable error while attempting hVM snap sync, "+
+			"unable to add BTC headers from %s to %s to lightweight view", headersToAdd[0].BlockHash().String(),
+			headersToAdd[len(headersToAdd)-1].BlockHash().String()), "err", err)
+	}
+
+	if !bytes.Equal(cbh.Hash[:], targetHash[:]) {
+		log.Crit(fmt.Sprintf("After adding hVM snap sync headers, lightweight TBC does not have "+
+			"expected canonical block hash %s", targetHash.String()))
+	}
+
+	log.Info(fmt.Sprintf("Successfully snap synced lightweight hVM to BTC tip %s for Hemi tip %s,"+
+		" indexing full TBC", cbh.Hash.String(), hvmTipHeader.Hash().String()))
+
+	err = bc.updateFullTBCToLightweight()
+	if err != nil {
+		log.Crit(fmt.Sprintf("Unable to update full TBC indexers during hVM snap sync, hVM snap tip = %s",
+			hvmTipHeader.Hash().String()), "err", err)
+	}
+
+	si := vm.TBCFullNode.Synced(bc.ctx)
+
+	log.Info(fmt.Sprintf("Finished hVM snap sync, hVM snap tip = %s, TBC full node utxo = %s, tx = %s",
+		hvmTipHeader.Hash().String(), si.Utxo.Hash.String(), si.Tx.Hash.String()))
+
+	bc.awaitingHvmSnapSync = false
 }
 
 // unapplyHvmHeaderConsensusUpdate retrieves the block corresponding to
