@@ -296,6 +296,12 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		// Would rather have node delay full startup to fully sync TBC to required genesis height
 		// than startup without full information and later freeze at hVM Phase 0 activation time.
 		for {
+			select {
+			case <-time.After(1000 * time.Millisecond):
+			case <-ctx.Context.Done():
+				log.Crit("context done")
+			}
+
 			bh, bhb, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
 			if err != nil {
 				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
@@ -445,12 +451,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				// all at one time, so for now just log the syncing progress.
 				log.Info(fmt.Sprintf("TBC Full Node is performing initial sync, current tip: %s @ %d",
 					bhb.BlockHash().String(), bh))
-			}
-
-			select {
-			case <-time.After(500 * time.Millisecond):
-			case <-ctx.Context.Done():
-				log.Crit("context done")
 			}
 		}
 
