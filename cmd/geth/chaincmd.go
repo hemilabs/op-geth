@@ -39,6 +39,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
+	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/debug"
 	"github.com/ethereum/go-ethereum/internal/era"
@@ -195,7 +196,7 @@ This command dumps out the state for a given block (or latest, if none provided)
 `,
 	}
 
-	pruneHistoryCommand = &cli.Command{
+	pruneCommand = &cli.Command{
 		Action:    pruneHistory,
 		Name:      "prune-history",
 		Usage:     "Prune blockchain history (block bodies and receipts) up to the merge block",
@@ -205,42 +206,6 @@ This command dumps out the state for a given block (or latest, if none provided)
 The prune-history command removes historical block bodies and receipts from the
 blockchain database up to the merge block, while preserving block headers. This
 helps reduce storage requirements for nodes that don't need full historical data.`,
-	}
-
-	downloadEraCommand = &cli.Command{
-		Action:    downloadEra,
-		Name:      "download-era",
-		Usage:     "Fetches era1 files (pre-merge history) from an HTTP endpoint",
-		ArgsUsage: "",
-		Flags: slices.Concat(
-			utils.DatabaseFlags,
-			utils.NetworkFlags,
-			[]cli.Flag{
-				eraBlockFlag,
-				eraEpochFlag,
-				eraAllFlag,
-				eraServerFlag,
-			},
-		),
-	}
-)
-
-var (
-	eraBlockFlag = &cli.StringFlag{
-		Name:  "block",
-		Usage: "Block number to fetch. (can also be a range <start>-<end>)",
-	}
-	eraEpochFlag = &cli.StringFlag{
-		Name:  "epoch",
-		Usage: "Epoch number to fetch (can also be a range <start>-<end>)",
-	}
-	eraAllFlag = &cli.BoolFlag{
-		Name:  "all",
-		Usage: "Download all available era1 files",
-	}
-	eraServerFlag = &cli.StringFlag{
-		Name:  "server",
-		Usage: "era1 server URL",
 	}
 )
 
@@ -666,7 +631,7 @@ func pruneHistory(ctx *cli.Context) error {
 	defer chain.Stop()
 
 	// Determine the prune point. This will be the first PoS block.
-	prunePoint, ok := history.PrunePoints[chain.Genesis().Hash()]
+	prunePoint, ok := ethconfig.HistoryPrunePoints[chain.Genesis().Hash()]
 	if !ok || prunePoint == nil {
 		return errors.New("prune point not found")
 	}
@@ -702,94 +667,4 @@ func pruneHistory(ctx *cli.Context) error {
 	// TODO(s1na): what if there is a crash between the two prune operations?
 
 	return nil
-}
-
-// downloadEra is the era1 file downloader tool.
-func downloadEra(ctx *cli.Context) error {
-	flags.CheckExclusive(ctx, eraBlockFlag, eraEpochFlag, eraAllFlag)
-
-	// Resolve the network.
-	var network = "mainnet"
-	if utils.IsNetworkPreset(ctx) {
-		switch {
-		case ctx.IsSet(utils.MainnetFlag.Name):
-		case ctx.IsSet(utils.SepoliaFlag.Name):
-			network = "sepolia"
-		default:
-			return errors.New("unsupported network, no known era1 checksums")
-		}
-	}
-
-	// Resolve the destination directory.
-	stack, _ := makeConfigNode(ctx)
-	defer stack.Close()
-
-	ancients := stack.ResolveAncient("chaindata", "")
-	dir := filepath.Join(ancients, rawdb.ChainFreezerName, "era")
-	if ctx.IsSet(utils.EraFlag.Name) {
-		dir = filepath.Join(ancients, ctx.String(utils.EraFlag.Name))
-	}
-
-	baseURL := ctx.String(eraServerFlag.Name)
-	if baseURL == "" {
-		return fmt.Errorf("need --%s flag to download", eraServerFlag.Name)
-	}
-
-	l, err := eradl.New(baseURL, network)
-	if err != nil {
-		return err
-	}
-	switch {
-	case ctx.IsSet(eraAllFlag.Name):
-		return l.DownloadAll(dir)
-
-	case ctx.IsSet(eraBlockFlag.Name):
-		s := ctx.String(eraBlockFlag.Name)
-		start, end, ok := parseRange(s)
-		if !ok {
-			return fmt.Errorf("invalid block range: %q", s)
-		}
-		return l.DownloadBlockRange(start, end, dir)
-
-	case ctx.IsSet(eraEpochFlag.Name):
-		s := ctx.String(eraEpochFlag.Name)
-		start, end, ok := parseRange(s)
-		if !ok {
-			return fmt.Errorf("invalid epoch range: %q", s)
-		}
-		return l.DownloadEpochRange(start, end, dir)
-
-	default:
-		return fmt.Errorf("specify one of --%s, --%s, or --%s to download", eraAllFlag.Name, eraBlockFlag.Name, eraEpochFlag.Name)
-	}
-}
-
-func parseRange(s string) (start uint64, end uint64, ok bool) {
-	log.Info("Parsing block range", "input", s)
-	if m, _ := regexp.MatchString("^[0-9]+-[0-9]+$", s); m {
-		s1, s2, _ := strings.Cut(s, "-")
-		start, err := strconv.ParseUint(s1, 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-		end, err = strconv.ParseUint(s2, 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-		if start > end {
-			return 0, 0, false
-		}
-		log.Info("Parsing block range", "start", start, "end", end)
-		return start, end, true
-	}
-	if m, _ := regexp.MatchString("^[0-9]+$", s); m {
-		start, err := strconv.ParseUint(s, 10, 64)
-		if err != nil {
-			return 0, 0, false
-		}
-		end = start
-		log.Info("Parsing single block range", "block", start)
-		return start, end, true
-	}
-	return 0, 0, false
 }

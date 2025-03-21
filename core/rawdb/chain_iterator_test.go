@@ -109,7 +109,7 @@ func initDatabaseWithTransactions(db ethdb.Database) ([]*types.Block, []*types.T
 	to := common.BytesToAddress([]byte{0x11})
 
 	// Write empty genesis block
-	block := types.NewBlock(&types.Header{Number: big.NewInt(int64(0))}, nil, nil, newTestHasher(), types.DefaultBlockConfig)
+	block := types.NewBlock(&types.Header{Number: big.NewInt(int64(0))}, nil, nil, newTestHasher())
 	WriteBlock(db, block)
 	WriteCanonicalHash(db, block.Hash(), block.NumberU64())
 	blocks = append(blocks, block)
@@ -138,7 +138,7 @@ func initDatabaseWithTransactions(db ethdb.Database) ([]*types.Block, []*types.T
 			})
 		}
 		txs = append(txs, tx)
-		block := types.NewBlock(&types.Header{Number: big.NewInt(int64(i))}, &types.Body{Transactions: types.Transactions{tx}}, nil, newTestHasher(), types.DefaultBlockConfig)
+		block := types.NewBlock(&types.Header{Number: big.NewInt(int64(i))}, &types.Body{Transactions: types.Transactions{tx}}, nil, newTestHasher())
 		WriteBlock(db, block)
 		WriteCanonicalHash(db, block.Hash(), block.NumberU64())
 		blocks = append(blocks, block)

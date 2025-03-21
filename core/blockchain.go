@@ -816,7 +816,8 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 	bc.processor = NewStateProcessor(chainConfig, bc.hc)
 
 	genesisHeader := bc.GetHeaderByNumber(0)
-	if genesisHeader == nil {
+	bc.genesisBlock = types.NewBlockWithHeader(genesisHeader)
+	if bc.genesisBlock == nil {
 		return nil, ErrNoGenesis
 	}
 	bc.genesisBlock = types.NewBlockWithHeader(genesisHeader)

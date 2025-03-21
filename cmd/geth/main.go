@@ -258,8 +258,7 @@ func init() {
 		removedbCommand,
 		dumpCommand,
 		dumpGenesisCommand,
-		pruneHistoryCommand,
-		downloadEraCommand,
+		pruneCommand,
 		// See accountcmd.go:
 		accountCommand,
 		walletCommand,
