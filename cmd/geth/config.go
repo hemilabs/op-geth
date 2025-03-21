@@ -19,7 +19,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	context2 "context"
 	"errors"
 	"fmt"
 	"os"
@@ -388,7 +387,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 								for i := 0; i < len(*missingFullBlockHeaders); i++ {
 									log.Warn(fmt.Sprintf("\tTBC missing full block: %s",
 										(*missingFullBlockHeaders)[i].BlockHash().String()))
-									vm.TBCAttemptBlockRefetch(context2.Background(), &(*missingFullBlockHeaders)[i])
+									vm.TBCAttemptBlockRefetch(ctx.Context, &(*missingFullBlockHeaders)[i])
 								}
 							}
 						} else {
