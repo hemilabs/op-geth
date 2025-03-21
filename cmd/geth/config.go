@@ -311,24 +311,8 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 			syncInfo = *vm.GetTBCFullNodeSyncStatus()
 
 			utxoHH := syncInfo.Utxo
-			txHH := syncInfo.Tx
 
-			if !bytes.Equal(utxoHH.Hash[:], txHH.Hash[:]) {
-				// TBC is in an invalid indexing state as its UTXO and Tx indexers are not matched,
-				// attempt to automatically recover by unindexing both back to their common shared
-				// ancestor.
-				err := vm.FixMismatchedIndexesIfRequired()
-				if err != nil {
-					// If we have mismatched indexes that we aren't able to repair, this is a critical
-					// error and likely due to data corruption in TBC needing manual intervention to resolve.
-					log.Crit(fmt.Sprintf("On startup, TBC Full Node has mismatched indexers, "+
-						"UTXO = %s @ %d, Tx = %s @ %d, and automatic recovery to walk indexers back to a common "+
-						"ancestor failed. This is likely due to TBC state corruption. Either restore a "+
-						"working older TBC full node data directory to the currently set TBCLevelDB home (%s), or "+
-						"delete it and let op-geth resync the TBC full node from scratch.", utxoHH.Hash.String(),
-						utxoHH.Height, txHH.Hash.String(), txHH.Height, fullNodeTbcCfg.LevelDBHome), "err", err)
-				}
-			}
+			vm.FixMismatchedIndexesIfRequired(ctx.Context)
 
 			if bh >= genesisHeight {
 				// TBC full node already has awareness of BTC chain at/beyond the genesis height, so make sure
