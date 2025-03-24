@@ -24,7 +24,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -399,24 +398,27 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		total atomic.Uint64
 
 		// Key-value store statistics
-		headers         stat
-		bodies          stat
-		receipts        stat
-		tds             stat
-		numHashPairings stat
-		hashNumPairings stat
-		legacyTries     stat
-		stateLookups    stat
-		accountTries    stat
-		storageTries    stat
-		codes           stat
-		txLookups       stat
-		accountSnaps    stat
-		storageSnaps    stat
-		preimages       stat
-		filterMaps      stat
-		beaconHeaders   stat
-		cliqueSnaps     stat
+		headers            stat
+		bodies             stat
+		receipts           stat
+		tds                stat
+		numHashPairings    stat
+		hashNumPairings    stat
+		legacyTries        stat
+		stateLookups       stat
+		accountTries       stat
+		storageTries       stat
+		codes              stat
+		txLookups          stat
+		accountSnaps       stat
+		storageSnaps       stat
+		preimages          stat
+		beaconHeaders      stat
+		cliqueSnaps        stat
+		bloomBits          stat
+		filterMapRows      stat
+		filterMapLastBlock stat
+		filterMapBlockLV   stat
 
 		// Verkle statistics
 		verkleTries        stat
@@ -426,11 +428,13 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		metadata    stat
 		unaccounted stat
 
+		// Totals
+		total common.StorageSize
+
 		// This map tracks example keys for unaccounted data.
 		// For each unique two-byte prefix, the first unaccounted key encountered
 		// by the iterator will be stored.
 		unaccountedKeys = make(map[[2]byte][]byte)
-		unaccountedMu   sync.Mutex
 	)
 	// Inspect key-value database first.
 	for it.Next() {
@@ -474,19 +478,33 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			metadata.Add(size)
 		case bytes.HasPrefix(key, genesisPrefix) && len(key) == (len(genesisPrefix)+common.HashLength):
 			metadata.Add(size)
-		case bytes.HasPrefix(key, []byte(filterMapsPrefix)):
-			filterMaps.Add(size)
 		case bytes.HasPrefix(key, skeletonHeaderPrefix) && len(key) == (len(skeletonHeaderPrefix)+8):
 			beaconHeaders.Add(size)
 		case bytes.HasPrefix(key, CliqueSnapshotPrefix) && len(key) == 7+common.HashLength:
 			cliqueSnaps.Add(size)
-		case bytes.HasPrefix(key, ChtTablePrefix) ||
-			bytes.HasPrefix(key, ChtIndexTablePrefix) ||
-			bytes.HasPrefix(key, ChtPrefix): // Canonical hash trie
+
+		// new log index
+		case bytes.HasPrefix(key, filterMapRowPrefix) && len(key) <= len(filterMapRowPrefix)+9:
+			filterMapRows.Add(size)
+		case bytes.HasPrefix(key, filterMapLastBlockPrefix) && len(key) == len(filterMapLastBlockPrefix)+4:
+			filterMapLastBlock.Add(size)
+		case bytes.HasPrefix(key, filterMapBlockLVPrefix) && len(key) == len(filterMapBlockLVPrefix)+8:
+			filterMapBlockLV.Add(size)
+
+		// old log index (deprecated)
+		case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
+			bloomBits.Add(size)
+		case bytes.HasPrefix(key, bloomBitsMetaPrefix) && len(key) < len(bloomBitsMetaPrefix)+8:
+			bloomBits.Add(size)
+
+		// LES indexes (deprecated)
+		case bytes.HasPrefix(key, chtTablePrefix) ||
+			bytes.HasPrefix(key, chtIndexTablePrefix) ||
+			bytes.HasPrefix(key, chtPrefix): // Canonical hash trie
 			chtTrieNodes.Add(size)
-		case bytes.HasPrefix(key, BloomTrieTablePrefix) ||
-			bytes.HasPrefix(key, BloomTrieIndexPrefix) ||
-			bytes.HasPrefix(key, BloomTriePrefix): // Bloomtrie sub
+		case bytes.HasPrefix(key, bloomTrieTablePrefix) ||
+			bytes.HasPrefix(key, bloomTrieIndexPrefix) ||
+			bytes.HasPrefix(key, bloomTriePrefix): // Bloomtrie sub
 			bloomTrieNodes.Add(size)
 
 	inspectRange := func(ctx context.Context, r byte) error {
@@ -500,114 +518,18 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 			default:
 				// entire key range is included for inspection
 			}
-		}
-		it := db.NewIterator(append(keyPrefix, r), s)
-		defer it.Release()
 
-		for it.Next() {
-			var (
-				key  = it.Key()
-				size = common.StorageSize(len(key) + len(it.Value()))
-			)
-			total.Add(uint64(size))
-			count.Add(1)
+		// Metadata keys
+		case slices.ContainsFunc(knownMetadataKeys, func(x []byte) bool { return bytes.Equal(x, key) }):
+			metadata.Add(size)
 
-			switch {
-			case bytes.HasPrefix(key, headerPrefix) && len(key) == (len(headerPrefix)+8+common.HashLength):
-				headers.add(size)
-			case bytes.HasPrefix(key, blockBodyPrefix) && len(key) == (len(blockBodyPrefix)+8+common.HashLength):
-				bodies.add(size)
-			case bytes.HasPrefix(key, blockReceiptsPrefix) && len(key) == (len(blockReceiptsPrefix)+8+common.HashLength):
-				receipts.add(size)
-			case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerTDSuffix):
-				tds.add(size)
-			case bytes.HasPrefix(key, headerPrefix) && bytes.HasSuffix(key, headerHashSuffix):
-				numHashPairings.add(size)
-			case bytes.HasPrefix(key, headerNumberPrefix) && len(key) == (len(headerNumberPrefix)+common.HashLength):
-				hashNumPairings.add(size)
-			case IsLegacyTrieNode(key, it.Value()):
-				legacyTries.add(size)
-			case bytes.HasPrefix(key, stateIDPrefix) && len(key) == len(stateIDPrefix)+common.HashLength:
-				stateLookups.add(size)
-			case IsAccountTrieNode(key):
-				accountTries.add(size)
-			case IsStorageTrieNode(key):
-				storageTries.add(size)
-			case bytes.HasPrefix(key, CodePrefix) && len(key) == len(CodePrefix)+common.HashLength:
-				codes.add(size)
-			case bytes.HasPrefix(key, txLookupPrefix) && len(key) == (len(txLookupPrefix)+common.HashLength):
-				txLookups.add(size)
-			case bytes.HasPrefix(key, SnapshotAccountPrefix) && len(key) == (len(SnapshotAccountPrefix)+common.HashLength):
-				accountSnaps.add(size)
-			case bytes.HasPrefix(key, SnapshotStoragePrefix) && len(key) == (len(SnapshotStoragePrefix)+2*common.HashLength):
-				storageSnaps.add(size)
-			case bytes.HasPrefix(key, PreimagePrefix) && len(key) == (len(PreimagePrefix)+common.HashLength):
-				preimages.add(size)
-			case bytes.HasPrefix(key, configPrefix) && len(key) == (len(configPrefix)+common.HashLength):
-				metadata.add(size)
-			case bytes.HasPrefix(key, genesisPrefix) && len(key) == (len(genesisPrefix)+common.HashLength):
-				metadata.add(size)
-			case bytes.HasPrefix(key, skeletonHeaderPrefix) && len(key) == (len(skeletonHeaderPrefix)+8):
-				beaconHeaders.add(size)
-			case bytes.HasPrefix(key, CliqueSnapshotPrefix) && len(key) == 7+common.HashLength:
-				cliqueSnaps.add(size)
-
-			// new log index
-			case bytes.HasPrefix(key, filterMapRowPrefix) && len(key) <= len(filterMapRowPrefix)+9:
-				filterMapRows.add(size)
-			case bytes.HasPrefix(key, filterMapLastBlockPrefix) && len(key) == len(filterMapLastBlockPrefix)+4:
-				filterMapLastBlock.add(size)
-			case bytes.HasPrefix(key, filterMapBlockLVPrefix) && len(key) == len(filterMapBlockLVPrefix)+8:
-				filterMapBlockLV.add(size)
-
-			// old log index (deprecated)
-			case bytes.HasPrefix(key, bloomBitsPrefix) && len(key) == (len(bloomBitsPrefix)+10+common.HashLength):
-				bloomBits.add(size)
-			case bytes.HasPrefix(key, bloomBitsMetaPrefix) && len(key) < len(bloomBitsMetaPrefix)+8:
-				bloomBits.add(size)
-
-			// Path-based historic state indexes
-			case bytes.HasPrefix(key, StateHistoryIndexPrefix) && len(key) >= len(StateHistoryIndexPrefix)+common.HashLength:
-				stateIndex.add(size)
-
-			// Verkle trie data is detected, determine the sub-category
-			case bytes.HasPrefix(key, VerklePrefix):
-				remain := key[len(VerklePrefix):]
-				switch {
-				case IsAccountTrieNode(remain):
-					verkleTries.add(size)
-				case bytes.HasPrefix(remain, stateIDPrefix) && len(remain) == len(stateIDPrefix)+common.HashLength:
-					verkleStateLookups.add(size)
-				case bytes.Equal(remain, persistentStateIDKey):
-					metadata.add(size)
-				case bytes.Equal(remain, trieJournalKey):
-					metadata.add(size)
-				case bytes.Equal(remain, snapSyncStatusFlagKey):
-					metadata.add(size)
-				default:
-					unaccounted.add(size)
+		default:
+			unaccounted.Add(size)
+			if len(key) >= 2 {
+				prefix := [2]byte(key[:2])
+				if _, ok := unaccountedKeys[prefix]; !ok {
+					unaccountedKeys[prefix] = bytes.Clone(key)
 				}
-
-			// Metadata keys
-			case slices.ContainsFunc(knownMetadataKeys, func(x []byte) bool { return bytes.Equal(x, key) }):
-				metadata.add(size)
-
-			default:
-				unaccounted.add(size)
-				if len(key) >= 2 {
-					prefix := [2]byte(key[:2])
-					unaccountedMu.Lock()
-					if _, ok := unaccountedKeys[prefix]; !ok {
-						unaccountedKeys[prefix] = bytes.Clone(key)
-					}
-					unaccountedMu.Unlock()
-				}
-			}
-
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			default:
 			}
 		}
 
@@ -656,7 +578,10 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Block number->hash", numHashPairings.Size(), numHashPairings.Count()},
 		{"Key-Value store", "Block hash->number", hashNumPairings.Size(), hashNumPairings.Count()},
 		{"Key-Value store", "Transaction index", txLookups.Size(), txLookups.Count()},
-		{"Key-Value store", "Log search index", filterMaps.Size(), filterMaps.Count()},
+		{"Key-Value store", "Log index filter-map rows", filterMapRows.Size(), filterMapRows.Count()},
+		{"Key-Value store", "Log index last-block-of-map", filterMapLastBlock.Size(), filterMapLastBlock.Count()},
+		{"Key-Value store", "Log index block-lv", filterMapBlockLV.Size(), filterMapBlockLV.Count()},
+		{"Key-Value store", "Log bloombits (deprecated)", bloomBits.Size(), bloomBits.Count()},
 		{"Key-Value store", "Contract codes", codes.Size(), codes.Count()},
 		{"Key-Value store", "Hash trie nodes", legacyTries.Size(), legacyTries.Count()},
 		{"Key-Value store", "Path trie state lookups", stateLookups.Size(), stateLookups.Count()},
@@ -697,8 +622,8 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 	table.AppendBulk(stats)
 	table.Render()
 
-	if !unaccounted.empty() {
-		log.Error("Database contains unaccounted data", "size", unaccounted.sizeString(), "count", unaccounted.countString())
+	if unaccounted.size > 0 {
+		log.Error("Database contains unaccounted data", "size", unaccounted.size, "count", unaccounted.count)
 		for _, e := range slices.SortedFunc(maps.Values(unaccountedKeys), bytes.Compare) {
 			log.Error(fmt.Sprintf("   example key: %x", e))
 		}
@@ -713,7 +638,7 @@ var knownMetadataKeys = [][]byte{
 	snapshotGeneratorKey, snapshotRecoveryKey, txIndexTailKey, fastTxLookupLimitKey,
 	uncleanShutdownKey, badBlockKey, transitionStatusKey, skeletonSyncStatusKey,
 	persistentStateIDKey, trieJournalKey, snapshotSyncStatusKey, snapSyncStatusFlagKey,
-	filterMapsRangeKey, headStateHistoryIndexKey, VerkleTransitionStatePrefix,
+	filterMapsRangeKey,
 }
 
 // printChainMetadata prints out chain metadata to stderr.
