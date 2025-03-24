@@ -2055,8 +2055,8 @@ func SetDNSDiscoveryDefaults(cfg *ethconfig.Config, genesis common.Hash) {
 
 // RegisterEthService adds an Ethereum client to the stack.
 // The second return value is the full node instance.
-func RegisterEthService(stack *node.Node, cfg *ethconfig.Config) (ethapi.Backend, *eth.Ethereum) {
-	backend, err := eth.New(stack, cfg)
+func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, ctx context.Context) (ethapi.Backend, *eth.Ethereum) {
+	backend, err := eth.New(stack, cfg, ctx)
 	if err != nil {
 		Fatalf("Failed to register the Ethereum service: %v", err)
 	}
@@ -2328,7 +2328,7 @@ func MakeChain(ctx *cli.Context, stack *node.Node, readonly bool) (*core.BlockCh
 	vmcfg := vm.Config{EnablePreimageRecording: ctx.Bool(VMEnableDebugFlag.Name)}
 
 	// Disable transaction indexing/unindexing by default.
-	chain, err := core.NewBlockChain(chainDb, cache, gspec, nil, engine, vmcfg, nil, nil)
+	chain, err := core.NewBlockChain(chainDb, cache, gspec, nil, engine, vmcfg, nil, nil, ctx.Context)
 	if err != nil {
 		Fatalf("Can't create BlockChain: %v", err)
 	}

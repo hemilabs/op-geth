@@ -19,7 +19,6 @@ package main
 import (
 	"bufio"
 	"bytes"
-	context2 "context"
 	"errors"
 	"fmt"
 	"os"
@@ -225,7 +224,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 	// TODO: expose debug.verbosityFlag or pass verbosity setting up the stack
 	verbosity := ctx.Int("verbosity")
 
-	backend, eth := utils.RegisterEthService(stack, &cfg.Eth)
+	backend, eth := utils.RegisterEthService(stack, &cfg.Eth, ctx.Context)
 
 	if cfg.Eth.HvmEnabled {
 		// Before starting up any other services, make sure TBC is in correct initial state
@@ -297,6 +296,12 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 		// Would rather have node delay full startup to fully sync TBC to required genesis height
 		// than startup without full information and later freeze at hVM Phase 0 activation time.
 		for {
+			select {
+			case <-time.After(1000 * time.Millisecond):
+			case <-ctx.Context.Done():
+				log.Crit("context done")
+			}
+
 			bh, bhb, err := vm.TBCFullNode.BlockHeaderBest(ctx.Context)
 			if err != nil {
 				// Being unable to retrieve the best block header known by the TBC Full Node indiciates
@@ -388,7 +393,7 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 								for i := 0; i < len(*missingFullBlockHeaders); i++ {
 									log.Warn(fmt.Sprintf("\tTBC missing full block: %s",
 										(*missingFullBlockHeaders)[i].BlockHash().String()))
-									vm.TBCAttemptBlockRefetch(context2.Background(), &(*missingFullBlockHeaders)[i])
+									vm.TBCAttemptBlockRefetch(ctx.Context, &(*missingFullBlockHeaders)[i])
 								}
 							}
 						} else {
@@ -446,12 +451,6 @@ func makeFullNode(ctx *cli.Context) (*node.Node, ethapi.Backend) {
 				// all at one time, so for now just log the syncing progress.
 				log.Info(fmt.Sprintf("TBC Full Node is performing initial sync, current tip: %s @ %d",
 					bhb.BlockHash().String(), bh))
-			}
-
-			select {
-			case <-time.After(500 * time.Millisecond):
-			case <-ctx.Context.Done():
-				log.Crit("context done")
 			}
 		}
 
