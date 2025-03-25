@@ -28,6 +28,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -70,6 +71,9 @@ type TxPool struct {
 	stateLock sync.RWMutex   // The lock for protecting state instance
 	state     *state.StateDB // Current state at the blockchain head
 
+	stateLock sync.RWMutex   // The lock for protecting state instance
+	state     *state.StateDB // Current state at the blockchain head
+
 	subs event.SubscriptionScope // Subscription scope to unsubscribe all on shutdown
 	quit chan chan error         // Quit channel to tear down the head updater
 	term chan struct{}           // Termination channel to detect a closed pool
@@ -91,6 +95,19 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool, ingressFilters []I
 	statedb, err := chain.StateAt(head.Root)
 	if err != nil {
 		statedb, err = chain.StateAt(types.EmptyRootHash)
+	}
+	if err != nil {
+		return nil, err
+	}
+	pool := &TxPool{
+		subpools:     subpools,
+		chain:        chain,
+		signer:       types.LatestSigner(chain.Config()),
+		state:        statedb,
+		reservations: make(map[common.Address]SubPool),
+		quit:         make(chan chan error),
+		term:         make(chan struct{}),
+		sync:         make(chan chan error),
 	}
 	if err != nil {
 		return nil, err
@@ -188,15 +205,13 @@ func (p *TxPool) loop(head *types.Header) {
 			// Try to inject a busy marker and start a reset if successful
 			select {
 			case resetBusy <- struct{}{}:
-				// Updates the statedb with the new chain head. The head state may be
-				// unavailable if the initial state sync has not yet completed.
-				if statedb, err := p.chain.StateAt(newHead.Root); err != nil {
-					log.Error("Failed to reset txpool state", "err", err)
-				} else {
-					p.stateLock.Lock()
-					p.state = statedb
-					p.stateLock.Unlock()
+				statedb, err := p.chain.StateAt(newHead.Root)
+				if err != nil {
+					log.Crit("Failed to reset txpool state", "err", err)
 				}
+				p.stateLock.Lock()
+				p.state = statedb
+				p.stateLock.Unlock()
 
 				// Busy marker injected, start a new subpool reset
 				go func(oldHead, newHead *types.Header) {
@@ -326,6 +341,20 @@ func (p *TxPool) GetMetadata(hash common.Hash) *TxMetadata {
 // ValidateTxBasics checks whether a transaction is valid according to the consensus
 // rules, but does not check state-dependent validation such as sufficient balance.
 func (p *TxPool) ValidateTxBasics(tx *types.Transaction) error {
+	addr, err := types.Sender(p.signer, tx)
+	if err != nil {
+		return err
+	}
+	// Reject transactions with stale nonce. Gapped-nonce future transactions
+	// are considered valid and will be handled by the subpool according to its
+	// internal policy.
+	p.stateLock.RLock()
+	nonce := p.state.GetNonce(addr)
+	p.stateLock.RUnlock()
+
+	if nonce > tx.Nonce() {
+		return core.ErrNonceTooLow
+	}
 	for _, subpool := range p.subpools {
 		if subpool.Filter(tx) {
 			return subpool.ValidateTxBasics(tx)
