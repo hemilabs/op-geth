@@ -116,7 +116,6 @@ func (c *committer) commitChildren(path []byte, n *fullNode, parallel bool) {
 				childSet := trienode.NewNodeSet(c.nodes.Owner)
 				childCommitter := newCommitter(childSet, c.tracer, c.collectLeaf)
 				n.Children[index] = childCommitter.commit(p, child, false)
-
 				nodesMu.Lock()
 				c.nodes.MergeDisjoint(childSet)
 				nodesMu.Unlock()

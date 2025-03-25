@@ -70,14 +70,13 @@ func (t *Trie) newFlag() nodeFlag {
 // Copy returns a copy of Trie.
 func (t *Trie) Copy() *Trie {
 	return &Trie{
-		root:           copyNode(t.root),
-		owner:          t.owner,
-		committed:      t.committed,
-		unhashed:       t.unhashed,
-		uncommitted:    t.uncommitted,
-		reader:         t.reader,
-		opTracer:       t.opTracer.copy(),
-		prevalueTracer: t.prevalueTracer.Copy(),
+		root:        copyNode(t.root),
+		owner:       t.owner,
+		committed:   t.committed,
+		unhashed:    t.unhashed,
+		uncommitted: t.uncommitted,
+		reader:      t.reader,
+		tracer:      t.tracer.copy(),
 	}
 }
 
@@ -643,6 +642,36 @@ func copyNode(n node) node {
 	}
 }
 
+// copyNode deep-copies the supplied node along with its children recursively.
+func copyNode(n node) node {
+	switch n := (n).(type) {
+	case nil:
+		return nil
+	case valueNode:
+		return valueNode(common.CopyBytes(n))
+
+	case *shortNode:
+		return &shortNode{
+			flags: n.flags.copy(),
+			Key:   common.CopyBytes(n.Key),
+			Val:   copyNode(n.Val),
+		}
+	case *fullNode:
+		var children [17]node
+		for i, cn := range n.Children {
+			children[i] = copyNode(cn)
+		}
+		return &fullNode{
+			flags:    n.flags.copy(),
+			Children: children,
+		}
+	case hashNode:
+		return n
+	default:
+		panic(fmt.Sprintf("%T: unknown node type", n))
+	}
+}
+
 func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 	if n, ok := n.(hashNode); ok {
 		return t.resolveAndTrack(n, prefix)
@@ -659,35 +688,17 @@ func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
 	if err != nil {
 		return nil, err
 	}
-	t.prevalueTracer.Put(prefix, blob)
+	t.tracer.onRead(prefix, blob)
 
 	// The returned node blob won't be changed afterward. No need to
 	// deep-copy the slice.
 	return decodeNodeUnsafe(n, blob)
 }
 
-// deletedNodes returns a list of node paths, referring the nodes being deleted
-// from the trie. It's possible a few deleted nodes were embedded in their parent
-// before, the deletions can be no effect by deleting nothing, filter them out.
-func (t *Trie) deletedNodes() [][]byte {
-	var (
-		pos   int
-		list  = t.opTracer.deletedList()
-		flags = t.prevalueTracer.HasList(list)
-	)
-	for i := 0; i < len(list); i++ {
-		if flags[i] {
-			list[pos] = list[i]
-			pos++
-		}
-	}
-	return list[:pos] // trim to the new length
-}
-
 // Hash returns the root hash of the trie. It does not write to the
 // database and can be used even if the trie doesn't have one.
 func (t *Trie) Hash() common.Hash {
-	return common.BytesToHash(t.hashRoot())
+	return common.BytesToHash(t.hashRoot().(hashNode))
 }
 
 // Commit collects all dirty nodes in the trie and replaces them with the
@@ -738,9 +749,9 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet) {
 }
 
 // hashRoot calculates the root hash of the given trie
-func (t *Trie) hashRoot() []byte {
+func (t *Trie) hashRoot() node {
 	if t.root == nil {
-		return types.EmptyRootHash.Bytes()
+		return hashNode(types.EmptyRootHash.Bytes())
 	}
 	// If the number of changes is below 100, we let one thread handle it
 	h := newHasher(t.unhashed >= 100)
