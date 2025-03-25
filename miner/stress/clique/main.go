@@ -19,6 +19,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/ecdsa"
 	"math/big"
 	"math/rand"
@@ -213,7 +214,7 @@ func makeSealer(genesis *core.Genesis) (*node.Node, *eth.Ethereum, error) {
 			GasPrice: big.NewInt(1),
 			Recommit: time.Second,
 		},
-	})
+	}, context.Background())
 	if err != nil {
 		return nil, nil, err
 	}
