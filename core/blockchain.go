@@ -1037,6 +1037,7 @@ func (bc *BlockChain) findCommonAncestor(a *types.Header, b *types.Header) (*typ
 // been completed to inform the blockchain to wait for an hVM snap sync instruction
 // before performing any chain progression.
 func (bc *BlockChain) SetAwaitingHvmSnapSync() {
+	log.Info("Blockchain informed to await hVM snap sync")
 	bc.awaitingHvmSnapSync = true
 }
 
@@ -1045,6 +1046,7 @@ func (bc *BlockChain) SetAwaitingHvmSnapSync() {
 // TBC node from scratch up to the point it should be based on the snap-synced
 // tip.
 func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
+	log.Info("Blockchain processing hVM light state snap sync message")
 	missing := make(map[string]uint8)
 
 	for {
