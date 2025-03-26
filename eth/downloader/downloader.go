@@ -448,27 +448,21 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 	d.mode.Store(uint32(mode))
 
 	// Retrieve the origin peer and initiate the downloading process
-	p := d.peers.Peer(id)
-	if p == nil {
-		return errUnknownPeer
+	var p *peerConnection
+	if !beaconMode {
+		p = d.peers.Peer(id)
+		if p == nil {
+			return errUnknownPeer
+		}
 	}
 	if beaconPing != nil {
 		close(beaconPing)
 	}
 
-	log.Info(fmt.Sprintf("Syncing with peer %s", p.id))
 	err := d.syncWithPeer(p, hash, td, ttd, beaconMode)
 	if err != nil {
 		return err
 	}
-
-	log.Info(fmt.Sprintf("Finished snap synchronize with peer %s", id))
-	// err = d.hVMLightStateSyncWithPeer(p, hash)
-	// if err != nil {
-	// 	log.Warn(fmt.Sprintf("Unable to synchronize hVM Light State blocks from peer %s used for snap sync!",
-	//		id), "err", err)
-	//	return err
-	//}
 
 	// No errors
 	return nil
@@ -476,6 +470,20 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 
 func (d *Downloader) getMode() SyncMode {
 	return SyncMode(d.mode.Load())
+}
+
+func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error) {
+	log.Info(fmt.Sprintf("Attempting to snap-sync hVM to L2 block %s", hash.String()))
+	for _, peer := range d.peers.AllPeers() {
+		err := d.hVMLightStateSyncWithPeer(peer, hash)
+		if err != nil {
+			log.Warn("Failed to sync hVM light state from peer", "peer", peer.id, "err", err)
+		} else {
+			// Upon first success we are done
+			return nil
+		}
+	}
+	return fmt.Errorf("unable to get hVM light state from any peer")
 }
 
 func (d *Downloader) hVMLightStateSyncWithPeer(p *peerConnection, hash common.Hash) (err error) {
@@ -698,7 +706,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		d.blockchain.SetAwaitingHvmSnapSync()
 
 		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
-		fetchers = append(fetchers, func() error { return d.hVMLightStateSyncWithPeer(p, pivot.Hash()) })
+		fetchers = append(fetchers, func() error { return d.hVMLightStateSyncWithAllPeers(pivot.Hash()) })
 	} else if mode == FullSync {
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent(ttd, beaconMode) })
 	}
