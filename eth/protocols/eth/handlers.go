@@ -446,6 +446,7 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handleHvmLightState(backend Backend, msg Decoder, peer *Peer) error {
+	log.Info("Handling hVM light state message")
 	res := new(HvmLightStateResponse)
 	if err := msg.Decode(res); err != nil {
 		log.Info("hVM light state decode error", "err", err)

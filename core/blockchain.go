@@ -1148,6 +1148,7 @@ func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *ty
 		Headers: headersToAdd,
 	}
 
+	log.Info(fmt.Sprintf("hVM snap sync adding %d headers", len(msgHeaders.Headers)))
 	// Add all headers between genesis and the hVM snap sync height, and set upstream ID to snap header
 	_, cbh, _, _, err := bc.tbcHeaderNode.AddExternalHeaders(bc.ctx, msgHeaders, hvmTipHeader.Hash().Bytes()[:])
 	if err != nil {

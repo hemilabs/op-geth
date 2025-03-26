@@ -524,7 +524,7 @@ func (p *Peer) RequestBtcBlocks(hashes []common.Hash) error {
 }
 
 // RequestHvmLightState fetches an hVM light state proof from the remote peer given the current tip
-func (p *Peer) RequestHvmLightStateBlocks(tip common.Hash) error {
+func (p *Peer) RequestHvmLightState(tip common.Hash) error {
 	p.Log().Info("Fetching hVM Light State Proof", "tip", tip.String())
 	id := rand.Uint64()
 
