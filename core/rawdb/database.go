@@ -497,19 +497,9 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		case bytes.HasPrefix(key, bloomBitsMetaPrefix) && len(key) < len(bloomBitsMetaPrefix)+8:
 			bloomBits.Add(size)
 
-		// LES indexes (deprecated)
-		case bytes.HasPrefix(key, chtTablePrefix) ||
-			bytes.HasPrefix(key, chtIndexTablePrefix) ||
-			bytes.HasPrefix(key, chtPrefix): // Canonical hash trie
-			chtTrieNodes.Add(size)
-		case bytes.HasPrefix(key, bloomTrieTablePrefix) ||
-			bytes.HasPrefix(key, bloomTrieIndexPrefix) ||
-			bytes.HasPrefix(key, bloomTriePrefix): // Bloomtrie sub
-			bloomTrieNodes.Add(size)
-
-	inspectRange := func(ctx context.Context, r byte) error {
-		var s []byte
-		if len(keyStart) > 0 {
+		// Verkle trie data is detected, determine the sub-category
+		case bytes.HasPrefix(key, VerklePrefix):
+			remain := key[len(VerklePrefix):]
 			switch {
 			case r < keyStart[0]:
 				return nil
@@ -595,8 +585,6 @@ func InspectDatabase(db ethdb.Database, keyPrefix, keyStart []byte) error {
 		{"Key-Value store", "Beacon sync headers", beaconHeaders.Size(), beaconHeaders.Count()},
 		{"Key-Value store", "Clique snapshots", cliqueSnaps.Size(), cliqueSnaps.Count()},
 		{"Key-Value store", "Singleton metadata", metadata.Size(), metadata.Count()},
-		{"Light client", "CHT trie nodes", chtTrieNodes.Size(), chtTrieNodes.Count()},
-		{"Light client", "Bloom trie nodes", bloomTrieNodes.Size(), bloomTrieNodes.Count()},
 	}
 
 	// Inspect all registered append-only file store then.
