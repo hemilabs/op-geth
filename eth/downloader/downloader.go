@@ -448,29 +448,27 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 	d.mode.Store(uint32(mode))
 
 	// Retrieve the origin peer and initiate the downloading process
-	var p *peerConnection
-	if !beaconMode { // Beacon mode doesn't need a peer to sync from
-		p = d.peers.Peer(id)
-		if p == nil {
-			return errUnknownPeer
-		}
+	p := d.peers.Peer(id)
+	if p == nil {
+		return errUnknownPeer
 	}
 	if beaconPing != nil {
 		close(beaconPing)
 	}
 
+	log.Info(fmt.Sprintf("Syncing with peer %s", p.id))
 	err := d.syncWithPeer(p, hash, td, ttd, beaconMode)
 	if err != nil {
 		return err
 	}
 
-	log.Info(fmt.Sprintf("Finished snap synchronize with peer %s, requesting hVM light state", id))
-	err = d.hVMLightStateSyncWithPeer(p, hash)
-	if err != nil {
-		log.Warn(fmt.Sprintf("Unable to synchronize hVM Light State blocks from peer %s used for snap sync!",
-			id), "err", err)
-		return err
-	}
+	log.Info(fmt.Sprintf("Finished snap synchronize with peer %s", id))
+	// err = d.hVMLightStateSyncWithPeer(p, hash)
+	// if err != nil {
+	// 	log.Warn(fmt.Sprintf("Unable to synchronize hVM Light State blocks from peer %s used for snap sync!",
+	//		id), "err", err)
+	//	return err
+	//}
 
 	// No errors
 	return nil
