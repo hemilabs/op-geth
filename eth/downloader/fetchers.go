@@ -30,7 +30,7 @@ import (
 // handles all the cancellation, interruption and timeout mechanisms of a data
 // retrieval to allow blocking API calls.
 func (d *Downloader) fetchHvmLightState(p *peerConnection, hash common.Hash) ([]*types.Header, *types.Block, error) {
-	log.Info(fmt.Sprintf("fetching hVM light state from peer %s at block %s", p.id, hash.String()))
+	log.Info(fmt.Sprintf("fetching hVM light state at block %s", hash.String()))
 	// Create the response sink and send the network request
 	start := time.Now()
 	resCh := make(chan *eth.Response)
