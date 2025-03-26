@@ -809,6 +809,7 @@ func (s *skeleton) executeTask(peer *peerConnection, req *headerRequest) {
 
 		case headers[0].Number.Uint64() != req.head:
 			// Header batch anchored at non-requested number
+			fmt.Printf("Invalid Header Respose: got %d, want %d \n", headers[0].Number, req.head)
 			peer.log.Debug("Invalid header response head", "have", headers[0].Number, "want", req.head)
 			res.Done <- errors.New("invalid header batch anchor")
 			s.scheduleRevertRequest(req)

@@ -3970,7 +3970,8 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 		isHvmActivated := false
 		isFirstHvmBlock := false
 		log.Info(fmt.Sprintf("Processing block %s @ %d", block.Hash().String(), block.NumberU64()))
-		if bc.hvmEnabled {
+		// If we are awaiting an hVM snap sync, that will be handled separately in response to a hVM light state P2P msg later
+		if bc.hvmEnabled && !bc.awaitingHvmSnapSync {
 			var parent *types.Header
 
 			if bc.chainConfig.IsHvm0(block.Time()) {
