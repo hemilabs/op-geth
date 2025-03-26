@@ -700,7 +700,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		d.blockchain.SetAwaitingHvmSnapSync()
 
 		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
-		fetchers = append(fetchers, func() error { return d.hVMLightStateSyncWithPeer(p, d.lightchain.CurrentHeader().Hash()) })
+		fetchers = append(fetchers, func() error { return d.hVMLightStateSyncWithPeer(p, pivot.Hash()) })
 	} else if mode == FullSync {
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent(ttd, beaconMode) })
 	}
@@ -1728,6 +1728,7 @@ func (d *Downloader) processSnapSyncContent() error {
 			}
 		}
 		// Fast sync done, pivot commit done, full import
+		log.Info("Importing snap sync block results")
 		if err := d.importBlockResults(afterP); err != nil {
 			return err
 		}
