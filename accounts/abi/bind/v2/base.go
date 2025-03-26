@@ -383,15 +383,13 @@ func (c *BoundContract) estimateGasLimit(opts *TransactOpts, contract *common.Ad
 		}
 	}
 	msg := ethereum.CallMsg{
-		From:      opts.From,
-		To:        contract,
-		GasPrice:  gasPrice,
-		GasTipCap: gasTipCap,
-		GasFeeCap: gasFeeCap,
-		Value:     value,
-		Data:      input,
-
-		// OP-Stack fix: important for CrossL2Inbox gas estimation
+		From:       opts.From,
+		To:         contract,
+		GasPrice:   gasPrice,
+		GasTipCap:  gasTipCap,
+		GasFeeCap:  gasFeeCap,
+		Value:      value,
+		Data:       input,
 		AccessList: opts.AccessList,
 	}
 	return c.transactor.EstimateGas(ensureContext(opts.Context), msg)
