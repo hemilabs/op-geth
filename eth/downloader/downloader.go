@@ -473,7 +473,7 @@ func (d *Downloader) getMode() SyncMode {
 }
 
 func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error) {
-	log.Info(fmt.Sprintf("Attempting to snap-sync hVM to L2 block %s", hash.String()))
+	log.Info(fmt.Sprintf("Attempting to snap-sync hVM to L2 block %s, peers: %d", hash.String(), len(d.peers.AllPeers())))
 	for _, peer := range d.peers.AllPeers() {
 		err := d.hVMLightStateSyncWithPeer(peer, hash)
 		if err != nil {
@@ -483,6 +483,7 @@ func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error)
 			return nil
 		}
 	}
+	log.Warn(fmt.Sprintf("Unable to snap-sync hVM with %d peers", len(d.peers.AllPeers())))
 	return fmt.Errorf("unable to get hVM light state from any peer")
 }
 
@@ -1601,6 +1602,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 // processSnapSyncContent takes fetch results from the queue and writes them to the
 // database. It also controls the synchronisation of state nodes of the pivot block.
 func (d *Downloader) processSnapSyncContent() error {
+	log.Info("Processing snap sync content")
 	// Start syncing state of the reported head block. This should get us most of
 	// the state of the pivot block.
 	d.pivotLock.RLock()
