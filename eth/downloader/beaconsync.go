@@ -109,6 +109,9 @@ func (b *beaconBackfiller) resume() {
 			log.Error("Beacon backfilling failed", "err", err)
 			return
 		}
+
+		log.Info("Finished beacon backfilling during snap sync")
+
 		// Synchronization succeeded. Since this happens async, notify the outer
 		// context to disable snap syncing and enable transaction propagation.
 		if b.success != nil {

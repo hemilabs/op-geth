@@ -18,8 +18,10 @@
 package downloader
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -185,6 +187,12 @@ type LightChain interface {
 // BlockChain encapsulates functions required to sync a (full or snap) blockchain.
 type BlockChain interface {
 	LightChain
+
+	// SetAwaitingHvmSnapSync informs the blockchain that a snap sync is in progress
+	SetAwaitingHvmSnapSync()
+
+	// SnapSyncHvm informs the blockchain that an EVM snap sync has completed, and provides hVM light state to snap sync hVM
+	SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
 
 	// HasBlock verifies a block's presence in the local chain.
 	HasBlock(common.Hash, uint64) bool
@@ -392,6 +400,9 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 		log.Info("Block synchronisation started")
 	}
 	if mode == SnapSync {
+		// Inform blockchain of hVM snap sync status
+		d.blockchain.SetAwaitingHvmSnapSync()
+
 		// Snap sync will directly modify the persistent state, making the entire
 		// trie database unusable until the state is fully synced. To prevent any
 		// subsequent state reads, explicitly disable the trie database and state
@@ -447,11 +458,57 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 	if beaconPing != nil {
 		close(beaconPing)
 	}
-	return d.syncWithPeer(p, hash, td, ttd, beaconMode)
+
+	err := d.syncWithPeer(p, hash, td, ttd, beaconMode)
+	if err != nil {
+		return err
+	}
+
+	log.Info(fmt.Sprintf("Finished snap synchronize with peer %s, requesting hVM light state", id))
+	err = d.hVMLightStateSyncWithPeer(p, hash)
+	if err != nil {
+		log.Warn(fmt.Sprintf("Unable to synchronize hVM Light State blocks from peer %s used for snap sync!",
+			id), "err", err)
+		return err
+	}
+
+	// No errors
+	return nil
 }
 
 func (d *Downloader) getMode() SyncMode {
 	return SyncMode(d.mode.Load())
+}
+
+func (d *Downloader) hVMLightStateSyncWithPeer(p *peerConnection, hash common.Hash) (err error) {
+	headers, block, err := d.fetchHvmLightState(p, hash)
+	if err != nil {
+		return nil
+	}
+
+	// TODO: validate header path
+	log.Info("Peer hVM light state from peer", "peer", p.id, "headers", len(headers), "btc_attr_dep_block", block.Header().Hash().String())
+
+	btcAttrDep, err := block.Transactions().ExtractBtcAttrData()
+	if err != nil {
+		log.Warn(fmt.Sprintf("hVM light state error extracting Bitcoin Attributes Deposited tx from peer %s", p.id), "err", err)
+		return fmt.Errorf("error extracting Bitcoin Attributes Deposited tx")
+	}
+
+	canonicalTip := btcAttrDep.CanonicalTip
+	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
+		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", p.id))
+		return fmt.Errorf("error, hVM light state canonical tip is zero")
+	}
+
+	ctHash, err := chainhash.NewHash(canonicalTip[:])
+	if err != nil {
+		log.Warn(fmt.Sprintf("hVM light state unable to convert canonical tip %x to chainhash", canonicalTip[:]), "err", err)
+		return fmt.Errorf("error converting canonical tip to chainhash")
+	}
+
+	d.blockchain.SnapSyncHvm(ctHash, headers[len(headers)-1])
+	return nil
 }
 
 // syncWithPeer starts a block synchronization based on the hash chain from the

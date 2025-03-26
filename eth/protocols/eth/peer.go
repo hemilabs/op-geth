@@ -524,15 +524,24 @@ func (p *Peer) RequestBtcBlocks(hashes []common.Hash) error {
 }
 
 // RequestHvmLightState fetches an hVM light state proof from the remote peer given the current tip
-func (p *Peer) RequestHvmLightState(tip common.Hash) error {
-	p.Log().Info("Fetching hVM Light State Proof", "tip", tip.String())
+func (p *Peer) RequestHvmLightState(tip common.Hash, sink chan *Response) (*Request, error) {
+	p.Log().Info("Fetching hVM Light State Proof for Snap Sync", "tip", tip.String())
 	id := rand.Uint64()
 
-	requestTracker.Track(p.id, p.version, GetHvmLightStateMsg, HvmLightStateMsg, id)
-	return p2p.Send(p.rw, GetHvmLightStateMsg, &GetHvmLightStatePacket{
-		RequestId:               id,
-		GetHvmLightStateRequest: HashToHvmLightStateRequest(tip),
-	})
+	req := &Request{
+		id:   id,
+		sink: sink,
+		code: GetHvmLightStateMsg,
+		want: HvmLightStateMsg,
+		data: &GetHvmLightStatePacket{
+			RequestId:               id,
+			GetHvmLightStateRequest: HashToHvmLightStateRequest(tip),
+		},
+	}
+	if err := p.dispatchRequest(req); err != nil {
+		return nil, err
+	}
+	return req, nil
 }
 
 // knownCache is a cache for known hashes.
