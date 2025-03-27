@@ -1521,7 +1521,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		if err != nil {
 			errNotFound := database.NotFoundError("")
 			if errors.Is(err, errNotFound) {
-				log.Info("could not find (likely) previously block header, indicating a corrupt state: %s", err)
+				log.Warn("could not find (likely) previously block header, indicating a corrupt state: %s", err)
 				return consensus.ErrCorruptHVMHeaderOnlyModeState
 			}
 
