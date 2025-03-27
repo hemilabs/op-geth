@@ -44,7 +44,7 @@ var ProtocolVersions = []uint{ETH68, ETH67}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{ETH68: 19, ETH67: 17}
+var protocolLengths = map[uint]uint64{ETH68: 21, ETH67: 17}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
