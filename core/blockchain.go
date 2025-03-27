@@ -35,6 +35,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
+	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/net/context"
 
@@ -1518,6 +1519,12 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		it, cbh, lbh, _, err := bc.tbcHeaderNode.AddExternalHeaders(
 			bc.ctx, reconstitutedHeaders, stateTransitionTargetHash[:])
 		if err != nil {
+			errNotFound := database.NotFoundError("")
+			if errors.Is(err, errNotFound) {
+				log.Info("could not find (likely) previously block header, indicating a corrupt state: %s", err)
+				return consensus.ErrCorruptHVMHeaderOnlyModeState
+			}
+
 			// TODO: Review downstream errors and catch any that indicate some on-disk state was changed
 			log.Error(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which contains "+
 				"%d Bitcoin headers, and adding these headers to hVM's lightweight BTC consensus view caused an error",
@@ -4030,10 +4037,14 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool) (int, error)
 						parent.Hash().String(), parent.Number.Uint64()))
 					err := bc.updateHvmHeaderConsensus(parent, false)
 					if err != nil {
-						// This is critical as we should always be able to walk to parent.
-						// In future we could attempt a complex TBC recovery here.
-						log.Crit(fmt.Sprintf("Unable to move lightweight TBC node to parent %s @ %d",
-							parent.Hash().String(), parent.Number.Uint64()), "err", err)
+						if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+							bc.performFullHvmHeaderStateRestore()
+						} else {
+							// This is critical as we should always be able to walk to parent.
+							// In future we could attempt a complex TBC recovery here.
+							log.Crit(fmt.Sprintf("Unable to move lightweight TBC node to parent %s @ %d",
+								parent.Hash().String(), parent.Number.Uint64()), "err", err)
+						}
 					}
 				} else {
 					log.Info(fmt.Sprintf("Lightweight TBC is already at parent %s @ %d",
