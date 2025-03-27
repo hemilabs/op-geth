@@ -302,6 +302,7 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 }
 
 func handleGetHvmLightState(backend Backend, msg Decoder, peer *Peer) error {
+	log.Info("Got hVM Light State P2P request")
 	// Decode the block body retrieval message
 	var query GetHvmLightStatePacket
 	if err := msg.Decode(&query); err != nil {
@@ -309,40 +310,33 @@ func handleGetHvmLightState(backend Backend, msg Decoder, peer *Peer) error {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 
+	requestedHash := common.Hash(query.GetHvmLightStateRequest)
+
+	log.Info(fmt.Sprintf("hVM Light State P2P request for block %s", requestedHash.String()))
+
 	// Headers to return, inclusive of tip peer requested and header containing last BTC Attr Dep tx
 	var headers []*types.Header
 
 	// GetHvmLightStateRequest is a common.Hash
-	header := backend.Chain().GetHeaderByHash(common.Hash(query.GetHvmLightStateRequest))
+	header := backend.Chain().GetHeaderByHash(requestedHash)
 
 	if header == nil {
+		log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have block %s",
+			requestedHash.String()))
 		// If we do not have info on the requested header, send an empty response
 		return peer.ReplyHvmLightState(query.RequestId, HvmLightStateResponse{})
 	}
 
-	headers = append(headers, header)
-	block := backend.Chain().GetBlockByHash(header.Hash())
-	if block == nil {
-		// If we do not have info on the requested block, send an empty response
-		return peer.ReplyHvmLightState(query.RequestId, HvmLightStateResponse{})
-	}
-
+	var block *types.Block
 	// Loop for up to maxHvmLightHeaders looking for last BTC Attr Dep tx
 	for count := 0; count < maxHvmLightHeaders; count++ {
-		header = backend.Chain().GetHeaderByHash(header.ParentHash)
-		if header == nil {
-			// This node might be snap-synced and not have old enough historical data to answer this query
-			emptyResponse := HvmLightStateResponse{
-				Headers: make([]*types.Header, 0),
-				Block:   nil,
-			}
-			return peer.ReplyHvmLightState(query.RequestId, emptyResponse)
-		}
-
 		headers = append(headers, header)
 		block = backend.Chain().GetBlockByHash(header.Hash())
+
 		if block == nil {
 			// If we do not have info on the requested block, send an empty response
+			log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have full block %s",
+				header.Hash().String()))
 			return peer.ReplyHvmLightState(query.RequestId, HvmLightStateResponse{})
 		}
 
@@ -355,12 +349,25 @@ func handleGetHvmLightState(backend Backend, msg Decoder, peer *Peer) error {
 					Block:   block,
 				}
 
+				log.Info(fmt.Sprintf("Sending full hVM Light State P2P request, BTC Attr Dep in block %s @ %d",
+					block.Hash().String(), block.NumberU64()))
 				return peer.ReplyHvmLightState(query.RequestId, response)
 			}
+		}
+
+		header = backend.Chain().GetHeaderByHash(header.ParentHash)
+		if header == nil {
+			// This node might be snap-synced and not have old enough historical data to answer this query
+			emptyResponse := HvmLightStateResponse{}
+			log.Info(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have previous header %s",
+				header.ParentHash.String()))
+			return peer.ReplyHvmLightState(query.RequestId, emptyResponse)
 		}
 	}
 
 	// If we got here, then we exceeded the maximum walk-back length
+	log.Info(fmt.Sprintf("Sending empty hVM Light State P2P request, hit maximum walkback to header %s @ %d",
+		header.Hash().String(), header.Number))
 	return peer.ReplyHvmLightState(query.RequestId, HvmLightStateResponse{})
 }
 
