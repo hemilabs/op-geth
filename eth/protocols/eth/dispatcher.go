@@ -19,6 +19,7 @@ package eth
 import (
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"time"
 
 	"github.com/ethereum/go-ethereum/p2p"
@@ -195,6 +196,9 @@ func (p *Peer) dispatcher() {
 			req.Sent = time.Now()
 
 			requestTracker.Track(p.id, p.version, req.code, req.want, req.id)
+			if req.code == GetHvmLightStateMsg {
+				log.Info("Dispatcher sending getHvmLightStateMessage request")
+			}
 			err := p2p.Send(p.rw, req.code, req.data)
 			reqOp.fail <- err
 
