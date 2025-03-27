@@ -1321,21 +1321,6 @@ func (api *BlockChainAPI) CreateAccessList(ctx context.Context, args Transaction
 	if blockNrOrHash != nil {
 		bNrOrHash = *blockNrOrHash
 	}
-
-	header, err := headerByNumberOrHash(ctx, api.b, bNrOrHash)
-	if err == nil && header != nil && api.b.ChainConfig().IsOptimismPreBedrock(header.Number) {
-		if api.b.HistoricalRPCService() != nil {
-			var res accessListResult
-			err := api.b.HistoricalRPCService().CallContext(ctx, &res, "eth_createAccessList", args, blockNrOrHash)
-			if err != nil {
-				return nil, fmt.Errorf("historical backend error: %w", err)
-			}
-			return &res, nil
-		} else {
-			return nil, rpc.ErrNoHistoricalFallback
-		}
-	}
-
 	acl, gasUsed, vmerr, err := AccessList(ctx, api.b, bNrOrHash, args, stateOverrides)
 	if err != nil {
 		return nil, err
