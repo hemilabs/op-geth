@@ -43,7 +43,6 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/internal/debug"
 	"github.com/ethereum/go-ethereum/internal/era"
-	"github.com/ethereum/go-ethereum/internal/era/eradl"
 	"github.com/ethereum/go-ethereum/internal/flags"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/node"
@@ -85,15 +84,13 @@ if one is set.  Otherwise it prints the genesis from the datadir.`,
 		Usage:     "Import a blockchain file",
 		ArgsUsage: "<filename> (<filename 2> ... <filename N>) ",
 		Flags: slices.Concat([]cli.Flag{
+			utils.CacheFlag,
 			utils.GCModeFlag,
 			utils.SnapshotFlag,
 			utils.CacheFlag,
 			utils.CacheDatabaseFlag,
 			utils.CacheTrieFlag,
 			utils.CacheGCFlag,
-			utils.CacheSnapshotFlag,
-			utils.CacheNoPrefetchFlag,
-			utils.CachePreimagesFlag,
 			utils.NoCompactionFlag,
 			utils.MetricsEnabledFlag,
 			utils.MetricsEnabledExpensiveFlag,
