@@ -1714,7 +1714,6 @@ func (d *Downloader) processSnapSyncContent() error {
 			}
 		}
 		// Fast sync done, pivot commit done, full import
-		log.Info("Importing snap sync block results")
 		if err := d.importBlockResults(afterP); err != nil {
 			return err
 		}
