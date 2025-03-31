@@ -1813,7 +1813,7 @@ func (d *Downloader) DeliverSnapPacket(peer *snap.Peer, packet snap.Packet) erro
 		return d.SnapSyncer.OnTrieNodes(peer, packet.ID, packet.Nodes)
 
 	case *snap.HvmLightStatePacket:
-		log.Info("Received hVM Light State packet", "peer", peer.RemoteAddr().String())
+		log.Debug("Received hVM Light State packet", "peer", peer.RemoteAddr().String())
 		return d.SnapSyncer.OnHvmLightState(peer, packet.ID, packet.Headers, packet.Block)
 
 	default:

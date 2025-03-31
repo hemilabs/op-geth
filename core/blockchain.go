@@ -1054,18 +1054,18 @@ func (bc *BlockChain) HvmSnapSyncCompleted() bool {
 func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
 	if !bc.awaitingHvmSnapSync || bc.processingHvmSnapSync {
 		// Already done
-		log.Info("hVM snap sync already completed, blockchain ignoring additional snap sync information")
+		log.Debug("hVM snap sync already completed, blockchain ignoring additional snap sync information")
 		return
 	}
 	bc.processingHvmSnapSync = true // Set latch so multiple incoming hVM light header packets don't collide
 
-	log.Info("Blockchain processing hVM light state snap sync message")
+	log.Debug("Blockchain processing hVM light state snap sync message")
 	missing := make(map[string]uint8)
 
 	for {
 		header, _, err := vm.TBCFullNode.BlockHeaderByHash(bc.ctx, *btcTipHeader)
 		if err != nil || header == nil {
-			log.Info(fmt.Sprintf("Unable to get hVM snap sync header %s from full TBC node, waiting...", btcTipHeader.String()))
+			log.Warn(fmt.Sprintf("Unable to get hVM snap sync header %s from full TBC node, waiting...", btcTipHeader.String()))
 		} else {
 			// We have header, now check for all blocks
 			available, missingHeaders, missingHeaderHash, err := vm.TBCBlocksAvailableToHeader(bc.ctx, header)
@@ -2953,6 +2953,7 @@ func (bc *BlockChain) setHeadBeyondRoot(head uint64, time uint64, root common.Ha
 // SnapSyncCommitHead sets the current head block to the one defined by the hash
 // irrelevant what the chain contents were prior.
 func (bc *BlockChain) SnapSyncCommitHead(hash common.Hash) error {
+	log.Info("Blockhain SnapSyncCommitHead", "hash", hash.String())
 	// Make sure that both the block as well at its state trie exists
 	block := bc.GetBlockByHash(hash)
 	if block == nil {

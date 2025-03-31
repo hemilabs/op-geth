@@ -276,7 +276,7 @@ func HandleMessage(backend Backend, peer *Peer) error {
 
 	case msg.Code == GetHvmLightStateMsg:
 		// Decode hVM light state retrieval request
-		log.Info("Received hVM get light state message", "code", msg.Code)
+		log.Debug("Received hVM get light state message", "code", msg.Code)
 		var req GetHvmLightStatePacket
 		if err := msg.Decode(&req); err != nil {
 			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
@@ -295,7 +295,7 @@ func HandleMessage(backend Backend, peer *Peer) error {
 
 	case msg.Code == HvmLightStateMsg:
 		// An hVM light state proof arrived to one of our previous requests
-		log.Info("Received hVM light state message", "code", msg.Code)
+		log.Debug("Received hVM light state message", "code", msg.Code)
 		res := new(HvmLightStatePacket)
 		if err := msg.Decode(res); err != nil {
 			log.Warn(fmt.Sprintf("unable to decode hVM light state message"), "msg", msg, "err", err)
@@ -637,7 +637,7 @@ func ServiceGetHvmLightStateQuery(chain *core.BlockChain, req *GetHvmLightStateP
 			if tx.IsBtcAttributesDepositedTx() {
 				// Found the first block with a BTC Attr Dep tx walking backwards
 
-				log.Info(fmt.Sprintf("Sending full hVM Light State P2P request, BTC Attr Dep in block %s @ %d",
+				log.Debug(fmt.Sprintf("Sending full hVM Light State P2P request, BTC Attr Dep in block %s @ %d",
 					block.Hash().String(), block.NumberU64()))
 				return headers, block, nil
 			}
@@ -646,14 +646,14 @@ func ServiceGetHvmLightStateQuery(chain *core.BlockChain, req *GetHvmLightStateP
 		header = chain.GetHeaderByHash(header.ParentHash)
 		if header == nil {
 			// This node might be snap-synced and not have old enough historical data to answer this query
-			log.Info(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have previous header %s",
+			log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have previous header %s",
 				header.ParentHash.String()))
 			return nil, nil, fmt.Errorf("header for hVM light state query is nil")
 		}
 	}
 
 	// If we got here, then we exceeded the maximum walk-back length
-	log.Info(fmt.Sprintf("Sending empty hVM Light State P2P request, hit maximum walkback to header %s @ %d",
+	log.Warn(fmt.Sprintf("Sending empty hVM Light State P2P request, hit maximum walkback to header %s @ %d",
 		header.Hash().String(), header.Number))
 	return nil, nil, fmt.Errorf("hit maximum walkback to header with btc attr dep tx")
 }

@@ -2813,7 +2813,7 @@ func (s *Syncer) OnStorage(peer SyncPeer, id uint64, hashes [][]common.Hash, slo
 
 func (s *Syncer) OnHvmLightState(peer SyncPeer, id uint64, headers []*types.Header, block *types.Block) error {
 	// TODO: header path validation?
-	log.Info("Received hVM light state packet from peer", "peer", peer.ID())
+	log.Debug("Received hVM light state packet from peer", "peer", peer.ID())
 
 	s.hVMSnapHeaders = headers
 	s.hVMSnapBlock = block
