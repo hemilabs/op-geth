@@ -1165,9 +1165,9 @@ func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *ty
 			headersToAdd[len(headersToAdd)-1].BlockHash().String()), "err", err)
 	}
 
-	if !bytes.Equal(cbh.Hash[:], targetHash[:]) {
+	if !bytes.Equal(cbh.Hash[:], btcTipHeader[:]) {
 		log.Crit(fmt.Sprintf("After adding hVM snap sync headers, lightweight TBC does not have "+
-			"expected canonical block hash %s", targetHash.String()))
+			"expected canonical block hash %s", btcTipHeader.String()))
 	}
 
 	log.Info(fmt.Sprintf("Successfully snap synced lightweight hVM to BTC tip %s for Hemi tip %s,"+
