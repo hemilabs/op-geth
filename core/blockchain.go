@@ -1194,8 +1194,8 @@ func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *ty
 		hvmTipHeader.Hash().String(), si.Utxo.Hash.String(), si.Tx.Hash.String()))
 
 	// TODO: review and get this from op-node CL sync
-	bc.SetSafe(bc.currentSnapBlock.Load())
-	bc.SetFinalized(bc.currentSnapBlock.Load())
+	bc.SetSafe(hvmTipHeader)
+	bc.SetFinalized(hvmTipHeader)
 
 	bc.awaitingHvmSnapSync = false
 	bc.finishedHvmSnapSync = true
