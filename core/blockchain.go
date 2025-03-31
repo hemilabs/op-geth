@@ -304,10 +304,11 @@ type BlockChain struct {
 	forker     *ForkChoice
 	vmConfig   vm.Config
 
-	hvmEnabled          bool
-	tbcHeaderNode       *tbc.Server
-	tbcHeaderNodeConfig *tbc.Config
-	awaitingHvmSnapSync bool
+	hvmEnabled            bool
+	tbcHeaderNode         *tbc.Server
+	tbcHeaderNodeConfig   *tbc.Config
+	awaitingHvmSnapSync   bool
+	processingHvmSnapSync bool
 
 	// Temporary workaround to allow restarting TBC Full Node when its not progressing
 	fullBlockFailureCount       uint32
@@ -1046,11 +1047,12 @@ func (bc *BlockChain) SetAwaitingHvmSnapSync() {
 // TBC node from scratch up to the point it should be based on the snap-synced
 // tip.
 func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
-	if !bc.awaitingHvmSnapSync {
+	if !bc.awaitingHvmSnapSync || bc.processingHvmSnapSync {
 		// Already done
 		log.Info("hVM snap sync already completed, blockchain ignoring additional snap sync information")
 		return
 	}
+	bc.processingHvmSnapSync = true // Set latch so multiple incoming hVM light header packets don't collide
 
 	log.Info("Blockchain processing hVM light state snap sync message")
 	missing := make(map[string]uint8)
@@ -1117,6 +1119,8 @@ func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *ty
 		case <-bc.ctx.Done():
 			log.Warn("Context exited while waiting for TBC full node data to finish hVM snap sync")
 		}
+
+		bc.processingHvmSnapSync = false
 	}
 
 	log.Info("All required BTC data available, resetting lightweight TBC and adding headers")
