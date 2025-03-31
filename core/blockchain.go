@@ -1193,6 +1193,20 @@ func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *ty
 	log.Info(fmt.Sprintf("Finished hVM snap sync, hVM snap tip = %s, TBC full node utxo = %s, tx = %s",
 		hvmTipHeader.Hash().String(), si.Utxo.Hash.String(), si.Tx.Hash.String()))
 
+	// TODO: review and get this from op-node CL sync
+	// Set safe/finalized block to ~72 hours ago, forcing op-node to confirm finalization
+	snapFinalizationCursor := bc.currentSnapBlock.Load()
+	seekTime := snapFinalizationCursor.Time - (60 * 60 * 24 * 3)
+	for {
+		snapFinalizationCursor = bc.GetHeaderByHash(snapFinalizationCursor.ParentHash)
+		if snapFinalizationCursor.Time < seekTime {
+			break
+		}
+	}
+
+	bc.SetSafe(snapFinalizationCursor)
+	bc.SetFinalized(snapFinalizationCursor)
+
 	bc.awaitingHvmSnapSync = false
 	bc.finishedHvmSnapSync = true
 }
