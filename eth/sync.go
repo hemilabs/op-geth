@@ -229,22 +229,17 @@ func (cs *chainSyncer) startSync(op *chainSyncOp) {
 
 // doSync synchronizes the local blockchain with a remote peer.
 func (h *handler) doSync(op *chainSyncOp) error {
+	// Inform hVM that we are doing a snap sync and to not progress hVM state normally
+	h.chain.SetAwaitingHvmSnapSync()
+
 	// Run the sync cycle, and disable snap sync if we're past the pivot block
-	log.Info(fmt.Sprintf("Starting snap sync with peer %s", op.peer.RemoteAddr().String()))
+	log.Info(fmt.Sprintf("Starting legacy snap sync with peer %s", op.peer.RemoteAddr().String()))
 	err := h.downloader.LegacySync(op.peer.ID(), op.head, op.td, h.chain.Config().TerminalTotalDifficulty, op.mode)
 	if err != nil {
 		return err
 	}
 
-	log.Info(fmt.Sprintf("Finished snap sync with peer %s", op.peer.RemoteAddr().String()))
-	err = op.peer.RequestHvmLightStateBlocks(h.chain.CurrentSnapBlock().Hash())
-	if err != nil {
-		log.Warn(fmt.Sprintf("Unable to request hVM Light State blocks from peer %s used for snap sync!",
-			op.peer.RemoteAddr().String()), "err", err)
-		return err
-	}
-
-	h.chain.SetAwaitingHvmSnapSync()
+	log.Info("Finished legacy snap sync with peer, note that hVM snap sync is not supported after legacy sync")
 
 	h.enableSyncedFeatures()
 

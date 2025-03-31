@@ -20,6 +20,7 @@ package downloader
 import (
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -186,6 +187,14 @@ type LightChain interface {
 type BlockChain interface {
 	LightChain
 
+	// SetAwaitingHvmSnapSync informs the blockchain that a snap sync is in progress
+	SetAwaitingHvmSnapSync()
+
+	// SnapSyncHvm informs the blockchain that an EVM snap sync has completed, and provides hVM light state to snap sync hVM
+	SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
+
+	HvmSnapSyncCompleted() bool
+
 	// HasBlock verifies a block's presence in the local chain.
 	HasBlock(common.Hash, uint64) bool
 
@@ -223,6 +232,12 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 	if lightchain == nil {
 		lightchain = chain
 	}
+
+	hVMSnapFunc := func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
+		log.Info("hVM Snap Sync Func called")
+		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader)
+	}
+
 	dl := &Downloader{
 		stateDB:        stateDb,
 		mux:            mux,
@@ -233,7 +248,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 		dropPeer:       dropPeer,
 		headerProcCh:   make(chan *headerTask, 1),
 		quitCh:         make(chan struct{}),
-		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme()),
+		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
 		stateSyncStart: make(chan *stateSync),
 		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
 		chainID:        chainID,
@@ -392,6 +407,9 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 		log.Info("Block synchronisation started")
 	}
 	if mode == SnapSync {
+		// Inform blockchain of hVM snap sync status
+		d.blockchain.SetAwaitingHvmSnapSync()
+
 		// Snap sync will directly modify the persistent state, making the entire
 		// trie database unusable until the state is fully synced. To prevent any
 		// subsequent state reads, explicitly disable the trie database and state
@@ -438,7 +456,7 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 
 	// Retrieve the origin peer and initiate the downloading process
 	var p *peerConnection
-	if !beaconMode { // Beacon mode doesn't need a peer to sync from
+	if !beaconMode {
 		p = d.peers.Peer(id)
 		if p == nil {
 			return errUnknownPeer
@@ -447,11 +465,35 @@ func (d *Downloader) synchronise(id string, hash common.Hash, td, ttd *big.Int, 
 	if beaconPing != nil {
 		close(beaconPing)
 	}
-	return d.syncWithPeer(p, hash, td, ttd, beaconMode)
+
+	err := d.syncWithPeer(p, hash, td, ttd, beaconMode)
+	if err != nil {
+		return err
+	}
+
+	// No errors
+	return nil
 }
 
 func (d *Downloader) getMode() SyncMode {
 	return SyncMode(d.mode.Load())
+}
+
+func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error) {
+	log.Info(fmt.Sprintf("Attempting to snap-sync hVM to L2 block %s", hash.String()))
+
+	// Kick off async hVM light state requests
+	d.SnapSyncer.RequestHvmState(hash)
+
+	// Busy-wait until blockchain acknowledges hVM snap sync has completed
+	for {
+		time.Sleep(1000 * time.Millisecond)
+		if d.blockchain.HvmSnapSyncCompleted() {
+			log.Info("hVM Snap Sync completed in fetcher")
+			break
+		}
+	}
+	return nil
 }
 
 // syncWithPeer starts a block synchronization based on the hash chain from the
@@ -640,8 +682,10 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		d.pivotLock.Lock()
 		d.pivotHeader = pivot
 		d.pivotLock.Unlock()
+		d.blockchain.SetAwaitingHvmSnapSync()
 
 		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
+		fetchers = append(fetchers, func() error { return d.hVMLightStateSyncWithAllPeers(pivot.Hash()) })
 	} else if mode == FullSync {
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent(ttd, beaconMode) })
 	}
@@ -1536,6 +1580,7 @@ func (d *Downloader) importBlockResults(results []*fetchResult) error {
 // processSnapSyncContent takes fetch results from the queue and writes them to the
 // database. It also controls the synchronisation of state nodes of the pivot block.
 func (d *Downloader) processSnapSyncContent() error {
+	log.Info("Processing snap sync content")
 	// Start syncing state of the reported head block. This should get us most of
 	// the state of the pivot block.
 	d.pivotLock.RLock()
@@ -1766,6 +1811,10 @@ func (d *Downloader) DeliverSnapPacket(peer *snap.Peer, packet snap.Packet) erro
 
 	case *snap.TrieNodesPacket:
 		return d.SnapSyncer.OnTrieNodes(peer, packet.ID, packet.Nodes)
+
+	case *snap.HvmLightStatePacket:
+		log.Debug("Received hVM Light State packet", "peer", peer.RemoteAddr().String())
+		return d.SnapSyncer.OnHvmLightState(peer, packet.ID, packet.Headers, packet.Block)
 
 	default:
 		return fmt.Errorf("unexpected snap packet type: %T", packet)

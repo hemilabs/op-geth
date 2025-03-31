@@ -38,5 +38,8 @@ var (
 	receiptDropMeter    = metrics.NewRegisteredMeter("eth/downloader/receipts/drop", nil)
 	receiptTimeoutMeter = metrics.NewRegisteredMeter("eth/downloader/receipts/timeout", nil)
 
+	hvmLightStateReqTimer     = metrics.NewRegisteredTimer("eth/downloader/hvmlightstate/req", nil)
+	hvmLightStateTimeoutMeter = metrics.NewRegisteredMeter("eth/downloader/hvmlightstate/timeout", nil)
+
 	throttleCounter = metrics.NewRegisteredCounter("eth/downloader/throttle", nil)
 )

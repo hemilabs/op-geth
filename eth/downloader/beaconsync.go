@@ -109,6 +109,9 @@ func (b *beaconBackfiller) resume() {
 			log.Error("Beacon backfilling failed", "err", err)
 			return
 		}
+
+		log.Info("Finished beacon backfilling during snap sync")
+
 		// Synchronization succeeded. Since this happens async, notify the outer
 		// context to disable snap syncing and enable transaction propagation.
 		if b.success != nil {
@@ -270,6 +273,7 @@ func (d *Downloader) findBeaconAncestor() (uint64, error) {
 // fetchBeaconHeaders feeds skeleton headers to the downloader queue for scheduling
 // until sync errors or is finished.
 func (d *Downloader) fetchBeaconHeaders(from uint64) error {
+	log.Info("Fetching beacon headers", "from", from)
 	var head *types.Header
 	_, tail, _, err := d.skeleton.Bounds()
 	if err != nil {

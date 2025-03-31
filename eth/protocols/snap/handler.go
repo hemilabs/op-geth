@@ -54,6 +54,8 @@ const (
 	// If we spend too much time, then it's a fairly high chance of timing out
 	// at the remote side, which means all the work is in vain.
 	maxTrieNodeTimeSpent = 5 * time.Second
+
+	maxHvmLightHeaders = 5000 // Only return light hVM proofs with up to 5000 headers
 )
 
 // Handler is a callback to invoke from an outside runner after the boilerplate
@@ -269,6 +271,37 @@ func HandleMessage(backend Backend, peer *Peer) error {
 			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 		}
 		requestTracker.Fulfil(peer.id, peer.version, TrieNodesMsg, res.ID)
+
+		return backend.Handle(peer, res)
+
+	case msg.Code == GetHvmLightStateMsg:
+		// Decode hVM light state retrieval request
+		log.Debug("Received hVM get light state message", "code", msg.Code)
+		var req GetHvmLightStatePacket
+		if err := msg.Decode(&req); err != nil {
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+		}
+		// Service the request, potentially returning nothing in case of errors
+		headers, block, err := ServiceGetHvmLightStateQuery(backend.Chain(), &req, start)
+		if err != nil {
+			return err
+		}
+		// Send back anything accumulated (or empty in case of errors)
+		return p2p.Send(peer.rw, HvmLightStateMsg, &HvmLightStatePacket{
+			ID:      req.ID,
+			Headers: headers,
+			Block:   block,
+		})
+
+	case msg.Code == HvmLightStateMsg:
+		// An hVM light state proof arrived to one of our previous requests
+		log.Debug("Received hVM light state message", "code", msg.Code)
+		res := new(HvmLightStatePacket)
+		if err := msg.Decode(res); err != nil {
+			log.Warn(fmt.Sprintf("unable to decode hVM light state message"), "msg", msg, "err", err)
+			return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
+		}
+		requestTracker.Fulfil(peer.id, peer.version, HvmLightStateMsg, res.ID)
 
 		return backend.Handle(peer, res)
 
@@ -565,6 +598,64 @@ func ServiceGetTrieNodesQuery(chain *core.BlockChain, req *GetTrieNodesPacket, s
 		}
 	}
 	return nodes, nil
+}
+
+func ServiceGetHvmLightStateQuery(chain *core.BlockChain, req *GetHvmLightStatePacket, start time.Time) ([]*types.Header, *types.Block, error) {
+	log.Info("Got hVM Light State P2P request")
+
+	requestedHash := req.Tip
+
+	log.Info(fmt.Sprintf("hVM Light State P2P request for block %s", requestedHash.String()))
+
+	// Headers to return, inclusive of tip peer requested and header containing last BTC Attr Dep tx
+	var headers []*types.Header
+
+	// GetHvmLightStateRequest is a common.Hash
+	header := chain.GetHeaderByHash(requestedHash)
+
+	if header == nil {
+		log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have block %s",
+			requestedHash.String()))
+		// If we do not have info on the requested header, send an empty response
+		return nil, nil, fmt.Errorf("header for hVM light state query is nil")
+	}
+
+	var block *types.Block
+	// Loop for up to maxHvmLightHeaders looking for last BTC Attr Dep tx
+	for count := 0; count < maxHvmLightHeaders; count++ {
+		headers = append(headers, header)
+		block = chain.GetBlockByHash(header.Hash())
+
+		if block == nil {
+			// If we do not have info on the requested block, send an empty response
+			log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have full block %s",
+				header.Hash().String()))
+			return nil, nil, fmt.Errorf("full block for hVM light state query is nil")
+		}
+
+		for _, tx := range block.Transactions() {
+			if tx.IsBtcAttributesDepositedTx() {
+				// Found the first block with a BTC Attr Dep tx walking backwards
+
+				log.Debug(fmt.Sprintf("Sending full hVM Light State P2P request, BTC Attr Dep in block %s @ %d",
+					block.Hash().String(), block.NumberU64()))
+				return headers, block, nil
+			}
+		}
+
+		header = chain.GetHeaderByHash(header.ParentHash)
+		if header == nil {
+			// This node might be snap-synced and not have old enough historical data to answer this query
+			log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have previous header %s",
+				header.ParentHash.String()))
+			return nil, nil, fmt.Errorf("header for hVM light state query is nil")
+		}
+	}
+
+	// If we got here, then we exceeded the maximum walk-back length
+	log.Warn(fmt.Sprintf("Sending empty hVM Light State P2P request, hit maximum walkback to header %s @ %d",
+		header.Hash().String(), header.Number))
+	return nil, nil, fmt.Errorf("hit maximum walkback to header with btc attr dep tx")
 }
 
 // NodeInfo represents a short summary of the `snap` sub-protocol metadata

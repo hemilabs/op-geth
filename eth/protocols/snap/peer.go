@@ -131,3 +131,14 @@ func (p *Peer) RequestTrieNodes(id uint64, root common.Hash, paths []TrieNodePat
 		Bytes: bytes,
 	})
 }
+
+// RequestHvmLightState fetches an hVM light state proof
+func (p *Peer) RequestHvmLightState(id uint64, tip common.Hash) error {
+	p.logger.Info("Fetching hVM light state", "reqid", id, "tip", tip)
+
+	requestTracker.Track(p.id, p.version, GetHvmLightStateMsg, HvmLightStateMsg, id)
+	return p2p.Send(p.rw, GetHvmLightStateMsg, &GetHvmLightStatePacket{
+		ID:  id,
+		Tip: tip,
+	})
+}

@@ -20,6 +20,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"sync/atomic"
 	"time"
@@ -99,9 +100,14 @@ type MsgReadWriter interface {
 func Send(w MsgWriter, msgcode uint64, data interface{}) error {
 	size, r, err := rlp.EncodeToReader(data)
 	if err != nil {
+		log.Warn("Error in p2p send", "err", err)
 		return err
 	}
-	return w.WriteMsg(Msg{Code: msgcode, Size: uint32(size), Payload: r})
+	err = w.WriteMsg(Msg{Code: msgcode, Size: uint32(size), Payload: r})
+	if err != nil {
+		log.Warn("Error in WriteMsg", "err", err)
+	}
+	return err
 }
 
 // SendItems writes an RLP with the given code and data elements.
