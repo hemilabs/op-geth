@@ -32,8 +32,6 @@ import (
 	"github.com/ethereum/go-ethereum/trie"
 )
 
-const maxHvmLightHeaders = 5000 // Only return light hVM proofs with up to 5000 headers
-
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the complex header query
 	var query GetBlockHeadersPacket
@@ -301,76 +299,6 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 	return blocks
 }
 
-func handleGetHvmLightState(backend Backend, msg Decoder, peer *Peer) error {
-	log.Info("Got hVM Light State P2P request")
-	// Decode the block body retrieval message
-	var query GetHvmLightStatePacket
-	if err := msg.Decode(&query); err != nil {
-		log.Error("Unable to decode GetHvmLightStatePacket", "err", err)
-		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-	}
-
-	requestedHash := common.Hash(query.GetHvmLightStateRequest)
-
-	log.Info(fmt.Sprintf("hVM Light State P2P request for block %s", requestedHash.String()))
-
-	// Headers to return, inclusive of tip peer requested and header containing last BTC Attr Dep tx
-	var headers []*types.Header
-
-	// GetHvmLightStateRequest is a common.Hash
-	header := backend.Chain().GetHeaderByHash(requestedHash)
-
-	if header == nil {
-		log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have block %s",
-			requestedHash.String()))
-		// If we do not have info on the requested header, send an empty response
-		return peer.ReplyHvmLightState(query.RequestId, HvmLightStateResponse{})
-	}
-
-	var block *types.Block
-	// Loop for up to maxHvmLightHeaders looking for last BTC Attr Dep tx
-	for count := 0; count < maxHvmLightHeaders; count++ {
-		headers = append(headers, header)
-		block = backend.Chain().GetBlockByHash(header.Hash())
-
-		if block == nil {
-			// If we do not have info on the requested block, send an empty response
-			log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have full block %s",
-				header.Hash().String()))
-			return peer.ReplyHvmLightState(query.RequestId, HvmLightStateResponse{})
-		}
-
-		for _, tx := range block.Transactions() {
-			if tx.IsBtcAttributesDepositedTx() {
-				// Found the first block with a BTC Attr Dep tx walking backwards
-
-				response := HvmLightStateResponse{
-					Headers: headers,
-					Block:   block,
-				}
-
-				log.Info(fmt.Sprintf("Sending full hVM Light State P2P request, BTC Attr Dep in block %s @ %d",
-					block.Hash().String(), block.NumberU64()))
-				return peer.ReplyHvmLightState(query.RequestId, response)
-			}
-		}
-
-		header = backend.Chain().GetHeaderByHash(header.ParentHash)
-		if header == nil {
-			// This node might be snap-synced and not have old enough historical data to answer this query
-			emptyResponse := HvmLightStateResponse{}
-			log.Info(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have previous header %s",
-				header.ParentHash.String()))
-			return peer.ReplyHvmLightState(query.RequestId, emptyResponse)
-		}
-	}
-
-	// If we got here, then we exceeded the maximum walk-back length
-	log.Info(fmt.Sprintf("Sending empty hVM Light State P2P request, hit maximum walkback to header %s @ %d",
-		header.Hash().String(), header.Number))
-	return peer.ReplyHvmLightState(query.RequestId, HvmLightStateResponse{})
-}
-
 func handleGetReceipts(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the block receipts retrieval message
 	var query GetReceiptsPacket
@@ -450,40 +378,6 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	peer.markBlock(ann.Block.Hash())
 
 	return backend.Handle(peer, ann)
-}
-
-func handleHvmLightState(backend Backend, msg Decoder, peer *Peer) error {
-	log.Info("Handling hVM light state message")
-	res := new(HvmLightStateResponse)
-	if err := msg.Decode(res); err != nil {
-		log.Info("hVM light state decode error", "err", err)
-		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-	}
-
-	log.Info("Peer hVM light state from peer", "headers", len(res.Headers), "btc_attr_dep_block", res.Block.Header().Hash().String())
-
-	// TODO: validate header path
-
-	btcAttrDep, err := res.Block.Transactions().ExtractBtcAttrData()
-	if err != nil {
-		log.Warn(fmt.Sprintf("hVM light state error extracting Bitcoin Attributes Deposited tx from peer %s", peer.RemoteAddr().String()), "err", err)
-		return fmt.Errorf("error extracting Bitcoin Attributes Deposited tx from message %v: %v", msg, err)
-	}
-
-	canonicalTip := btcAttrDep.CanonicalTip
-	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
-		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", peer.RemoteAddr().String()))
-		return fmt.Errorf("error, hVM light state canonical tip is zero from message %v: %v", msg, err)
-	}
-
-	ctHash, err := chainhash.NewHash(canonicalTip[:])
-	if err != nil {
-		log.Warn(fmt.Sprintf("hVM light state unable to convert canonical tip %x to chainhash", canonicalTip[:]), "err", err)
-		return fmt.Errorf("error converting canonical tip to chainhash from message %v: %v", msg, err)
-	}
-
-	backend.Chain().SnapSyncHvm(ctHash, res.Headers[len(res.Headers)])
-	return nil
 }
 
 func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {

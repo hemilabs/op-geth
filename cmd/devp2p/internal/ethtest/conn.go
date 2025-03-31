@@ -213,6 +213,10 @@ func (c *Conn) ReadSnap() (any, error) {
 			msg = new(snap.GetTrieNodesPacket)
 		case snap.TrieNodesMsg:
 			msg = new(snap.TrieNodesPacket)
+		case snap.GetHvmLightStateMsg:
+			msg = new(snap.GetHvmLightStatePacket)
+		case snap.HvmLightStateMsg:
+			msg = new(snap.HvmLightStatePacket)
 		default:
 			panic(fmt.Errorf("unhandled snap code: %d", code))
 		}

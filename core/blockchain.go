@@ -1046,6 +1046,12 @@ func (bc *BlockChain) SetAwaitingHvmSnapSync() {
 // TBC node from scratch up to the point it should be based on the snap-synced
 // tip.
 func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
+	if !bc.awaitingHvmSnapSync {
+		// Already done
+		log.Info("hVM snap sync already completed, blockchain ignoring additional snap sync information")
+		return
+	}
+
 	log.Info("Blockchain processing hVM light state snap sync message")
 	missing := make(map[string]uint8)
 

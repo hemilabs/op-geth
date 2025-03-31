@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	gomath "math"
 	"math/big"
 	"math/rand"
@@ -392,6 +393,9 @@ type SyncPeer interface {
 	// a specific state trie.
 	RequestTrieNodes(id uint64, root common.Hash, paths []TrieNodePathSet, bytes uint64) error
 
+	// RequestHvmLightState fetches hVM light state information
+	RequestHvmLightState(id uint64, tip common.Hash) error
+
 	// Log retrieves the peer's own contextual logger.
 	Log() log.Logger
 }
@@ -473,11 +477,16 @@ type Syncer struct {
 
 	pend sync.WaitGroup // Tracks network request goroutines for graceful shutdown
 	lock sync.RWMutex   // Protects fields that can change outside of sync (peers, reqs, root)
+
+	snapSyncHvm func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
+
+	hVMSnapHeaders []*types.Header
+	hVMSnapBlock   *types.Block
 }
 
 // NewSyncer creates a new snapshot syncer to download the Ethereum state over the
 // snap protocol.
-func NewSyncer(db ethdb.KeyValueStore, scheme string) *Syncer {
+func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)) *Syncer {
 	return &Syncer{
 		db:     db,
 		scheme: scheme,
@@ -505,6 +514,8 @@ func NewSyncer(db ethdb.KeyValueStore, scheme string) *Syncer {
 		stateWriter:          db.NewBatch(),
 
 		extProgress: new(SyncProgress),
+
+		snapSyncHvm: snapSyncHvmFunc,
 	}
 }
 
@@ -1460,6 +1471,18 @@ func (s *Syncer) assignTrienodeHealTasks(success chan *trienodeHealResponse, fai
 			}
 		}(s.root)
 	}
+}
+
+func (s *Syncer) RequestHvmState(tip common.Hash) {
+	reqid := uint64(rand.Int63())
+
+	for _, peer := range s.peers {
+		log.Info("Requesting hVM light state from peer", "peer", peer.ID())
+		if err := peer.RequestHvmLightState(reqid, tip); err != nil {
+			log.Info("Failed to request hVM light state healers", "err", err)
+		}
+	}
+
 }
 
 // assignBytecodeHealTasks attempts to match idle peers to bytecode requests to
@@ -2785,6 +2808,35 @@ func (s *Syncer) OnStorage(peer SyncPeer, id uint64, hashes [][]common.Hash, slo
 	case <-req.cancel:
 	case <-req.stale:
 	}
+	return nil
+}
+
+func (s *Syncer) OnHvmLightState(peer SyncPeer, id uint64, headers []*types.Header, block *types.Block) error {
+	// TODO: header path validation?
+	log.Info("Received hVM light state packet from peer", "peer", peer.ID())
+
+	s.hVMSnapHeaders = headers
+	s.hVMSnapBlock = block
+
+	btcAttrDep, err := block.Transactions().ExtractBtcAttrData()
+	if err != nil {
+		log.Warn(fmt.Sprintf("hVM light state error extracting Bitcoin Attributes Deposited tx from peer %s", peer.ID()), "err", err)
+		return fmt.Errorf("error extracting Bitcoin Attributes Deposited tx")
+	}
+
+	canonicalTip := btcAttrDep.CanonicalTip
+	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
+		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", peer.ID()))
+		return fmt.Errorf("error, hVM light state canonical tip is zero")
+	}
+
+	ctHash, err := chainhash.NewHash(canonicalTip[:])
+	if err != nil {
+		log.Warn(fmt.Sprintf("hVM light state unable to convert canonical tip %x to chainhash", canonicalTip[:]), "err", err)
+		return fmt.Errorf("error converting canonical tip to chainhash")
+	}
+
+	s.snapSyncHvm(ctHash, headers[len(headers)-1])
 	return nil
 }
 

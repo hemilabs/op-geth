@@ -31,8 +31,8 @@ const (
 // Unexported devp2p protocol lengths from p2p package.
 const (
 	baseProtoLen = 16
-	ethProtoLen  = 17
-	snapProtoLen = 8
+	ethProtoLen  = 19
+	snapProtoLen = 10
 )
 
 // Unexported handshake structure from p2p/peer.go.

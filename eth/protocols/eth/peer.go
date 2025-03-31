@@ -349,20 +349,6 @@ func (p *Peer) ReplyBTCBlocksRLP(id uint64, blocks []rlp.RawValue) error {
 	})
 }
 
-func (p *Peer) ReplyHvmLightState(id uint64, hvmLightState HvmLightStateResponse) error {
-	return p2p.Send(p.rw, HvmLightStateMsg, &HvmLightStatePacket{
-		RequestId:             id,
-		HvmLightStateResponse: hvmLightState,
-	})
-}
-
-func (p *Peer) ReplyHvmLightStateRLP(id uint64, hvmLightState []rlp.RawValue) error {
-	return p2p.Send(p.rw, HvmLightStateMsg, &HvmLightStateRLPPacket{
-		RequestId:                id,
-		HvmLightStateRLPResponse: hvmLightState,
-	})
-}
-
 // ReplyReceiptsRLP is the response to GetReceipts.
 func (p *Peer) ReplyReceiptsRLP(id uint64, receipts []rlp.RawValue) error {
 	return p2p.Send(p.rw, ReceiptsMsg, &ReceiptsRLPPacket{
@@ -521,27 +507,6 @@ func (p *Peer) RequestBtcBlocks(hashes []common.Hash) error {
 		RequestId:           id,
 		GetBTCBlocksRequest: hashes,
 	})
-}
-
-// RequestHvmLightState fetches an hVM light state proof from the remote peer given the current tip
-func (p *Peer) RequestHvmLightState(tip common.Hash, sink chan *Response) (*Request, error) {
-	p.Log().Info("Fetching hVM Light State Proof for Snap Sync", "tip", tip.String())
-	id := rand.Uint64()
-
-	req := &Request{
-		id:   id,
-		sink: sink,
-		code: GetHvmLightStateMsg,
-		want: HvmLightStateMsg,
-		data: &GetHvmLightStatePacket{
-			RequestId:               id,
-			GetHvmLightStateRequest: HashToHvmLightStateRequest(tip),
-		},
-	}
-	if err := p.dispatchRequest(req); err != nil {
-		return nil, err
-	}
-	return req, nil
 }
 
 // knownCache is a cache for known hashes.

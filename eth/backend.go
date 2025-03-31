@@ -256,7 +256,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		tbcCfg.BlockheaderCacheSize = "0"
 		tbcCfg.BlockCacheSize = "0"
 		tbcCfg.AutoIndex = false
-		tbcCfg.BlockSanity = false
+		tbcCfg.BlockSanity = true
 		tbcCfg.MaxCachedTxs = 0
 		tbcCfg.MempoolEnabled = false
 

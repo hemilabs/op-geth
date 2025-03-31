@@ -40,7 +40,7 @@ var ProtocolVersions = []uint{SNAP1}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{SNAP1: 8}
+var protocolLengths = map[uint]uint64{SNAP1: 10}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -54,6 +54,8 @@ const (
 	ByteCodesMsg        = 0x05
 	GetTrieNodesMsg     = 0x06
 	TrieNodesMsg        = 0x07
+	GetHvmLightStateMsg = 0x08
+	HvmLightStateMsg    = 0x09
 )
 
 var (
@@ -193,6 +195,20 @@ type TrieNodesPacket struct {
 	Nodes [][]byte // Requested state trie nodes
 }
 
+// GetHvmLightStatePacket represents a hVM Light State query with request ID wrapping.
+type GetHvmLightStatePacket struct {
+	ID  uint64
+	Tip common.Hash
+}
+
+// HvmLightStatePacket is the network packet for communicating a backwards
+// lightweight proof to the most recent Bitcoin Attributes Deposited tx
+type HvmLightStatePacket struct {
+	ID      uint64
+	Headers []*types.Header // Headers connecting the block
+	Block   *types.Block    // The block containing the most recent hVM state
+}
+
 func (*GetAccountRangePacket) Name() string { return "GetAccountRange" }
 func (*GetAccountRangePacket) Kind() byte   { return GetAccountRangeMsg }
 
@@ -216,3 +232,9 @@ func (*GetTrieNodesPacket) Kind() byte   { return GetTrieNodesMsg }
 
 func (*TrieNodesPacket) Name() string { return "TrieNodes" }
 func (*TrieNodesPacket) Kind() byte   { return TrieNodesMsg }
+
+func (*GetHvmLightStatePacket) Name() string { return "GetHvmLightState" }
+func (*GetHvmLightStatePacket) Kind() byte   { return GetHvmLightStateMsg }
+
+func (*HvmLightStatePacket) Name() string { return "HvmLightState" }
+func (*HvmLightStatePacket) Kind() byte   { return HvmLightStateMsg }

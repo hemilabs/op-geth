@@ -18,7 +18,6 @@
 package downloader
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -231,6 +230,12 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 	if lightchain == nil {
 		lightchain = chain
 	}
+
+	hVMSnapFunc := func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
+		log.Info("hVM Snap Sync Func called")
+		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader)
+	}
+
 	dl := &Downloader{
 		stateDB:        stateDb,
 		mux:            mux,
@@ -241,7 +246,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 		dropPeer:       dropPeer,
 		headerProcCh:   make(chan *headerTask, 1),
 		quitCh:         make(chan struct{}),
-		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme()),
+		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
 		stateSyncStart: make(chan *stateSync),
 		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
 		chainID:        chainID,
@@ -473,49 +478,12 @@ func (d *Downloader) getMode() SyncMode {
 }
 
 func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error) {
-	log.Info(fmt.Sprintf("Attempting to snap-sync hVM to L2 block %s, peers: %d", hash.String(), len(d.peers.AllPeers())))
-	for _, peer := range d.peers.AllPeers() {
-		err := d.hVMLightStateSyncWithPeer(peer, hash)
-		if err != nil {
-			log.Warn("Failed to sync hVM light state from peer", "peer", peer.id, "err", err)
-		} else {
-			// Upon first success we are done
-			return nil
-		}
-	}
-	log.Warn(fmt.Sprintf("Unable to snap-sync hVM with %d peers", len(d.peers.AllPeers())))
+	log.Info(fmt.Sprintf("Attempting to snap-sync hVM to L2 block %s", hash.String()))
+
+	// Kick off async hVM light state requests
+	d.SnapSyncer.RequestHvmState(hash)
+
 	return fmt.Errorf("unable to get hVM light state from any peer")
-}
-
-func (d *Downloader) hVMLightStateSyncWithPeer(p *peerConnection, hash common.Hash) (err error) {
-	headers, block, err := d.fetchHvmLightState(p, hash)
-	if err != nil {
-		return nil
-	}
-
-	// TODO: validate header path
-	log.Info("Peer hVM light state from peer", "peer", p.id, "headers", len(headers), "btc_attr_dep_block", block.Header().Hash().String())
-
-	btcAttrDep, err := block.Transactions().ExtractBtcAttrData()
-	if err != nil {
-		log.Warn(fmt.Sprintf("hVM light state error extracting Bitcoin Attributes Deposited tx from peer %s", p.id), "err", err)
-		return fmt.Errorf("error extracting Bitcoin Attributes Deposited tx")
-	}
-
-	canonicalTip := btcAttrDep.CanonicalTip
-	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
-		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", p.id))
-		return fmt.Errorf("error, hVM light state canonical tip is zero")
-	}
-
-	ctHash, err := chainhash.NewHash(canonicalTip[:])
-	if err != nil {
-		log.Warn(fmt.Sprintf("hVM light state unable to convert canonical tip %x to chainhash", canonicalTip[:]), "err", err)
-		return fmt.Errorf("error converting canonical tip to chainhash")
-	}
-
-	d.blockchain.SnapSyncHvm(ctHash, headers[len(headers)-1])
-	return nil
 }
 
 // syncWithPeer starts a block synchronization based on the hash chain from the
@@ -1834,6 +1802,10 @@ func (d *Downloader) DeliverSnapPacket(peer *snap.Peer, packet snap.Packet) erro
 
 	case *snap.TrieNodesPacket:
 		return d.SnapSyncer.OnTrieNodes(peer, packet.ID, packet.Nodes)
+
+	case *snap.HvmLightStatePacket:
+		log.Info("Received hVM Light State packet", "peer", peer.RemoteAddr().String())
+		return d.SnapSyncer.OnHvmLightState(peer, packet.ID, packet.Headers, packet.Block)
 
 	default:
 		return fmt.Errorf("unexpected snap packet type: %T", packet)
