@@ -193,6 +193,8 @@ type BlockChain interface {
 	// SnapSyncHvm informs the blockchain that an EVM snap sync has completed, and provides hVM light state to snap sync hVM
 	SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
 
+	HvmSnapSyncCompleted() bool
+
 	// HasBlock verifies a block's presence in the local chain.
 	HasBlock(common.Hash, uint64) bool
 
@@ -483,7 +485,15 @@ func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error)
 	// Kick off async hVM light state requests
 	d.SnapSyncer.RequestHvmState(hash)
 
-	return fmt.Errorf("unable to get hVM light state from any peer")
+	// Busy-wait until blockchain acknowledges hVM snap sync has completed
+	for {
+		time.Sleep(1000 * time.Millisecond)
+		if d.blockchain.HvmSnapSyncCompleted() {
+			log.Info("hVM Snap Sync completed in fetcher")
+			break
+		}
+	}
+	return nil
 }
 
 // syncWithPeer starts a block synchronization based on the hash chain from the

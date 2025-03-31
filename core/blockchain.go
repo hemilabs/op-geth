@@ -309,6 +309,7 @@ type BlockChain struct {
 	tbcHeaderNodeConfig   *tbc.Config
 	awaitingHvmSnapSync   bool
 	processingHvmSnapSync bool
+	finishedHvmSnapSync   bool
 
 	// Temporary workaround to allow restarting TBC Full Node when its not progressing
 	fullBlockFailureCount       uint32
@@ -1042,6 +1043,10 @@ func (bc *BlockChain) SetAwaitingHvmSnapSync() {
 	bc.awaitingHvmSnapSync = true
 }
 
+func (bc *BlockChain) HvmSnapSyncCompleted() bool {
+	return bc.finishedHvmSnapSync
+}
+
 // SnapSyncHvm is called when completing an initial snap sync, and uses
 // the headers from the full TBC node to reconstruct the lightweight
 // TBC node from scratch up to the point it should be based on the snap-synced
@@ -1189,6 +1194,7 @@ func (bc *BlockChain) SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *ty
 		hvmTipHeader.Hash().String(), si.Utxo.Hash.String(), si.Tx.Hash.String()))
 
 	bc.awaitingHvmSnapSync = false
+	bc.finishedHvmSnapSync = true
 }
 
 // unapplyHvmHeaderConsensusUpdate retrieves the block corresponding to

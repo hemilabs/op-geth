@@ -457,7 +457,6 @@ type protoRW struct {
 }
 
 func (rw *protoRW) WriteMsg(msg Msg) (err error) {
-	log.Info(fmt.Sprintf("msg.code: %d, rw.Length: %d", msg.Code, rw.Length))
 	if msg.Code >= rw.Length {
 		return newPeerError(errInvalidMsgCode, "not handled")
 	}
