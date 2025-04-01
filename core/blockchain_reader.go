@@ -91,10 +91,7 @@ func (bc *BlockChain) GetHeaderByNumber(number uint64) *types.Header {
 
 // GetBlockNumber retrieves the block number associated with a block hash.
 func (bc *BlockChain) GetBlockNumber(hash common.Hash) *uint64 {
-	if num, ok := bc.hc.GetBlockNumber(hash); ok {
-		return &num
-	}
-	return nil
+	return bc.hc.GetBlockNumber(hash)
 }
 
 // GetHeadersFrom returns a contiguous segment of headers, in rlp-form, going

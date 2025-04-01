@@ -683,25 +683,13 @@ func headerByNumberOrHash(ctx context.Context, b Backend, blockNrOrHash rpc.Bloc
 
 // GetBlockReceipts returns the block receipts for the given block hash or number or tag.
 func (api *BlockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]interface{}, error) {
-	var (
-		err      error
-		block    *types.Block
-		receipts types.Receipts
-	)
-	if blockNr, ok := blockNrOrHash.Number(); ok && blockNr == rpc.PendingBlockNumber {
-		block, receipts, _ = api.b.Pending()
-		if block == nil {
-			return nil, errors.New("pending receipts is not available")
-		}
-	} else {
-		block, err = api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
-		if block == nil || err != nil {
-			return nil, err
-		}
-		receipts, err = api.b.GetReceipts(ctx, block.Hash())
-		if err != nil {
-			return nil, err
-		}
+	block, err := api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+	if block == nil || err != nil {
+		return nil, err
+	}
+	receipts, err := api.b.GetReceipts(ctx, block.Hash())
+	if err != nil {
+		return nil, err
 	}
 	txs := block.Transactions()
 	if len(txs) != len(receipts) {
@@ -1544,7 +1532,7 @@ func (api *TransactionAPI) GetBlockTransactionCountByHash(ctx context.Context, b
 func (api *TransactionAPI) GetTransactionByBlockNumberAndIndex(ctx context.Context, blockNr rpc.BlockNumber, index hexutil.Uint) (*RPCTransaction, error) {
 	block, err := api.b.BlockByNumber(ctx, blockNr)
 	if block != nil {
-		return newRPCTransactionFromBlockIndex(ctx, block, uint64(index), api.b.ChainConfig(), api.b), nil
+		return newRPCTransactionFromBlockIndex(block, uint64(index), api.b.ChainConfig()), nil
 	}
 	return nil, err
 }
@@ -1553,7 +1541,7 @@ func (api *TransactionAPI) GetTransactionByBlockNumberAndIndex(ctx context.Conte
 func (api *TransactionAPI) GetTransactionByBlockHashAndIndex(ctx context.Context, blockHash common.Hash, index hexutil.Uint) (*RPCTransaction, error) {
 	block, err := api.b.BlockByHash(ctx, blockHash)
 	if block != nil {
-		return newRPCTransactionFromBlockIndex(ctx, block, uint64(index), api.b.ChainConfig(), api.b), nil
+		return newRPCTransactionFromBlockIndex(block, uint64(index), api.b.ChainConfig()), nil
 	}
 	return nil, err
 }
