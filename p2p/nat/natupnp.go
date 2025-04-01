@@ -93,9 +93,15 @@ func (n *upnp) AddMapping(protocol string, extport, intport int, desc string, li
 	if extport == 0 {
 		extport = intport
 	}
-
-	// Try to add port mapping, preferring the specified external port.
-	return n.addAnyPortMapping(protocol, extport, intport, ip, desc, lifetimeS)
+	// Try addAnyPortMapping if mapping specified port didn't work.
+	err = n.withRateLimit(func() error {
+		p, err := n.addAnyPortMapping(protocol, extport, intport, ip, desc, lifetimeS)
+		if err == nil {
+			extport = int(p)
+		}
+		return err
+	})
+	return uint16(extport), err
 }
 
 // addAnyPortMapping tries to add a port mapping with the specified external port.
