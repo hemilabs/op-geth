@@ -223,7 +223,7 @@ func (c *Codec) Encode(id enode.ID, addr string, packet Packet, challenge *Whoar
 
 	// Store sent WHOAREYOU challenges.
 	if challenge, ok := packet.(*Whoareyou); ok {
-		challenge.ChallengeData = slices.Clone(c.buf.Bytes())
+		challenge.ChallengeData = bytesCopy(&c.buf)
 		enc, err := c.EncodeRaw(id, head, msgData)
 		if err != nil {
 			return nil, Nonce{}, err
