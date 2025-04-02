@@ -94,6 +94,12 @@ type TxMetadata struct {
 	Size uint64 // The length of the 'rlp encoding' of a transaction
 }
 
+// TxMetadata denotes the metadata of a transaction.
+type TxMetadata struct {
+	Type uint8  // The type of the transaction
+	Size uint64 // The length of the 'rlp encoding' of a transaction
+}
+
 // SubPool represents a specialized transaction pool that lives on its own (e.g.
 // blob pool). Since independent of how many specialized pools we have, they do
 // need to be updated in lockstep and assemble into one coherent view for block
@@ -136,6 +142,10 @@ type SubPool interface {
 
 	// GetRLP returns a RLP-encoded transaction if it is contained in the pool.
 	GetRLP(hash common.Hash) []byte
+
+	// GetMetadata returns the transaction type and transaction size with the
+	// given transaction hash.
+	GetMetadata(hash common.Hash) *TxMetadata
 
 	// GetBlobs returns a number of blobs are proofs for the given versioned hashes.
 	// This is a utility method for the engine API, enabling consensus clients to
