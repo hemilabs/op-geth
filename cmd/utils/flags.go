@@ -2190,17 +2190,17 @@ func MakeBeaconLightConfig(ctx *cli.Context) bparams.ClientConfig {
 	// are saved to the specified file.
 	if ctx.IsSet(BeaconCheckpointFileFlag.Name) {
 		if _, err := config.SetCheckpointFile(ctx.String(BeaconCheckpointFileFlag.Name)); err != nil {
-			Fatalf("Could not load beacon checkpoint file '%s': %v", ctx.String(BeaconCheckpointFileFlag.Name), err)
+			Fatalf("Could not load beacon checkpoint file", "beacon.checkpoint.file", ctx.String(BeaconCheckpointFileFlag.Name), "error", err)
 		}
 	}
 	if ctx.IsSet(BeaconCheckpointFlag.Name) {
 		hex := ctx.String(BeaconCheckpointFlag.Name)
 		c, err := hexutil.Decode(hex)
 		if err != nil {
-			Fatalf("Could not parse --%s: %v", BeaconCheckpointFlag.Name, err)
+			Fatalf("Invalid hex string", "beacon.checkpoint", hex, "error", err)
 		}
 		if len(c) != 32 {
-			Fatalf("Could not parse --%s: invalid length %d, want 32", BeaconCheckpointFlag.Name, len(c))
+			Fatalf("Invalid hex string length", "beacon.checkpoint", hex, "length", len(c))
 		}
 		copy(config.Checkpoint[:len(c)], c)
 	}
