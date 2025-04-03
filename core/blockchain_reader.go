@@ -494,6 +494,12 @@ func (bc *BlockChain) HistoryPruningCutoff() (uint64, common.Hash) {
 	return pt.BlockNumber, pt.BlockHash
 }
 
+// HistoryPruningCutoff returns the configured history pruning point.
+// Blocks before this might not be available in the database.
+func (bc *BlockChain) HistoryPruningCutoff() (uint64, common.Hash) {
+	return bc.cacheConfig.HistoryPruningCutoffNumber, bc.cacheConfig.HistoryPruningCutoffHash
+}
+
 // TrieDB retrieves the low level trie database used for data storage.
 func (bc *BlockChain) TrieDB() *triedb.Database {
 	return bc.triedb

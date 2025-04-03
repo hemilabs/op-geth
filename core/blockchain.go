@@ -234,7 +234,8 @@ type BlockChainConfig struct {
 
 	// This defines the cutoff block for history expiry.
 	// Blocks before this number may be unavailable in the chain database.
-	HistoryPruningCutoff uint64
+	HistoryPruningCutoffNumber uint64
+	HistoryPruningCutoffHash   common.Hash
 }
 
 // triedbConfig derives the configures for trie database.
@@ -329,8 +330,9 @@ type BlockChain struct {
 	txLookupLock  sync.RWMutex
 	txLookupCache *lru.Cache[common.Hash, txLookup]
 
-	stopping      atomic.Bool // false if chain is running, true when stopped
-	procInterrupt atomic.Bool // interrupt signaler for block processing
+	quit          chan struct{} // shutdown signal, closed in Stop.
+	stopping      atomic.Bool   // false if chain is running, true when stopped
+	procInterrupt atomic.Bool   // interrupt signaler for block processing
 
 	engine     consensus.Engine
 	validator  Validator // Block and state validator interface
@@ -816,8 +818,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 	bc.processor = NewStateProcessor(chainConfig, bc.hc)
 
 	genesisHeader := bc.GetHeaderByNumber(0)
-	bc.genesisBlock = types.NewBlockWithHeader(genesisHeader)
-	if bc.genesisBlock == nil {
+	if genesisHeader == nil {
 		return nil, ErrNoGenesis
 	}
 	bc.genesisBlock = types.NewBlockWithHeader(genesisHeader)
@@ -3580,11 +3581,12 @@ const (
 //
 // The optional ancientLimit can also be specified and chain segment before that
 // will be directly stored in the ancient, getting rid of the chain migration.
-func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []rlp.RawValue, ancientLimit uint64) (int, error) {
+func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain []types.Receipts, ancientLimit uint64) (int, error) {
 	// Verify the supplied headers before insertion without lock
 	var headers []*types.Header
 	for _, block := range blockChain {
 		headers = append(headers, block.Header())
+
 		// Here we also validate that blob transactions in the block do not
 		// contain a sidecar. While the sidecar does not affect the block hash
 		// or tx hash, sending blobs within a block is not allowed.
@@ -3621,16 +3623,13 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		bc.currentSnapBlock.Store(header)
 		headHeaderGauge.Update(header.Number.Int64())
 		headFastBlockGauge.Update(header.Number.Int64())
-
-		// OPStack addition
-		updateOptimismBlockMetrics(header)
 		return nil
 	}
 	// writeAncient writes blockchain and corresponding receipt chain into ancient store.
 	//
 	// this function only accepts canonical chain data. All side chain will be reverted
 	// eventually.
-	writeAncient := func(blockChain types.Blocks, receiptChain []rlp.RawValue) (int, error) {
+	writeAncient := func(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
 		// Ensure genesis is in the ancient store
 		if blockChain[0].NumberU64() == 1 {
 			if frozen, _ := bc.db.Ancients(); frozen == 0 {
@@ -3663,6 +3662,14 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		if err := batch.Write(); err != nil {
 			return 0, err
 		}
+		// Write hash to number mappings
+		batch := bc.db.NewBatch()
+		for _, block := range blockChain {
+			rawdb.WriteHeaderNumber(batch, block.Hash(), block.NumberU64())
+		}
+		if err := batch.Write(); err != nil {
+			return 0, err
+		}
 		// Update the current snap block because all block data is now present in DB.
 		if err := updateHead(blockChain[len(blockChain)-1].Header()); err != nil {
 			return 0, err
@@ -3677,7 +3684,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 	// existing local chain segments (reorg around the chain tip). The reorganized part
 	// will be included in the provided chain segment, and stale canonical markers will be
 	// silently rewritten. Therefore, no explicit reorg logic is needed.
-	writeLive := func(blockChain types.Blocks, receiptChain []rlp.RawValue) (int, error) {
+	writeLive := func(blockChain types.Blocks, receiptChain []types.Receipts) (int, error) {
 		var (
 			skipPresenceCheck = false
 			batch             = bc.db.NewBatch()
@@ -3702,7 +3709,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 			// Write all the data out into the database
 			rawdb.WriteCanonicalHash(batch, block.Hash(), block.NumberU64())
 			rawdb.WriteBlock(batch, block)
-			rawdb.WriteRawReceipts(batch, block.Hash(), block.NumberU64(), receiptChain[i])
+			rawdb.WriteReceipts(batch, block.Hash(), block.NumberU64(), receiptChain[i])
 
 			// Write everything belongs to the blocks into the database. So that
 			// we can ensure all components of body is completed(body, receipts)
@@ -5217,7 +5224,7 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 		first     = headers[0].Number.Uint64()
 	)
 	if first == 1 && frozen == 0 {
-		_, err := rawdb.WriteAncientBlocks(bc.db, []*types.Block{bc.genesisBlock}, []rlp.RawValue{rlp.EmptyList})
+		_, err := rawdb.WriteAncientBlocks(bc.db, []*types.Block{bc.genesisBlock}, []types.Receipts{nil})
 		if err != nil {
 			log.Error("Error writing genesis to ancients", "err", err)
 			return 0, err
@@ -5233,8 +5240,7 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 	if err != nil {
 		return 0, err
 	}
-	// Sync the ancient store explicitly to ensure all data has been flushed to disk.
-	if err := bc.db.SyncAncient(); err != nil {
+	if err := bc.db.Sync(); err != nil {
 		return 0, err
 	}
 	// Write hash to number mappings
@@ -5259,9 +5265,6 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 	bc.currentSnapBlock.Store(last)
 	headHeaderGauge.Update(last.Number.Int64())
 	headFastBlockGauge.Update(last.Number.Int64())
-
-	// OPStack addition
-	updateOptimismBlockMetrics(last)
 	return 0, nil
 }
 
@@ -5283,10 +5286,4 @@ func (bc *BlockChain) SetTrieFlushInterval(interval time.Duration) {
 // GetTrieFlushInterval gets the in-memory tries flushAlloc interval
 func (bc *BlockChain) GetTrieFlushInterval() time.Duration {
 	return time.Duration(bc.flushInterval.Load())
-}
-
-// HistoryPruningCutoff returns the configured history pruning point.
-// Blocks before this might not be available in the database.
-func (bc *BlockChain) HistoryPruningCutoff() uint64 {
-	return bc.cacheConfig.HistoryPruningCutoff
 }
