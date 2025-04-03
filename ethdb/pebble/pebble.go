@@ -177,7 +177,7 @@ func (l panicLogger) Fatalf(format string, args ...interface{}) {
 
 // New returns a wrapped pebble DB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
-func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
+func New(file string, cache int, handles int, namespace string, readonly bool, ephemeral bool) (*Database, error) {
 	// Ensure we have some minimal caching and file guarantees
 	if cache < minCache {
 		cache = minCache
@@ -218,18 +218,10 @@ func New(file string, cache int, handles int, namespace string, readonly bool) (
 		memTableSize = maxMemTableSize - 1
 	}
 	db := &Database{
-		fn:       file,
-		log:      logger,
-		quitChan: make(chan chan error),
-
-		// Use asynchronous write mode by default. Otherwise, the overhead of frequent fsync
-		// operations can be significant, especially on platforms with slow fsync performance
-		// (e.g., macOS) or less capable SSDs.
-		//
-		// Note that enabling async writes means recent data may be lost in the event of an
-		// application-level panic (writes will also be lost on a machine-level failure,
-		// of course). Geth is expected to handle recovery from an unclean shutdown.
-		writeOptions: pebble.NoSync,
+		fn:           file,
+		log:          logger,
+		quitChan:     make(chan chan error),
+		writeOptions: &pebble.WriteOptions{Sync: !ephemeral},
 	}
 	opt := &pebble.Options{
 		// Pebble has a single combined cache area and the write
