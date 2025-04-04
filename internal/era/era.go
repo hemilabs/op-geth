@@ -125,6 +125,28 @@ func (e *Era) Close() error {
 	return e.f.Close()
 }
 
+// GetHeaderByNumber returns the header for the given block number.
+func (e *Era) GetHeaderByNumber(num uint64) (*types.Header, error) {
+	if e.m.start > num || e.m.start+e.m.count <= num {
+		return nil, errors.New("out-of-bounds")
+	}
+	off, err := e.readOffset(num)
+	if err != nil {
+		return nil, err
+	}
+
+	// Read and decompress header.
+	r, _, err := newSnappyReader(e.s, TypeCompressedHeader, off)
+	if err != nil {
+		return nil, err
+	}
+	var header types.Header
+	if err := rlp.Decode(r, &header); err != nil {
+		return nil, err
+	}
+	return &header, nil
+}
+
 // GetBlockByNumber returns the block for the given block number.
 func (e *Era) GetBlockByNumber(num uint64) (*types.Block, error) {
 	if e.m.start > num || e.m.start+e.m.count <= num {
@@ -154,30 +176,10 @@ func (e *Era) GetBlockByNumber(num uint64) (*types.Block, error) {
 	return types.NewBlockWithHeader(&header).WithBody(body), nil
 }
 
-// GetRawBodyByNumber returns the RLP-encoded body for the given block number.
-func (e *Era) GetRawBodyByNumber(num uint64) ([]byte, error) {
+// GetReceiptsByNumber returns the receipts for the given block number.
+func (e *Era) GetReceiptsByNumber(num uint64) (types.Receipts, error) {
 	if e.m.start > num || e.m.start+e.m.count <= num {
-		return nil, fmt.Errorf("out-of-bounds: %d not in [%d, %d)", num, e.m.start, e.m.start+e.m.count)
-	}
-	off, err := e.readOffset(num)
-	if err != nil {
-		return nil, err
-	}
-	off, err = e.s.SkipN(off, 1)
-	if err != nil {
-		return nil, err
-	}
-	r, _, err := newSnappyReader(e.s, TypeCompressedBody, off)
-	if err != nil {
-		return nil, err
-	}
-	return io.ReadAll(r)
-}
-
-// GetRawReceiptsByNumber returns the RLP-encoded receipts for the given block number.
-func (e *Era) GetRawReceiptsByNumber(num uint64) ([]byte, error) {
-	if e.m.start > num || e.m.start+e.m.count <= num {
-		return nil, fmt.Errorf("out-of-bounds: %d not in [%d, %d)", num, e.m.start, e.m.start+e.m.count)
+		return nil, errors.New("out-of-bounds")
 	}
 	off, err := e.readOffset(num)
 	if err != nil {
@@ -190,11 +192,16 @@ func (e *Era) GetRawReceiptsByNumber(num uint64) ([]byte, error) {
 		return nil, err
 	}
 
+	// Read and decompress receipts.
 	r, _, err := newSnappyReader(e.s, TypeCompressedReceipts, off)
 	if err != nil {
 		return nil, err
 	}
-	return io.ReadAll(r)
+	var receipts types.Receipts
+	if err := rlp.Decode(r, &receipts); err != nil {
+		return nil, err
+	}
+	return receipts, nil
 }
 
 // Accumulator reads the accumulator entry in the Era1 file.
