@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
-	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 )
 
@@ -71,9 +70,6 @@ type TxPool struct {
 	stateLock sync.RWMutex   // The lock for protecting state instance
 	state     *state.StateDB // Current state at the blockchain head
 
-	stateLock sync.RWMutex   // The lock for protecting state instance
-	state     *state.StateDB // Current state at the blockchain head
-
 	subs event.SubscriptionScope // Subscription scope to unsubscribe all on shutdown
 	quit chan chan error         // Quit channel to tear down the head updater
 	term chan struct{}           // Termination channel to detect a closed pool
@@ -95,19 +91,6 @@ func New(gasTip uint64, chain BlockChain, subpools []SubPool, ingressFilters []I
 	statedb, err := chain.StateAt(head.Root)
 	if err != nil {
 		statedb, err = chain.StateAt(types.EmptyRootHash)
-	}
-	if err != nil {
-		return nil, err
-	}
-	pool := &TxPool{
-		subpools:     subpools,
-		chain:        chain,
-		signer:       types.LatestSigner(chain.Config()),
-		state:        statedb,
-		reservations: make(map[common.Address]SubPool),
-		quit:         make(chan chan error),
-		term:         make(chan struct{}),
-		sync:         make(chan chan error),
 	}
 	if err != nil {
 		return nil, err

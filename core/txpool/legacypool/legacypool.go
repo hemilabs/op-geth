@@ -67,10 +67,6 @@ var (
 	// nonce received from the accounts with delegation or pending delegation.
 	ErrOutOfOrderTxFromDelegated = errors.New("gapped-nonce tx from delegated accounts")
 
-	// ErrOutOfOrderTxFromDelegated is returned when the transaction with gapped
-	// nonce received from the accounts with delegation or pending delegation.
-	ErrOutOfOrderTxFromDelegated = errors.New("gapped-nonce tx from delegated accounts")
-
 	// ErrAuthorityReserved is returned if a transaction has an authorization
 	// signed by an address which already has in-flight transactions known to the
 	// pool.
@@ -259,7 +255,7 @@ type LegacyPool struct {
 	currentHead   atomic.Pointer[types.Header] // Current head of the blockchain
 	currentState  *state.StateDB               // Current state in the blockchain head
 	pendingNonces *noncer                      // Pending state tracking virtual nonces
-	reserver      txpool.Reserver              // Address reserver to ensure exclusivity across subpools
+	reserver      *txpool.Reserver             // Address reserver to ensure exclusivity across subpools
 
 	pending map[common.Address]*list     // All currently processable transactions
 	queue   map[common.Address]*list     // Queued but non-processable transactions
@@ -330,7 +326,7 @@ func (pool *LegacyPool) Filter(tx *types.Transaction) bool {
 // Init sets the gas price needed to keep a transaction in the pool and the chain
 // head to allow balance / nonce checks. The internal
 // goroutines will be spun up and the pool deemed operational afterwards.
-func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reserver) error {
+func (pool *LegacyPool) Init(gasTip uint64, head *types.Header, reserver *txpool.Reserver) error {
 	// Set the address reserver to request exclusive access to pooled accounts
 	pool.reserver = reserver
 
@@ -701,7 +697,7 @@ func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
 	from, _ := types.Sender(pool.signer, tx) // validated
 
 	// Short circuit if the sender has neither delegation nor pending delegation.
-	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && pool.all.delegationTxsCount(from) == 0 {
+	if pool.currentState.GetCodeHash(from) == types.EmptyCodeHash && !pool.all.hasAuth(from) {
 		return nil
 	}
 	pending := pool.pending[from]
@@ -716,7 +712,7 @@ func (pool *LegacyPool) checkDelegationLimit(tx *types.Transaction) error {
 	if pending.Contains(tx.Nonce()) {
 		return nil
 	}
-	return ErrInflightTxLimitReached
+	return txpool.ErrInflightTxLimitReached
 }
 
 // validateAuth verifies that the transaction complies with code authorization
@@ -727,8 +723,8 @@ func (pool *LegacyPool) validateAuth(tx *types.Transaction) error {
 	if err := pool.checkDelegationLimit(tx); err != nil {
 		return err
 	}
-	// For symmetry, allow at most one in-flight tx for any authority with a
-	// pending transaction.
+	// Authorities must not conflict with any pending or queued transactions,
+	// nor with addresses that have already been reserved.
 	if auths := tx.SetCodeAuthorities(); len(auths) > 0 {
 		for _, auth := range auths {
 			var count int
@@ -739,6 +735,17 @@ func (pool *LegacyPool) validateAuth(tx *types.Transaction) error {
 				count += queue.Len()
 			}
 			if count > 1 {
+				return ErrAuthorityReserved
+			}
+			// Because there is no exclusive lock held between different subpools
+			// when processing transactions, the SetCode transaction may be accepted
+			// while other transactions with the same sender address are also
+			// accepted simultaneously in the other pools.
+			//
+			// This scenario is considered acceptable, as the rule primarily ensures
+			// that attackers cannot easily stack a SetCode transaction when the sender
+			// is reserved by other pools.
+			if pool.reserver.Has(auth) {
 				return ErrAuthorityReserved
 			}
 			// Because there is no exclusive lock held between different subpools
@@ -2030,11 +2037,13 @@ func (t *lookup) removeAuthorities(tx *types.Transaction) {
 	}
 }
 
-// delegationTxsCount returns the number of pending authorizations for the specified address.
-func (t *lookup) delegationTxsCount(addr common.Address) int {
+// hasAuth returns a flag indicating whether there are pending authorizations
+// from the specified address.
+func (t *lookup) hasAuth(addr common.Address) bool {
 	t.lock.RLock()
 	defer t.lock.RUnlock()
-	return len(t.auths[addr])
+
+	return len(t.auths[addr]) > 0
 }
 
 // numSlots calculates the number of slots needed for a single transaction.
@@ -2093,11 +2102,9 @@ func (pool *LegacyPool) Clear() {
 	// The transaction addition may attempt to reserve the sender addr which
 	// can't happen until Clear releases the reservation lock. Clear cannot
 	// acquire the subpool lock until the transaction addition is completed.
-
-	for addr := range pool.pending {
-		if _, ok := pool.queue[addr]; !ok {
-			pool.reserver.Release(addr)
-		}
+	for _, tx := range pool.all.txs {
+		senderAddr, _ := types.Sender(pool.signer, tx)
+		pool.reserver.Release(senderAddr)
 	}
 	for addr := range pool.queue {
 		pool.reserver.Release(addr)

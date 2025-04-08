@@ -25,7 +25,6 @@ import (
 	"math/big"
 	"math/rand"
 	"slices"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -195,49 +194,8 @@ func setupPool() (*LegacyPool, *ecdsa.PrivateKey) {
 	return setupPoolWithConfig(params.TestChainConfig)
 }
 
-// reserver is a utility struct to sanity check that accounts are
-// properly reserved by the blobpool (no duplicate reserves or unreserves).
-type reserver struct {
-	accounts map[common.Address]struct{}
-	lock     sync.RWMutex
-}
-
-func newReserver() txpool.Reserver {
-	return &reserver{accounts: make(map[common.Address]struct{})}
-}
-
-func (r *reserver) Hold(addr common.Address) error {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	if _, exists := r.accounts[addr]; exists {
-		panic("already reserved")
-	}
-	r.accounts[addr] = struct{}{}
-	return nil
-}
-
-func (r *reserver) Release(addr common.Address) error {
-	r.lock.Lock()
-	defer r.lock.Unlock()
-	if _, exists := r.accounts[addr]; !exists {
-		panic("not reserved")
-	}
-	delete(r.accounts, addr)
-	return nil
-}
-
-func (r *reserver) Has(address common.Address) bool {
-	return false // reserver only supports a single pool
-}
-
-// dummyFilter is a simple ingress filter used in tests to toggle whether
-// transactions should be accepted or rejected.
-type dummyFilter struct {
-	allow atomic.Bool
-}
-
-func (f *dummyFilter) FilterTx(ctx context.Context, tx *types.Transaction) bool {
-	return f.allow.Load()
+func newReserver() *txpool.Reserver {
+	return txpool.NewReservationTracker().NewHandle(42)
 }
 
 func setupPoolWithConfig(config *params.ChainConfig) (*LegacyPool, *ecdsa.PrivateKey) {
@@ -250,8 +208,8 @@ func setupPoolWithTxPoolConfig(chainConfig *params.ChainConfig, poolConfig Confi
 	blockchain := newTestBlockChain(chainConfig, 10000000, statedb, new(event.Feed))
 
 	key, _ := crypto.GenerateKey()
-	pool := New(poolConfig, blockchain)
-	if err := pool.Init(poolConfig.PriceLimit, blockchain.CurrentBlock(), newReserver()); err != nil {
+	pool := New(testTxPoolConfig, blockchain)
+	if err := pool.Init(testTxPoolConfig.PriceLimit, blockchain.CurrentBlock(), newReserver()); err != nil {
 		panic(err)
 	}
 	// wait for the pool to initialize
@@ -2388,13 +2346,12 @@ func TestSetCodeTransactions(t *testing.T) {
 				if err := pool.addRemoteSync(pricedTransaction(0, 100000, big.NewInt(1), keyA)); err != nil {
 					t.Fatalf("%s: failed to add remote transaction: %v", name, err)
 				}
-				// Second and further transactions shall be rejected
 				if err := pool.addRemoteSync(pricedTransaction(1, 100000, big.NewInt(1), keyA)); !errors.Is(err, txpool.ErrInflightTxLimitReached) {
 					t.Fatalf("%s: error mismatch: want %v, have %v", name, txpool.ErrInflightTxLimitReached, err)
 				}
 				// Check gapped transaction again.
-				if err := pool.addRemoteSync(pricedTransaction(2, 100000, big.NewInt(1), keyA)); !errors.Is(err, ErrInflightTxLimitReached) {
-					t.Fatalf("%s: error mismatch: want %v, have %v", name, ErrInflightTxLimitReached, err)
+				if err := pool.addRemoteSync(pricedTransaction(2, 100000, big.NewInt(1), keyA)); !errors.Is(err, txpool.ErrInflightTxLimitReached) {
+					t.Fatalf("%s: error mismatch: want %v, have %v", name, txpool.ErrInflightTxLimitReached, err)
 				}
 				// Replace by fee.
 				if err := pool.addRemoteSync(pricedTransaction(0, 100000, big.NewInt(10), keyA)); err != nil {
@@ -2477,6 +2434,23 @@ func TestSetCodeTransactions(t *testing.T) {
 				}
 				if err := pool.addRemoteSync(setCodeTx(0, keyB, []unsignedAuth{{1, keyC}})); err != nil {
 					t.Fatalf("%s: failed to add conflicting delegation: %v", name, err)
+				}
+			},
+		},
+		{
+			name:    "allow-one-tx-from-pooled-delegation",
+			pending: 2,
+			run: func(name string) {
+				// Verify C cannot originate another transaction when it has a pooled delegation.
+				if err := pool.addRemoteSync(setCodeTx(0, keyA, []unsignedAuth{{0, keyC}})); err != nil {
+					t.Fatalf("%s: failed to add with remote setcode transaction: %v", name, err)
+				}
+				if err := pool.addRemoteSync(pricedTransaction(0, 100000, big.NewInt(1), keyC)); err != nil {
+					t.Fatalf("%s: failed to add with pending delegatio: %v", name, err)
+				}
+				// Also check gapped transaction is rejected.
+				if err := pool.addRemoteSync(pricedTransaction(1, 100000, big.NewInt(1), keyC)); !errors.Is(err, txpool.ErrInflightTxLimitReached) {
+					t.Fatalf("%s: error mismatch: want %v, have %v", name, txpool.ErrInflightTxLimitReached, err)
 				}
 			},
 		},

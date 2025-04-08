@@ -375,33 +375,6 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	eth.filterMaps = filtermaps.NewFilterMaps(chainDb, chainView, historyCutoff, finalBlock, filtermaps.DefaultParams, fmConfig)
 	eth.closeFilterMaps = make(chan chan struct{})
 
-	if chainConfig := eth.blockchain.Config(); chainConfig.Optimism != nil { // config.Genesis.Config.ChainID cannot be used because it's based on CLI flags only, thus default to mainnet L1
-		config.NetworkId = chainConfig.ChainID.Uint64() // optimism defaults eth network ID to chain ID
-		eth.networkID = config.NetworkId
-	}
-	log.Info("Initialising Ethereum protocol", "network", config.NetworkId, "dbversion", dbVer)
-
-	// Initialize filtermaps log index.
-	fmConfig := filtermaps.Config{
-		History:        config.LogHistory,
-		Disabled:       config.LogNoHistory,
-		ExportFileName: config.LogExportCheckpoints,
-		HashScheme:     scheme == rawdb.HashScheme,
-	}
-	chainView := eth.newChainView(eth.blockchain.CurrentBlock())
-	historyCutoff, _ := eth.blockchain.HistoryPruningCutoff()
-	var finalBlock uint64
-	if fb := eth.blockchain.CurrentFinalBlock(); fb != nil {
-		finalBlock = fb.Number.Uint64()
-	}
-	filterMaps, err := filtermaps.NewFilterMaps(chainDb, chainView, historyCutoff, finalBlock, filtermaps.DefaultParams, fmConfig)
-	if err != nil {
-		return nil, err
-	}
-	eth.filterMaps = filterMaps
-	eth.closeFilterMaps = make(chan chan struct{})
-
-	// TxPool
 	if config.TxPool.Journal != "" {
 		config.TxPool.Journal = stack.ResolvePath(config.TxPool.Journal)
 	}
@@ -410,20 +383,9 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	if config.BlobPool.Datadir != "" {
 		config.BlobPool.Datadir = stack.ResolvePath(config.BlobPool.Datadir)
 	}
-	txPools := []txpool.SubPool{legacyPool}
-	if !eth.BlockChain().Config().IsOptimism() {
-		eth.blobTxPool = blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
-		txPools = append(txPools, eth.blobTxPool)
-	}
+	blobPool := blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
 
-	// if interop is enabled, establish an Interop Filter connected to this Ethereum instance's
-	// simulated logs and message safety check functions
-	poolFilters := []txpool.IngressFilter{}
-	if config.InteropMessageRPC != "" && config.InteropMempoolFiltering {
-		chainID := uint256.MustFromBig(chainConfig.ChainID)
-		poolFilters = append(poolFilters, txpool.NewInteropFilter(eth, *chainID))
-	}
-	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, txPools, poolFilters)
+	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, []txpool.SubPool{legacyPool, blobPool})
 	if err != nil {
 		return nil, err
 	}

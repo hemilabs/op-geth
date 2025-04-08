@@ -315,7 +315,7 @@ func newBlobTxMeta(id uint64, size uint64, storageSize uint32, tx *types.Transac
 //     and leading up to the first no-change.
 type BlobPool struct {
 	config         Config                    // Pool configuration
-	reserver       txpool.Reserver           // Address reserver to ensure exclusivity across subpools
+	reserver       *txpool.Reserver          // Address reserver to ensure exclusivity across subpools
 	hasPendingAuth func(common.Address) bool // Determine whether the specified address has a pending 7702-auth
 
 	store  billy.Database // Persistent data store for the tx metadata and blobs
@@ -370,7 +370,7 @@ func (p *BlobPool) SetIngressFilters(filters []txpool.IngressFilter) {
 // Init sets the gas price needed to keep a transaction in the pool and the chain
 // head to allow balance / nonce checks. The transaction journal will be loaded
 // from disk and filtered based on the provided starting settings.
-func (p *BlobPool) Init(gasTip uint64, head *types.Header, reserver txpool.Reserver) error {
+func (p *BlobPool) Init(gasTip uint64, head *types.Header, reserver *txpool.Reserver) error {
 	p.reserver = reserver
 
 	var (
@@ -1123,6 +1123,39 @@ func (p *BlobPool) ValidateTxBasics(tx *types.Transaction) error {
 		MinTip:  p.gasTip.ToBig(),
 	}
 	return txpool.ValidateTransaction(tx, p.head, p.signer, opts)
+}
+
+// checkDelegationLimit determines if the tx sender is delegated or has a
+// pending delegation, and if so, ensures they have at most one in-flight
+// **executable** transaction, e.g. disallow stacked and gapped transactions
+// from the account.
+func (p *BlobPool) checkDelegationLimit(tx *types.Transaction) error {
+	from, _ := types.Sender(p.signer, tx) // validated
+
+	// Short circuit if the sender has neither delegation nor pending delegation.
+	if p.state.GetCodeHash(from) == types.EmptyCodeHash {
+		// Because there is no exclusive lock held between different subpools
+		// when processing transactions, a blob transaction may be accepted
+		// while other SetCode transactions with pending authorities from the
+		// same address are also accepted simultaneously.
+		//
+		// This scenario is considered acceptable, as the rule primarily ensures
+		// that attackers cannot easily and endlessly stack blob transactions
+		// with a delegated or pending delegated sender.
+		if p.hasPendingAuth == nil || !p.hasPendingAuth(from) {
+			return nil
+		}
+	}
+	// Allow a single in-flight pending transaction.
+	pending := p.index[from]
+	if len(pending) == 0 {
+		return nil
+	}
+	// If account already has a pending transaction, allow replacement only.
+	if len(pending) == 1 && pending[0].nonce == tx.Nonce() {
+		return nil
+	}
+	return txpool.ErrInflightTxLimitReached
 }
 
 // validateTx checks whether a transaction is valid according to the consensus
