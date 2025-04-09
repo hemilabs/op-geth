@@ -479,6 +479,8 @@ type Syncer struct {
 	lock sync.RWMutex   // Protects fields that can change outside of sync (peers, reqs, root)
 
 	snapSyncHvm func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
+	hVMSnapDone func() bool
+	targetPivot *common.Hash
 
 	hVMSnapHeaders []*types.Header
 	hVMSnapBlock   *types.Block
@@ -486,7 +488,7 @@ type Syncer struct {
 
 // NewSyncer creates a new snapshot syncer to download the Ethereum state over the
 // snap protocol.
-func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)) *Syncer {
+func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header), hVMSnapDoneFunc func() bool) *Syncer {
 	return &Syncer{
 		db:     db,
 		scheme: scheme,
@@ -516,7 +518,12 @@ func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTi
 		extProgress: new(SyncProgress),
 
 		snapSyncHvm: snapSyncHvmFunc,
+		hVMSnapDone: hVMSnapDoneFunc,
 	}
+}
+
+func (s *Syncer) SetPivot(pivot common.Hash) {
+	s.targetPivot = &pivot
 }
 
 // Register injects a new data source into the syncer's peerset.
@@ -662,7 +669,15 @@ func (s *Syncer) Sync(root common.Hash, cancel chan struct{}) error {
 		s.cleanStorageTasks()
 		s.cleanAccountTasks()
 		if len(s.tasks) == 0 && s.healer.scheduler.Pending() == 0 {
-			return nil
+			if !s.hVMSnapDone() {
+				// Rest of snap sync is done but hVM snap sync has not been completed,
+				// Request hVM header sync to the configured pivot
+				log.Info("EVM snap sync done but hVM snap sync not yet completed, re-requesting hVM state from peers")
+				s.RequestHvmState(*s.targetPivot)
+				time.Sleep(time.Second)
+			} else {
+				return nil
+			}
 		}
 		// Assign all the data retrieval tasks to any free peers
 		s.assignAccountTasks(accountResps, accountReqFails, cancel)

@@ -238,6 +238,11 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader)
 	}
 
+	hVMSnapDoneFunc := func() bool {
+		log.Info("Checking if hVM snap is done")
+		return chain.HvmSnapSyncCompleted()
+	}
+
 	dl := &Downloader{
 		stateDB:        stateDb,
 		mux:            mux,
@@ -248,7 +253,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, lightchai
 		dropPeer:       dropPeer,
 		headerProcCh:   make(chan *headerTask, 1),
 		quitCh:         make(chan struct{}),
-		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
+		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc, hVMSnapDoneFunc),
 		stateSyncStart: make(chan *stateSync),
 		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
 		chainID:        chainID,
@@ -679,6 +684,7 @@ func (d *Downloader) syncWithPeer(p *peerConnection, hash common.Hash, td, ttd *
 		func() error { return d.processHeaders(origin+1, td, ttd, beaconMode) },
 	}
 	if mode == SnapSync {
+		d.SnapSyncer.SetPivot(pivot.Hash())
 		d.pivotLock.Lock()
 		d.pivotHeader = pivot
 		d.pivotLock.Unlock()
