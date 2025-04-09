@@ -178,15 +178,6 @@ func (srv *Server) portMappingLoop() {
 					// Note ENR is not updated here, i.e. we keep the last port.
 					continue
 				}
-				// It was mapped!
-				m.extPort = int(p)
-				m.nextTime = srv.clock.Now().Add(portMapRefreshInterval)
-				log = newLogger(m.protocol, m.extPort, m.port)
-				if m.port != m.extPort {
-					log.Info("NAT mapped alternative port")
-				} else {
-					log.Info("NAT mapped port")
-				}
 
 				// It was mapped!
 				m.retries = 0

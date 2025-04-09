@@ -92,20 +92,10 @@ func (n *upnp) AddMapping(protocol string, extport, intport int, desc string, li
 
 	if extport == 0 {
 		extport = intport
-	} else {
-		// Only delete port mapping if the external port was already used by geth.
-		n.DeleteMapping(protocol, extport, intport)
 	}
 
 	// Try to add port mapping, preferring the specified external port.
-	err = n.withRateLimit(func() error {
-		p, err := n.addAnyPortMapping(protocol, extport, intport, ip, desc, lifetimeS)
-		if err == nil {
-			extport = int(p)
-		}
-		return err
-	})
-	return uint16(extport), err
+	return n.addAnyPortMapping(protocol, extport, intport, ip, desc, lifetimeS)
 }
 
 // addAnyPortMapping tries to add a port mapping with the specified external port.
@@ -117,19 +107,28 @@ func (n *upnp) addAnyPortMapping(protocol string, extport, intport int, ip net.I
 		})
 	}
 	// For IGDv1 and v1 services we should first try to add with extport.
-	err := n.client.AddPortMapping("", uint16(extport), protocol, uint16(intport), ip.String(), true, desc, lifetimeS)
-	if err == nil {
-		return uint16(extport), nil
+	for i := 0; i < retryCount+1; i++ {
+		err := n.withRateLimit(func() error {
+			return n.client.AddPortMapping("", uint16(extport), protocol, uint16(intport), ip.String(), true, desc, lifetimeS)
+		})
+		if err == nil {
+			return uint16(extport), nil
+		}
+		log.Debug("Failed to add port mapping", "protocol", protocol, "extport", extport, "intport", intport, "err", err)
 	}
 
 	// If above fails, we retry with a random port.
 	// We retry several times because of possible port conflicts.
-	for i := 0; i < 3; i++ {
+	var err error
+	for i := 0; i < randomCount; i++ {
 		extport = n.randomPort()
-		err := n.client.AddPortMapping("", uint16(extport), protocol, uint16(intport), ip.String(), true, desc, lifetimeS)
+		err := n.withRateLimit(func() error {
+			return n.client.AddPortMapping("", uint16(extport), protocol, uint16(intport), ip.String(), true, desc, lifetimeS)
+		})
 		if err == nil {
 			return uint16(extport), nil
 		}
+		log.Debug("Failed to add random port mapping", "protocol", protocol, "extport", extport, "intport", intport, "err", err)
 	}
 	return 0, err
 }
