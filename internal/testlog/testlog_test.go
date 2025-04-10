@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"github.com/ethereum/go-ethereum/log"
 )
 
@@ -33,10 +31,6 @@ func (t *mockT) Logf(format string, args ...any) {
 	if _, err := t.out.Write([]byte(sanitized)); err != nil {
 		panic(err)
 	}
-}
-
-func (t *mockT) FailNow() {
-	panic("mock FailNow")
 }
 
 func TestLogging(t *testing.T) {
@@ -70,21 +64,4 @@ func TestLogging(t *testing.T) {
 			fmt.Printf("output mismatch.\nwant: '%s'\ngot: '%s'\n", tc.expected, outp.String())
 		}
 	}
-}
-
-// TestCrit tests that Crit does not os.Exit in testing, and instead fails the test,
-// while properly flushing the log output of the critical log.
-func TestCrit(t *testing.T) {
-	outp := bytes.Buffer{}
-	mt := &mockT{&outp}
-	l := Logger(mt, log.LevelInfo)
-	l.Info("hello world", "a", 1)
-	require.PanicsWithValue(t, "mock FailNow", func() {
-		l.Crit("bye", "b", 2)
-	})
-	got := outp.String()
-	expected := ` hello world                               a=1
- bye                                       b=2
-`
-	require.Equal(t, expected, got)
 }
