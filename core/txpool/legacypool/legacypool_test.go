@@ -25,6 +25,7 @@ import (
 	"math/big"
 	"math/rand"
 	"slices"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -194,8 +195,39 @@ func setupPool() (*LegacyPool, *ecdsa.PrivateKey) {
 	return setupPoolWithConfig(params.TestChainConfig)
 }
 
-func newReserver() *txpool.Reserver {
-	return txpool.NewReservationTracker().NewHandle(42)
+// reserver is a utility struct to sanity check that accounts are
+// properly reserved by the blobpool (no duplicate reserves or unreserves).
+type reserver struct {
+	accounts map[common.Address]struct{}
+	lock     sync.RWMutex
+}
+
+func newReserver() txpool.Reserver {
+	return &reserver{accounts: make(map[common.Address]struct{})}
+}
+
+func (r *reserver) Hold(addr common.Address) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	if _, exists := r.accounts[addr]; exists {
+		panic("already reserved")
+	}
+	r.accounts[addr] = struct{}{}
+	return nil
+}
+
+func (r *reserver) Release(addr common.Address) error {
+	r.lock.Lock()
+	defer r.lock.Unlock()
+	if _, exists := r.accounts[addr]; !exists {
+		panic("not reserved")
+	}
+	delete(r.accounts, addr)
+	return nil
+}
+
+func (r *reserver) Has(address common.Address) bool {
+	return false // reserver only supports a single pool
 }
 
 func setupPoolWithConfig(config *params.ChainConfig) (*LegacyPool, *ecdsa.PrivateKey) {
@@ -2346,6 +2378,7 @@ func TestSetCodeTransactions(t *testing.T) {
 				if err := pool.addRemoteSync(pricedTransaction(0, 100000, big.NewInt(1), keyA)); err != nil {
 					t.Fatalf("%s: failed to add remote transaction: %v", name, err)
 				}
+				// Second and further transactions shall be rejected
 				if err := pool.addRemoteSync(pricedTransaction(1, 100000, big.NewInt(1), keyA)); !errors.Is(err, txpool.ErrInflightTxLimitReached) {
 					t.Fatalf("%s: error mismatch: want %v, have %v", name, txpool.ErrInflightTxLimitReached, err)
 				}
@@ -2434,23 +2467,6 @@ func TestSetCodeTransactions(t *testing.T) {
 				}
 				if err := pool.addRemoteSync(setCodeTx(0, keyB, []unsignedAuth{{1, keyC}})); err != nil {
 					t.Fatalf("%s: failed to add conflicting delegation: %v", name, err)
-				}
-			},
-		},
-		{
-			name:    "allow-one-tx-from-pooled-delegation",
-			pending: 2,
-			run: func(name string) {
-				// Verify C cannot originate another transaction when it has a pooled delegation.
-				if err := pool.addRemoteSync(setCodeTx(0, keyA, []unsignedAuth{{0, keyC}})); err != nil {
-					t.Fatalf("%s: failed to add with remote setcode transaction: %v", name, err)
-				}
-				if err := pool.addRemoteSync(pricedTransaction(0, 100000, big.NewInt(1), keyC)); err != nil {
-					t.Fatalf("%s: failed to add with pending delegatio: %v", name, err)
-				}
-				// Also check gapped transaction is rejected.
-				if err := pool.addRemoteSync(pricedTransaction(1, 100000, big.NewInt(1), keyC)); !errors.Is(err, txpool.ErrInflightTxLimitReached) {
-					t.Fatalf("%s: error mismatch: want %v, have %v", name, txpool.ErrInflightTxLimitReached, err)
 				}
 			},
 		},
@@ -2567,32 +2583,6 @@ func TestSetCodeTransactions(t *testing.T) {
 				}
 				if err, want := pool.addRemoteSync(pricedTransaction(1, 100000, big.NewInt(1000), keyC)), txpool.ErrInflightTxLimitReached; !errors.Is(err, want) {
 					t.Fatalf("%s: error mismatch: want %v, have %v", name, want, err)
-				}
-			},
-		},
-		{
-			name:    "remove-hash-from-authority-tracker",
-			pending: 10,
-			run: func(name string) {
-				var keys []*ecdsa.PrivateKey
-				for i := 0; i < 30; i++ {
-					key, _ := crypto.GenerateKey()
-					keys = append(keys, key)
-					addr := crypto.PubkeyToAddress(key.PublicKey)
-					testAddBalance(pool, addr, big.NewInt(params.Ether))
-				}
-				// Create a transactions with 3 unique auths so the lookup's auth map is
-				// filled with addresses.
-				for i := 0; i < 30; i += 3 {
-					if err := pool.addRemoteSync(pricedSetCodeTx(0, 250000, uint256.NewInt(10), uint256.NewInt(3), keys[i], []unsignedAuth{{0, keys[i]}, {0, keys[i+1]}, {0, keys[i+2]}})); err != nil {
-						t.Fatalf("%s: failed to add with remote setcode transaction: %v", name, err)
-					}
-				}
-				// Replace one of the transactions with a normal transaction so that the
-				// original hash is removed from the tracker. The hash should be
-				// associated with 3 different authorities.
-				if err := pool.addRemoteSync(pricedTransaction(0, 100000, big.NewInt(1000), keys[0])); err != nil {
-					t.Fatalf("%s: failed to replace with remote transaction: %v", name, err)
 				}
 			},
 		},
