@@ -601,8 +601,6 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
 	}
 
-	// if deposit or pop payout: skip refunds, skip tipping coinbase (PoP included for pre-Regolith
-	// backwards compatibility)
 	// OP-Stack: pre-Regolith: if deposit, skip refunds, skip tipping coinbase
 	// Regolith changes this behaviour to report the actual gasUsed instead of always reporting all gas used.
 	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx) && !rules.IsOptimismRegolith {
@@ -632,6 +630,11 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 			}
 		}
 	}
+	st.returnGas()
+
+	// OP-Stack: Note for deposit tx there is no ETH refunded for unused gas, but that's taken care of by the fact that gasPrice
+	// is always 0 for deposit tx. So calling refundGas will ensure the gasUsed accounting is correct without actually
+	// changing the sender's balance.
 	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx) && rules.IsOptimismRegolith {
 		// Skip coinbase payments for deposit, PoP payout, and BTC Attr Dep tx in Regolith
 		return &ExecutionResult{
