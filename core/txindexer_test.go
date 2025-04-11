@@ -12,13 +12,12 @@
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 package core
 
 import (
 	"math/big"
-	"os"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -39,7 +38,7 @@ func TestTxIndexer(t *testing.T) {
 
 		gspec = &Genesis{
 			Config:  params.TestChainConfig,
-			Alloc:   GenesisAlloc{testBankAddress: {Balance: testBankFunds}},
+			Alloc:   types.GenesisAlloc{testBankAddress: {Balance: testBankFunds}},
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 		engine    = ethash.NewFaker()
@@ -85,7 +84,7 @@ func TestTxIndexer(t *testing.T) {
 		for number := *tail; number <= chainHead; number += 1 {
 			verifyIndexes(db, number, true)
 		}
-		progress := indexer.report(chainHead)
+		progress := indexer.report(chainHead, tail)
 		if !progress.Done() {
 			t.Fatalf("Expect fully indexed")
 		}
@@ -211,9 +210,8 @@ func TestTxIndexer(t *testing.T) {
 		},
 	}
 	for _, c := range cases {
-		frdir := t.TempDir()
-		db, _ := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), frdir, "", false)
-		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), append([]types.Receipts{{}}, receipts...), big.NewInt(0))
+		db, _ := rawdb.NewDatabaseWithFreezer(rawdb.NewMemoryDatabase(), "", "", false)
+		rawdb.WriteAncientBlocks(db, append([]*types.Block{gspec.ToBlock()}, blocks...), append([]types.Receipts{{}}, receipts...))
 
 		// Index the initial blocks from ancient store
 		indexer := &txIndexer{
@@ -238,6 +236,5 @@ func TestTxIndexer(t *testing.T) {
 		verify(db, 0, indexer)
 
 		db.Close()
-		os.RemoveAll(frdir)
 	}
 }

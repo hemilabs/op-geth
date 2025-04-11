@@ -184,9 +184,7 @@ func StartClefAccountManager(ksLocation string, nousb, lightKDF bool, scpath str
 			}
 		}
 	}
-
-	// Clef doesn't allow insecure http account unlock.
-	return accounts.NewManager(&accounts.Config{InsecureUnlockAllowed: false}, backends...)
+	return accounts.NewManager(nil, backends...)
 }
 
 // MetadataFromContext extracts Metadata from a given context.Context
@@ -590,7 +588,10 @@ func (api *SignerAPI) SignTransaction(ctx context.Context, args apitypes.SendTxA
 		return nil, err
 	}
 	// Convert fields into a real transaction
-	var unsignedTx = result.Transaction.ToTransaction()
+	unsignedTx, err := result.Transaction.ToTransaction()
+	if err != nil {
+		return nil, err
+	}
 	// Get the password for the transaction
 	pw, err := api.lookupOrQueryPassword(acc.Address, "Account password",
 		fmt.Sprintf("Please enter the password for account %s", acc.Address.String()))
@@ -631,7 +632,7 @@ func (api *SignerAPI) SignGnosisSafeTx(ctx context.Context, signerAddress common
 		}
 	}
 	typedData := gnosisTx.ToTypedData()
-	// might aswell error early.
+	// might as well error early.
 	// we are expected to sign. If our calculated hash does not match what they want,
 	// The gnosis safetx input contains a 'safeTxHash' which is the expected safeTxHash that
 	sighash, _, err := apitypes.TypedDataAndHash(typedData)
@@ -663,7 +664,7 @@ func (api *SignerAPI) SignGnosisSafeTx(ctx context.Context, signerAddress common
 	return &gnosisTx, nil
 }
 
-// Returns the external api version. This method does not require user acceptance. Available methods are
+// Version returns the external api version. This method does not require user acceptance. Available methods are
 // available via enumeration anyway, and this info does not contain user-specific data
 func (api *SignerAPI) Version(ctx context.Context) (string, error) {
 	return ExternalAPIVersion, nil

@@ -5,7 +5,7 @@ footer: |
 base:
   name: go-ethereum
   url: https://github.com/ethereum/go-ethereum
-  hash: 8f7eb9ccd99ee47721a7bfde494d6da28de4cd8e  # v1.13.11
+  hash: 612c9e0f4ae483f180ef96ace86effec6dc9bb0e # v1.15.3
 fork:
   name: op-geth
   url: https://github.com/ethereum-optimism/op-geth
@@ -49,14 +49,23 @@ def:
                 - "core/types/tx_dynamic_fee.go"
                 - "core/types/tx_legacy.go"
                 - "core/types/tx_blob.go"
+            - title: "EVM enhancements"
+              description: |
+                Apply L1 cost computation, and add EVM configuration for tooling and more:
+                - Disable bytecode size-limits (for large test/script contracts).
+                - Prank (solidity test terminology) the EVM-call message-sender.
+                - Override precompiles, to insert tooling precompiles and optimize precompile proving.
+              globs:
+                - "core/vm/evm.go"
+                - "core/vm/interpreter.go"
+                - "core/vm/gas_table.go"
             - title: "L1 cost computation"
               description: |
                 Transactions must pay an additional L1 cost based on the amount of rollup-data-gas they consume,
                 estimated based on gas-price-oracle information and encoded tx size."
               globs:
-                - "core/vm/evm.go"
                 - "core/evm.go"
-                - "core/types/rollup_l1_cost.go"
+                - "core/types/rollup_cost.go"
                 - "core/state_processor.go"
                 - "core/state_prefetcher.go"
             - title: Transaction processing
@@ -69,13 +78,15 @@ def:
             - title: "Core Error definitions"
               globs:
                 - "core/error.go"
-            - title: "Gaslimit"
+            - title: "Gaslimit and EIP-1559 Params"
               description: |
                 The gaslimit is free to be set by the Engine API caller, instead of enforcing adjustments of the
-                gaslimit in increments of 1/1024 of the previous gaslimit.
-                The gaslimit is changed (and limited) through the `SystemConfig` contract.
+                gaslimit in increments of 1/1024 of the previous gaslimit. The elasticity-multiplier and
+                base-fee-max-change-denominator EIP-1559 parameters can also be set by the Engine API caller through the
+                ExtraData field.  The gaslimit and EIP-1559 parameters are changed (and limited) through the
+                `SystemConfig` contract.
               globs:
-                - "consensus/misc/eip1559/eip1559.go"
+                - "consensus/misc/eip1559/*"
             - title: "Consensus tweaks"
               description: |
                 The Engine API is activated at the Merge transition, with a Total Terminal Difficulty (TTD).
@@ -94,9 +105,11 @@ def:
                 - "consensus/beacon/oplegacy.go"
         - title: "Engine API modifications"
           description: |
-            The Engine API is extended to insert transactions into the block and optionally exclude the tx-pool,
-            to reproduce the exact block of the sequencer from just the inputs, as derived from L1 by the rollup-node.
-            See [L2 execution engine specs](https://github.com/ethereum-optimism/optimism/blob/develop/specs/exec-engine.md).
+            The Engine API is extended to insert transactions into the block and optionally exclude the tx-pool, to
+            reproduce the exact block of the sequencer from just the inputs, as derived from L1 by the rollup-node.  See
+            [L2 execution engine specs](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/exec-engine.md).
+            It is also extended to support dynamic EIP-1559 parameters. See
+            [Holocene execution engine specs](https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/holocene/exec-engine.md).
           globs:
             - "beacon/engine/types.go"
             - "beacon/engine/gen_blockparams.go"
@@ -104,15 +117,30 @@ def:
         - title: "Block-building modifications"
           description: |
             The block-building code (in the "miner" package because of Proof-Of-Work legacy of ethereum) implements the
-            changes to support the transaction-inclusion, tx-pool toggle and gaslimit parameters of the Engine API.
+            changes to support the transaction-inclusion, tx-pool toggle, gaslimit, and EIP-1559 parameters of the
+            Engine API.
+            This also includes experimental support for interop executing-messages to be verified through an RPC.
           globs:
             - "miner/*"
-        - title: "Tx-pool tx cost updates"
-          description: |
-            Transaction queueing and inclusion needs to account for the L1 cost component.
+        - title: "Tx-pool"
+          sub:
+            - title: "Full Tx-pool journaling"
+              description: |
+                Adds support for full tx-pool journaling via the journalremotes config flag.
+              globs:
+                - "core/txpool/locals/pool_journaler.go"
+            - title: "Transaction cost updates"
+              description: |
+                Transaction queueing and inclusion needs to account for the L1 cost component.
+              globs:
+                - "core/txpool/**/*"
+                - "core/txpool/legacypool/*"
+        - title: "RIP-7212"
+          description: ""
           globs:
-            - "core/txpool/*"
-            - "core/txpool/legacypool/*"
+            - "core/vm/contracts.go"
+            - "crypto/secp256r1/publickey.go"
+            - "crypto/secp256r1/verifier.go"
     - title: "Chain Configuration"
       sub:
         - title: "Chain config"
@@ -184,13 +212,38 @@ def:
           globs:
             - "eth/downloader/downloader.go"
             - "eth/downloader/receiptreference.go"
+        - title: PathDB diff-layers limit
+          description: |
+            Prevent the write-buffer to grow too large, to keep the journal optional,
+            and not restart on top of unavailable state.
+          globs:
+            - "triedb/pathdb/buffer.go"
         - title: Discv5 node discovery
           description: Fix discv5 option to allow discv5 to be an active source for node-discovery.
           globs:
             - "p2p/server.go"
+        - title: Bootnodes
+          description: Discovery bootnode addresses.
+          globs:
+            - "params/bootnodes.go"
         - title: Generated TOML config update
           globs:
             - "eth/ethconfig/gen_config.go"
+    - title: "Single threaded execution"
+      description: |
+        The cannon fault proofs virtual machine does not support the creation of threads. To ensure compatibility, 
+        thread creation is avoided when only a single CPU is available.
+      globs:
+        - "core/state/workers.go"
+        - "trie/hasher.go"
+    - title: "Interop message checking"
+      description: |
+        The interop upgrade introduces cross-chain message.
+        Transactions are checked for cross-chain message safety before and during inclusion into a block.
+        This also includes tx-pool ingress filtering.
+      globs:
+        - "eth/interop.go"
+        - "core/txpool/ingress_filters.go"
     - title: "User API enhancements"
       description: "Encode the Deposit Tx properties, the L1 costs, and daisy-chain RPC-calls for pre-Bedrock historical data"
       sub:
@@ -217,12 +270,16 @@ def:
           globs:
             - "internal/ethapi/api.go"
             - "rpc/errors.go"
+        - title: eth_simulateV1 API fix
+          description: Add deposit-nonce tx metadata to results of `eth_simulateV1` API to match rpc block format.
+          globs:
+            - "internal/ethapi/simulate.go"
         - title: Tracer RPC daisy-chain
           description: Forward pre-bedrock tracing calls to legacy node.
           globs:
             - "eth/tracers/api.go"
         - title: "Daisy Chain tests"
-          globs:
+          ignore:
             - "internal/ethapi/transaction_args_test.go"
             - "ethclient/ethclient_test.go"
             - "eth/tracers/api_test.go"
@@ -241,20 +298,73 @@ def:
             and the chain ID formula on signature data must not be used, or an underflow happens.
           globs:
             - "internal/ethapi/testdata/eth_getBlockByNumber-tag-pending-fullTx.json"
+    - title: "4337 Improvements"
+      description: ""
+      sub:
+        - title: eth_sendRawTransactionConditional
+          description: sequencer api for conditional transaction inclusion enforced out of protocol
+          globs:
+            - "cmd/geth/main.go"
+            - "cmd/utils/flags.go"
+            - "core/state/statedb.go"
+            - "core/state/statedb_test.go"
+            - "core/types/block.go"
+            - "core/types/block_test.go"
+            - "core/types/transaction.go"
+            - "core/types/transaction_conditional.go"
+            - "core/types/transaction_conditional.go"
+            - "core/types/transaction_conditional_test.go"
+            - "core/types/gen_transaction_conditional_json.go"
+            - "eth/backend.go"
+            - "eth/ethconfig/config.go"
+            - "eth/protocols/eth/broadcast.go"
+            - "internal/sequencerapi/api.go"
+            - "miner/miner.go"
+            - "miner/miner_test.go"
+            - "miner/worker.go"
+            - "params/conditional_tx_params.go"
+            - "rpc/json.go"
     - title: "Geth extras"
       description: Extend the tools available in geth to improve external testing and tooling.
       sub:
+        - title: JSON-RPC recording
+          description: |
+            Extend server and client with configurable JSON-RPC message recording.
+            This enables loggers and advanced metrics to be attached to server and client sides.
+          globs:
+            - "rpc/client.go"
+            - "rpc/client_opt.go"
+            - "rpc/handler.go"
+            - "rpc/inproc.go"
+            - "rpc/recording.go"
+            - "rpc/server.go"
+            - "rpc/subscription.go"
         - title: Simulated Backend
           globs:
             - "accounts/abi/bind/backends/simulated.go"
             - "ethclient/simulated/backend.go"
-    - title: "Hardware wallet support"
-      description: Extend Ledger wallet support for newer devices on Macos
-      sub:
-        - title: Fix Ledger discoverability
-          # upstream PR: https://github.com/ethereum/go-ethereum/pull/28863/
+        - title: Fix ABI bindings gas-estimation to use access-list
           globs:
-            - "accounts/usbwallet/hub.go"
+            - "accounts/abi/bind/base.go"
+        - title: Live tracer update
+          description: |
+            Track L1-deposited native currency that is coming into the L2 supply.
+            The balance delta is considered to be a "withdrawal" from L1,
+            similar to a withdrawal of the Beacon-chain into the Ethereum L1 execution chain.
+          globs:
+            - "eth/tracers/live/supply.go"
+        - title: EVM t8ntool
+          description: |
+            The EVM `t8ntool` has not been updated with most op-stack features and does not
+            use the same sealer logic as used in Geth consensus. Isthumus hard fork adds
+            a `withdrawalsRoot` field in the block header. We note that the `t8ntool` is
+            not updated to handle the newly added `withdrawalsRoot` field in the block header.
+          globs:
+            - "cmd/evm/internal/t8ntool/block.go"
+    - title: "Testing"
+      description: Additional or modified tests, not already captured by the above diff
+      ignore:
+        - "**/*_test.go"
 
 # ignored globally, does not count towards line count
 ignore:
@@ -262,4 +372,9 @@ ignore:
   - "*.sum"
   - "go.mod"
   - "fork.yaml"
-  - ".github/*"
+  - "Makefile"
+  - ".golangci.yml"
+  - ".github/**"
+  - "**/*.gob" # data asset, not code
+  - "core/vm/testdata/precompiles/p256Verify.json" # data asset, not code
+  - "eth/tracers/internal/tracetest/testdata/**/*.json"

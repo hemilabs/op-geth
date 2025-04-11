@@ -18,10 +18,12 @@ package txpool
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -35,7 +37,16 @@ import (
 // are not able to consume all of the gas in a L2 block as the L1 info deposit is always present.
 const l1InfoGasOverhead = uint64(70_000)
 
-func EffectiveGasLimit(chainConfig *params.ChainConfig, gasLimit uint64) uint64 {
+var (
+	// blobTxMinBlobGasPrice is the big.Int version of the configured protocol
+	// parameter to avoid constructing a new big integer for every transaction.
+	blobTxMinBlobGasPrice = big.NewInt(params.BlobTxMinBlobGasprice)
+)
+
+func EffectiveGasLimit(chainConfig *params.ChainConfig, gasLimit uint64, effectiveLimit uint64) uint64 {
+	if effectiveLimit != 0 && effectiveLimit < gasLimit {
+		gasLimit = effectiveLimit
+	}
 	if chainConfig.Optimism != nil {
 		if l1InfoGasOverhead < gasLimit {
 			gasLimit -= l1InfoGasOverhead
@@ -54,7 +65,14 @@ type ValidationOptions struct {
 	Accept  uint8    // Bitmap of transaction types that should be accepted for the calling pool
 	MaxSize uint64   // Maximum size of a transaction that the caller can meaningfully handle
 	MinTip  *big.Int // Minimum gas tip needed to allow a transaction into the caller pool
+
+	EffectiveGasCeil uint64 // if non-zero, a gas ceiling to enforce independent of the header's gaslimit value
 }
+
+// ValidationFunction is an method type which the pools use to perform the tx-validations which do not
+// require state access. Production code typically uses ValidateTransaction, whereas testing-code
+// might choose to instead use something else, e.g. to always fail or avoid heavy cpu usage.
+type ValidationFunction func(tx *types.Transaction, head *types.Header, signer types.Signer, opts *ValidationOptions) error
 
 // ValidateTransaction is a helper method to check whether a transaction is valid
 // according to the consensus rules, but does not check state-dependent validation
@@ -98,20 +116,21 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: transaction size %v, limit %v", ErrOversizedData, tx.Size(), opts.MaxSize)
 	}
 	// Ensure only transactions that have been enabled are accepted
-	if !opts.Config.IsBerlin(head.Number) && tx.Type() != types.LegacyTxType {
-		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction IsBerlin failure"))
+	rules := opts.Config.Rules(head.Number, head.Difficulty.Sign() == 0, head.Time)
+	if !rules.IsBerlin && tx.Type() != types.LegacyTxType {
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Berlin", core.ErrTxTypeNotSupported, tx.Type())
 	}
-	if !opts.Config.IsLondon(head.Number) && tx.Type() == types.DynamicFeeTxType {
-		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction IsLondon failure"))
+	if !rules.IsLondon && tx.Type() == types.DynamicFeeTxType {
 		return fmt.Errorf("%w: type %d rejected, pool not yet in London", core.ErrTxTypeNotSupported, tx.Type())
 	}
-	if !opts.Config.IsCancun(head.Number, head.Time) && tx.Type() == types.BlobTxType {
-		log.Info(fmt.Sprintf("Tx type not supported ValidateTransaction IsCancon failure"))
+	if !rules.IsCancun && tx.Type() == types.BlobTxType {
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Cancun", core.ErrTxTypeNotSupported, tx.Type())
 	}
+	if !rules.IsPrague && tx.Type() == types.SetCodeTxType {
+		return fmt.Errorf("%w: type %d rejected, pool not yet in Prague", core.ErrTxTypeNotSupported, tx.Type())
+	}
 	// Check whether the init code size has been exceeded
-	if opts.Config.IsShanghai(head.Number, head.Time) && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
+	if rules.IsShanghai && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
 		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
 	}
 	// Transactions can't be negative. This may never happen using RLP decoded
@@ -120,7 +139,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return ErrNegativeValue
 	}
 	// Ensure the transaction doesn't exceed the current block limit gas
-	if EffectiveGasLimit(opts.Config, head.GasLimit) < tx.Gas() {
+	if EffectiveGasLimit(opts.Config, head.GasLimit, opts.EffectiveGasCeil) < tx.Gas() {
 		return ErrGasLimit
 	}
 	// Sanity check for extremely large numbers (supported by RLP or RPC)
@@ -136,39 +155,58 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Make sure the transaction is signed properly
 	if _, err := types.Sender(signer, tx); err != nil {
-		return ErrInvalidSender
+		return fmt.Errorf("%w: %v", ErrInvalidSender, err)
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to cover
 	// the transaction metadata
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.To() == nil, true, opts.Config.IsIstanbul(head.Number), opts.Config.IsShanghai(head.Number, head.Time))
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai)
 	if err != nil {
 		return err
 	}
 	if tx.Gas() < intrGas {
-		return fmt.Errorf("%w: needed %v, allowed %v", core.ErrIntrinsicGas, intrGas, tx.Gas())
+		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas)
 	}
-	// Ensure the gasprice is high enough to cover the requirement of the calling
-	// pool and/or block producer
+	// Ensure the transaction can cover floor data gas.
+	if opts.Config.IsPrague(head.Number, head.Time) {
+		floorDataGas, err := core.FloorDataGas(tx.Data())
+		if err != nil {
+			return err
+		}
+		if tx.Gas() < floorDataGas {
+			return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
+		}
+	}
+	// Ensure the gasprice is high enough to cover the requirement of the calling pool
 	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
-		return fmt.Errorf("%w: tip needed %v, tip permitted %v", ErrUnderpriced, opts.MinTip, tx.GasTipCap())
+		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrUnderpriced, tx.GasTipCap(), opts.MinTip)
 	}
-	// Ensure blob transactions have valid commitments
 	if tx.Type() == types.BlobTxType {
+		// Ensure the blob fee cap satisfies the minimum blob gas price
+		if tx.BlobGasFeeCapIntCmp(blobTxMinBlobGasPrice) < 0 {
+			return fmt.Errorf("%w: blob fee cap %v, minimum needed %v", ErrUnderpriced, tx.BlobGasFeeCap(), blobTxMinBlobGasPrice)
+		}
 		sidecar := tx.BlobTxSidecar()
 		if sidecar == nil {
-			return fmt.Errorf("missing sidecar in blob transaction")
+			return errors.New("missing sidecar in blob transaction")
 		}
 		// Ensure the number of items in the blob transaction and various side
 		// data match up before doing any expensive validations
 		hashes := tx.BlobHashes()
 		if len(hashes) == 0 {
-			return fmt.Errorf("blobless blob transaction")
+			return errors.New("blobless blob transaction")
 		}
-		if len(hashes) > params.MaxBlobGasPerBlock/params.BlobTxBlobGasPerBlob {
-			return fmt.Errorf("too many blobs in transaction: have %d, permitted %d", len(hashes), params.MaxBlobGasPerBlock/params.BlobTxBlobGasPerBlob)
+		maxBlobs := eip4844.MaxBlobsPerBlock(opts.Config, head.Time)
+		if len(hashes) > maxBlobs {
+			return fmt.Errorf("too many blobs in transaction: have %d, permitted %d", len(hashes), maxBlobs)
 		}
+		// Ensure commitments, proofs and hashes are valid
 		if err := validateBlobSidecar(hashes, sidecar); err != nil {
 			return err
+		}
+	}
+	if tx.Type() == types.SetCodeTxType {
+		if len(tx.SetCodeAuthorizations()) == 0 {
+			return fmt.Errorf("set code tx must have at least one authorization tuple")
 		}
 	}
 	return nil
@@ -196,7 +234,7 @@ func validateBlobSidecar(hashes []common.Hash, sidecar *types.BlobTxSidecar) err
 	// Blob commitments match with the hashes in the transaction, verify the
 	// blobs themselves via KZG
 	for i := range sidecar.Blobs {
-		if err := kzg4844.VerifyBlobProof(sidecar.Blobs[i], sidecar.Commitments[i], sidecar.Proofs[i]); err != nil {
+		if err := kzg4844.VerifyBlobProof(&sidecar.Blobs[i], sidecar.Commitments[i], sidecar.Proofs[i]); err != nil {
 			return fmt.Errorf("invalid blob %d: %v", i, err)
 		}
 	}
@@ -214,7 +252,7 @@ type ValidationOptionsWithState struct {
 	// nonce gaps will be ignored and permitted.
 	FirstNonceGap func(addr common.Address) uint64
 
-	// UsedAndLeftSlots is a mandatory callback to retrieve the number of tx slots
+	// UsedAndLeftSlots is an optional callback to retrieve the number of tx slots
 	// used and the number still permitted for an account. New transactions will
 	// be rejected once the number of remaining slots reaches zero.
 	UsedAndLeftSlots func(addr common.Address) (int, int)
@@ -227,8 +265,8 @@ type ValidationOptionsWithState struct {
 	// transaction's cost with the given nonce to check for overdrafts.
 	ExistingCost func(addr common.Address, nonce uint64) *big.Int
 
-	// L1CostFn is an optional extension, to validate L1 rollup costs of a tx
-	L1CostFn L1CostFunc
+	// RollupCostFn is an optional extension, to validate total rollup costs of a tx
+	RollupCostFn RollupCostFunc
 }
 
 // ValidateTransactionWithState is a helper method to check whether a transaction
@@ -238,7 +276,7 @@ type ValidationOptionsWithState struct {
 // rules without duplicating code and running the risk of missed updates.
 func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, opts *ValidationOptionsWithState) error {
 	// Ensure the transaction adheres to nonce ordering
-	from, err := signer.Sender(tx) // already validated (and cached), but cleaner to check
+	from, err := types.Sender(signer, tx) // already validated (and cached), but cleaner to check
 	if err != nil {
 		log.Error("Transaction sender recovery failed", "err", err)
 		return err
@@ -256,14 +294,13 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 	}
 	// Ensure the transactor has enough funds to cover the transaction costs
 	var (
-		balance = opts.State.GetBalance(from).ToBig()
-		cost    = tx.Cost()
+		balance           = opts.State.GetBalance(from).ToBig()
+		cost256, overflow = TotalTxCost(tx, opts.RollupCostFn)
 	)
-	if opts.L1CostFn != nil {
-		if l1Cost := opts.L1CostFn(tx.RollupCostData()); l1Cost != nil { // add rollup cost
-			cost = cost.Add(cost, l1Cost)
-		}
+	if overflow {
+		return fmt.Errorf("%w: total tx cost overflow", core.ErrInsufficientFunds)
 	}
+	cost := cost256.ToBig()
 	if balance.Cmp(cost) < 0 {
 		return fmt.Errorf("%w: balance %v, tx cost %v, overshot %v", core.ErrInsufficientFunds, balance, cost, new(big.Int).Sub(cost, balance))
 	}
@@ -284,8 +321,10 @@ func ValidateTransactionWithState(tx *types.Transaction, signer types.Signer, op
 		// Transaction takes a new nonce value out of the pool. Ensure it doesn't
 		// overflow the number of permitted transactions from a single account
 		// (i.e. max cancellable via out-of-bound transaction).
-		if used, left := opts.UsedAndLeftSlots(from); left <= 0 {
-			return fmt.Errorf("%w: pooled %d txs", ErrAccountLimitExceeded, used)
+		if opts.UsedAndLeftSlots != nil {
+			if used, left := opts.UsedAndLeftSlots(from); left <= 0 {
+				return fmt.Errorf("%w: pooled %d txs", ErrAccountLimitExceeded, used)
+			}
 		}
 	}
 	return nil

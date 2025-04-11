@@ -18,6 +18,7 @@ package types
 
 import (
 	"bytes"
+	gomath "math"
 	"math/big"
 	"reflect"
 	"testing"
@@ -196,7 +197,7 @@ func TestEIP2718BlockEncoding(t *testing.T) {
 func TestUncleHash(t *testing.T) {
 	uncles := make([]*Header, 0)
 	h := CalcUncleHash(uncles)
-	exp := common.HexToHash("1dcc4de8dec75d7aab85b567b6ccd41ad312451b948a7413f0a142fd40d49347")
+	exp := EmptyUncleHash
 	if h != exp {
 		t.Fatalf("empty uncle hash is wrong, got %x != %x", h, exp)
 	}
@@ -254,7 +255,8 @@ func makeBenchBlock() *Block {
 			Extra:      []byte("benchmark uncle"),
 		}
 	}
-	return NewBlock(header, txs, uncles, receipts, blocktest.NewHasher())
+	withdrawals := make([]*Withdrawal, 0)
+	return NewBlock(header, &Body{Transactions: txs, Uncles: uncles, Withdrawals: withdrawals}, receipts, blocktest.NewHasher(), IsthmusBlockConfig)
 }
 
 func TestRlpDecodeParentHash(t *testing.T) {
@@ -277,9 +279,9 @@ func TestRlpDecodeParentHash(t *testing.T) {
 	if rlpData, err := rlp.EncodeToBytes(&Header{
 		ParentHash: want,
 		Difficulty: mainnetTd,
-		Number:     new(big.Int).SetUint64(math.MaxUint64),
+		Number:     new(big.Int).SetUint64(gomath.MaxUint64),
 		Extra:      make([]byte, 65+32),
-		BaseFee:    new(big.Int).SetUint64(math.MaxUint64),
+		BaseFee:    new(big.Int).SetUint64(gomath.MaxUint64),
 	}); err != nil {
 		t.Fatal(err)
 	} else {
@@ -315,5 +317,111 @@ func TestRlpDecodeParentHash(t *testing.T) {
 				t.Fatalf("invalid %d: have %x, want %x", i, have, want)
 			}
 		}
+	}
+}
+
+func TestCheckTransactionConditional(t *testing.T) {
+	u64Ptr := func(n uint64) *uint64 {
+		return &n
+	}
+
+	tests := []struct {
+		name   string
+		header Header
+		cond   TransactionConditional
+		valid  bool
+	}{
+		{
+			"BlockNumberMaxFails",
+			Header{Number: big.NewInt(2)},
+			TransactionConditional{BlockNumberMax: big.NewInt(1)},
+			false,
+		},
+		{
+			"BlockNumberMaxEqualSucceeds",
+			Header{Number: big.NewInt(2)},
+			TransactionConditional{BlockNumberMax: big.NewInt(2)},
+			true,
+		},
+		{
+			"BlockNumberMaxSucceeds",
+			Header{Number: big.NewInt(1)},
+			TransactionConditional{BlockNumberMax: big.NewInt(2)},
+			true,
+		},
+		{
+			"BlockNumberMinFails",
+			Header{Number: big.NewInt(1)},
+			TransactionConditional{BlockNumberMin: big.NewInt(2)},
+			false,
+		},
+		{
+			"BlockNumberMinEqualSuccess",
+			Header{Number: big.NewInt(2)},
+			TransactionConditional{BlockNumberMin: big.NewInt(2)},
+			true,
+		},
+		{
+			"BlockNumberMinSuccess",
+			Header{Number: big.NewInt(4)},
+			TransactionConditional{BlockNumberMin: big.NewInt(3)},
+			true,
+		},
+		{
+			"BlockNumberRangeSucceeds",
+			Header{Number: big.NewInt(5)},
+			TransactionConditional{BlockNumberMin: big.NewInt(1), BlockNumberMax: big.NewInt(10)},
+			true,
+		},
+		{
+			"BlockNumberRangeFails",
+			Header{Number: big.NewInt(15)},
+			TransactionConditional{BlockNumberMin: big.NewInt(1), BlockNumberMax: big.NewInt(10)},
+			false,
+		},
+		{
+			"BlockTimestampMinFails",
+			Header{Time: 1},
+			TransactionConditional{TimestampMin: u64Ptr(2)},
+			false,
+		},
+		{
+			"BlockTimestampMinSucceeds",
+			Header{Time: 2},
+			TransactionConditional{TimestampMin: u64Ptr(1)},
+			true,
+		},
+		{
+			"BlockTimestampMinEqualSucceeds",
+			Header{Time: 1},
+			TransactionConditional{TimestampMin: u64Ptr(1)},
+			true,
+		},
+		{
+			"BlockTimestampMaxFails",
+			Header{Time: 2},
+			TransactionConditional{TimestampMax: u64Ptr(1)},
+			false,
+		},
+		{
+			"BlockTimestampMaxSucceeds",
+			Header{Time: 1},
+			TransactionConditional{TimestampMax: u64Ptr(2)},
+			true,
+		},
+		{
+			"BlockTimestampMaxEqualSucceeds",
+			Header{Time: 2},
+			TransactionConditional{TimestampMax: u64Ptr(2)},
+			true,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.header.CheckTransactionConditional(&test.cond); err == nil && !test.valid {
+				t.Errorf("Test %s got unvalid value, want %v, got err %v", test.name, test.valid, err)
+			}
+		})
 	}
 }

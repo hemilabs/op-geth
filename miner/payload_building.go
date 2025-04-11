@@ -12,15 +12,15 @@
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
 
 package miner
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"fmt"
 	"math/big"
 	"sync"
 	"sync/atomic"
@@ -28,6 +28,8 @@ import (
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
@@ -46,14 +48,14 @@ type BuildPayloadArgs struct {
 	BeaconRoot   *common.Hash          // The provided beaconRoot (Cancun)
 	Version      engine.PayloadVersion // Versioning byte for payload id calculation.
 
-	NoTxPool     bool                 // Optimism addition: option to disable tx pool contents from being included
-	Transactions []*types.Transaction // Optimism addition: txs forced into the block via engine API
-	GasLimit     *uint64              // Optimism addition: override gas limit of the block to build
+	NoTxPool      bool                 // Optimism addition: option to disable tx pool contents from being included
+	Transactions  []*types.Transaction // Optimism addition: txs forced into the block via engine API
+	GasLimit      *uint64              // Optimism addition: override gas limit of the block to build
+	EIP1559Params []byte               // Optimism addition: encodes Holocene EIP-1559 params
 }
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
 func (args *BuildPayloadArgs) Id() engine.PayloadID {
-	// Hash
 	hasher := sha256.New()
 	hasher.Write(args.Parent[:])
 	binary.Write(hasher, binary.BigEndian, args.Timestamp)
@@ -75,6 +77,9 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 	if args.GasLimit != nil {
 		binary.Write(hasher, binary.BigEndian, *args.GasLimit)
 	}
+	if len(args.EIP1559Params) != 0 {
+		hasher.Write(args.EIP1559Params[:])
+	}
 
 	var out engine.PayloadID
 	copy(out[:], hasher.Sum(nil)[:8])
@@ -88,28 +93,41 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 // the revenue. Therefore, the empty-block here is always available and full-block
 // will be set/updated afterwards.
 type Payload struct {
-	id       engine.PayloadID
-	empty    *types.Block
-	full     *types.Block
-	sidecars []*types.BlobTxSidecar
-	fullFees *big.Int
-	stop     chan struct{}
-	lock     sync.Mutex
-	cond     *sync.Cond
+	id            engine.PayloadID
+	empty         *types.Block
+	emptyWitness  *stateless.Witness
+	full          *types.Block
+	fullWitness   *stateless.Witness
+	sidecars      []*types.BlobTxSidecar
+	emptyRequests [][]byte
+	requests      [][]byte
+	fullFees      *big.Int
+	stop          chan struct{}
+	lock          sync.Mutex
+	cond          *sync.Cond
 
 	err       error
 	stopOnce  sync.Once
 	interrupt *atomic.Int32 // interrupt signal shared with worker
+
+	rpcCtx    context.Context // context to limit RPC-coupled payload checks
+	rpcCancel context.CancelFunc
 }
 
 // newPayload initializes the payload object.
-func newPayload(empty *types.Block, id engine.PayloadID) *Payload {
+func newPayload(lifeCtx context.Context, empty *types.Block, emptyRequests [][]byte, witness *stateless.Witness, id engine.PayloadID) *Payload {
+	rpcCtx, rpcCancel := context.WithCancel(lifeCtx)
 	payload := &Payload{
-		id:    id,
-		empty: empty,
-		stop:  make(chan struct{}),
+		id:            id,
+		empty:         empty,
+		emptyRequests: emptyRequests,
+		emptyWitness:  witness,
+		stop:          make(chan struct{}),
 
 		interrupt: new(atomic.Int32),
+
+		rpcCtx:    rpcCtx,
+		rpcCancel: rpcCancel,
 	}
 	log.Info("Starting work on payload", "id", payload.id)
 	payload.cond = sync.NewCond(&payload.lock)
@@ -148,6 +166,8 @@ func (payload *Payload) update(r *newPayloadResult, elapsed time.Duration) {
 		payload.full = r.block
 		payload.fullFees = r.fees
 		payload.sidecars = r.sidecars
+		payload.requests = r.requests
+		payload.fullWitness = r.witness
 
 		feesInEther := new(big.Float).Quo(new(big.Float).SetInt(r.fees), big.NewFloat(params.Ether))
 		log.Info("Updated payload",
@@ -176,7 +196,12 @@ func (payload *Payload) ResolveEmpty() *engine.ExecutionPayloadEnvelope {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
 
-	return engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil)
+	envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
+	if payload.emptyWitness != nil {
+		envelope.Witness = new(hexutil.Bytes)
+		*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
+	}
+	return envelope
 }
 
 // ResolveFull is basically identical to Resolve, but it expects full block only.
@@ -215,9 +240,18 @@ func (payload *Payload) resolve(onlyFull bool) *engine.ExecutionPayloadEnvelope 
 	payload.stopBuilding()
 
 	if payload.full != nil {
-		return engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars)
+		envelope := engine.BlockToExecutableData(payload.full, payload.fullFees, payload.sidecars, payload.requests)
+		if payload.fullWitness != nil {
+			envelope.Witness = new(hexutil.Bytes)
+			*envelope.Witness, _ = rlp.EncodeToBytes(payload.fullWitness) // cannot fail
+		}
+		return envelope
 	} else if !onlyFull && payload.empty != nil {
-		return engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil)
+		envelope := engine.BlockToExecutableData(payload.empty, big.NewInt(0), nil, payload.emptyRequests)
+		if payload.emptyWitness != nil {
+			envelope.Witness = new(hexutil.Bytes)
+			*envelope.Witness, _ = rlp.EncodeToBytes(payload.emptyWitness) // cannot fail
+		}
 	} else if err := payload.err; err != nil {
 		log.Error("Error building any payload", "id", payload.id, "err", err)
 	}
@@ -231,6 +265,7 @@ func (payload *Payload) resolve(onlyFull bool) *engine.ExecutionPayloadEnvelope 
 // the update anyways.
 // interruptBuilding is safe to be called concurrently.
 func (payload *Payload) interruptBuilding() {
+	payload.rpcCancel()
 	// Set the interrupt if not interrupted already.
 	// It's ok if it has either already been interrupted by payload resolution earlier,
 	// or by the timeout timer set to commitInterruptTimeout.
@@ -247,6 +282,7 @@ func (payload *Payload) interruptBuilding() {
 // transactions with interruptBuilding.
 // stopBuilding is safe to be called concurrently.
 func (payload *Payload) stopBuilding() {
+	payload.rpcCancel()
 	// Concurrent Resolve calls should only stop once.
 	payload.stopOnce.Do(func() {
 		log.Debug("Stop payload building.", "id", payload.id)
@@ -255,8 +291,7 @@ func (payload *Payload) stopBuilding() {
 }
 
 // buildPayload builds the payload according to the provided parameters.
-func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
-	log.Info(fmt.Sprintf("buildPayload; args.NoTxPool=%d", args.NoTxPool))
+func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload, error) {
 	if args.NoTxPool { // don't start the background payload updating job if there is no tx pool to pull from
 		// Build the initial version with no transaction included. It should be fast
 		// enough to run. The empty payload can at least make sure there is something
@@ -264,52 +299,59 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 		// In OP-Stack, the "empty" block is constructed from provided txs only, i.e. no tx-pool usage.
 		// For hVM, the "empty" block will not include any BTC Attributes Deposited transaction either.
 		emptyParams := &generateParams{
-			timestamp:   args.Timestamp,
-			forceTime:   true,
-			parentHash:  args.Parent,
-			coinbase:    args.FeeRecipient,
-			random:      args.Random,
-			withdrawals: args.Withdrawals,
-			beaconRoot:  args.BeaconRoot,
-			noTxs:       true,
-			txs:         args.Transactions,
-			gasLimit:    args.GasLimit,
+			timestamp:     args.Timestamp,
+			forceTime:     true,
+			parentHash:    args.Parent,
+			coinbase:      args.FeeRecipient,
+			random:        args.Random,
+			withdrawals:   args.Withdrawals,
+			beaconRoot:    args.BeaconRoot,
+			noTxs:         true,
+			txs:           args.Transactions,
+			gasLimit:      args.GasLimit,
+			eip1559Params: args.EIP1559Params,
+			// No RPC requests allowed.
+			rpcCtx: nil,
 		}
-		empty := w.getSealingBlock(emptyParams)
+		empty := miner.generateWork(emptyParams, witness)
 		if empty.err != nil {
 			return nil, empty.err
 		}
-		payload := newPayload(empty.block, args.Id())
+		payload := newPayload(miner.lifeCtx, empty.block, empty.requests, empty.witness, args.Id())
 		// make sure to make it appear as full, otherwise it will wait indefinitely for payload building to complete.
 		payload.full = empty.block
 		payload.fullFees = empty.fees
+		payload.fullWitness = empty.witness
+		payload.requests = empty.requests
 		payload.cond.Broadcast() // unblocks Resolve
 		return payload, nil
 	}
 
 	fullParams := &generateParams{
-		timestamp:   args.Timestamp,
-		forceTime:   true,
-		parentHash:  args.Parent,
-		coinbase:    args.FeeRecipient,
-		random:      args.Random,
-		withdrawals: args.Withdrawals,
-		beaconRoot:  args.BeaconRoot,
-		noTxs:       false,
-		txs:         args.Transactions,
-		gasLimit:    args.GasLimit,
+		timestamp:     args.Timestamp,
+		forceTime:     true,
+		parentHash:    args.Parent,
+		coinbase:      args.FeeRecipient,
+		random:        args.Random,
+		withdrawals:   args.Withdrawals,
+		beaconRoot:    args.BeaconRoot,
+		noTxs:         false,
+		txs:           args.Transactions,
+		gasLimit:      args.GasLimit,
+		eip1559Params: args.EIP1559Params,
 	}
 
 	// Since we skip building the empty block when using the tx pool, we need to explicitly
 	// validate the BuildPayloadArgs here.
-	blockTime, err := w.validateParams(fullParams)
+	blockTime, err := miner.validateParams(fullParams)
 	if err != nil {
 		return nil, err
 	}
 
-	payload := newPayload(nil, args.Id())
+	payload := newPayload(miner.lifeCtx, nil, nil, nil, args.Id())
 	// set shared interrupt
 	fullParams.interrupt = payload.interrupt
+	fullParams.rpcCtx = payload.rpcCtx
 
 	// Spin up a routine for updating the payload in background. This strategy
 	// can maximum the revenue for including transactions with highest fee.
@@ -332,13 +374,13 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 			log.Info("Stopping work on payload",
 				"id", payload.id,
 				"reason", stopReason,
-				"elapsed", time.Since(start).Milliseconds())
+				"elapsed", common.PrettyDuration(time.Since(start)))
 		}()
 
 		updatePayload := func() time.Duration {
 			start := time.Now()
 			// getSealingBlock is interrupted by shared interrupt
-			r := w.getSealingBlock(fullParams)
+			r := miner.generateWork(fullParams, witness)
 			dur := time.Since(start)
 			// update handles error case
 			payload.update(r, dur)
@@ -346,13 +388,15 @@ func (w *worker) buildPayload(args *BuildPayloadArgs) (*Payload, error) {
 				// after first successful pass, we're updating
 				fullParams.isUpdate = true
 			}
-			timer.Reset(w.recommit)
+			timer.Reset(miner.config.Recommit)
 			return dur
 		}
 
 		var lastDuration time.Duration
 		for {
 			select {
+			case <-miner.lifeCtx.Done():
+				stopReason = "miner-shutdown"
 			case <-timer.C:
 				// We have to prioritize the stop signal because the recommit timer
 				// might have fired while stop also got closed.

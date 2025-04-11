@@ -19,19 +19,26 @@ package eth
 import (
 	"bytes"
 	"fmt"
+	"math/big"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
-	"github.com/ethereum/go-ethereum/trie"
+	"github.com/ethereum/go-ethereum/params"
+	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
-	"golang.org/x/exp/slices"
+	"github.com/stretchr/testify/require"
 )
 
 var dumper = spew.ConfigState{Indent: "    "}
@@ -63,8 +70,9 @@ func TestAccountRange(t *testing.T) {
 	t.Parallel()
 
 	var (
-		statedb = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
-		sdb, _  = state.New(types.EmptyRootHash, statedb, nil)
+		mdb     = rawdb.NewMemoryDatabase()
+		statedb = state.NewDatabase(triedb.NewDatabase(mdb, &triedb.Config{Preimages: true}), nil)
+		sdb, _  = state.New(types.EmptyRootHash, statedb)
 		addrs   = [AccountRangeMaxResults * 2]common.Address{}
 		m       = map[common.Address]bool{}
 	)
@@ -73,15 +81,15 @@ func TestAccountRange(t *testing.T) {
 		hash := common.HexToHash(fmt.Sprintf("%x", i))
 		addr := common.BytesToAddress(crypto.Keccak256Hash(hash.Bytes()).Bytes())
 		addrs[i] = addr
-		sdb.SetBalance(addrs[i], uint256.NewInt(1))
+		sdb.SetBalance(addrs[i], uint256.NewInt(1), tracing.BalanceChangeUnspecified)
 		if _, ok := m[addr]; ok {
 			t.Fatalf("bad")
 		} else {
 			m[addr] = true
 		}
 	}
-	root, _ := sdb.Commit(0, true)
-	sdb, _ = state.New(root, statedb, nil)
+	root, _ := sdb.Commit(0, true, false)
+	sdb, _ = state.New(root, statedb)
 
 	trie, err := statedb.OpenTrie(root)
 	if err != nil {
@@ -134,12 +142,12 @@ func TestEmptyAccountRange(t *testing.T) {
 	t.Parallel()
 
 	var (
-		statedb = state.NewDatabase(rawdb.NewMemoryDatabase())
-		st, _   = state.New(types.EmptyRootHash, statedb, nil)
+		statedb = state.NewDatabaseForTesting()
+		st, _   = state.New(types.EmptyRootHash, statedb)
 	)
 	// Commit(although nothing to flush) and re-init the statedb
-	st.Commit(0, true)
-	st, _ = state.New(types.EmptyRootHash, statedb, nil)
+	st.Commit(0, true, false)
+	st, _ = state.New(types.EmptyRootHash, statedb)
 
 	results := st.RawDump(&state.DumpConfig{
 		SkipCode:          true,
@@ -160,8 +168,10 @@ func TestStorageRangeAt(t *testing.T) {
 
 	// Create a state where account 0x010000... has a few storage entries.
 	var (
-		db     = state.NewDatabaseWithConfig(rawdb.NewMemoryDatabase(), &trie.Config{Preimages: true})
-		sdb, _ = state.New(types.EmptyRootHash, db, nil)
+		mdb    = rawdb.NewMemoryDatabase()
+		tdb    = triedb.NewDatabase(mdb, &triedb.Config{Preimages: true})
+		db     = state.NewDatabase(tdb, nil)
+		sdb, _ = state.New(types.EmptyRootHash, db)
 		addr   = common.Address{0x01}
 		keys   = []common.Hash{ // hashes of Keys of storage
 			common.HexToHash("340dd630ad21bf010b4e676dbfa9ba9a02175262d1fa356232cfde6cb5b47ef2"),
@@ -179,8 +189,8 @@ func TestStorageRangeAt(t *testing.T) {
 	for _, entry := range storage {
 		sdb.SetState(addr, *entry.Key, entry.Value)
 	}
-	root, _ := sdb.Commit(0, false)
-	sdb, _ = state.New(root, db, nil)
+	root, _ := sdb.Commit(0, false, false)
+	sdb, _ = state.New(root, db)
 
 	// Check a few combinations of limit and start/end.
 	tests := []struct {
@@ -219,4 +229,31 @@ func TestStorageRangeAt(t *testing.T) {
 				test.start, test.limit, dumper.Sdump(result), dumper.Sdump(&test.want))
 		}
 	}
+}
+
+func TestExecutionWitness(t *testing.T) {
+	t.Parallel()
+
+	// Create a database pre-initialize with a genesis block
+	db := rawdb.NewMemoryDatabase()
+	gspec := &core.Genesis{
+		Config: params.TestChainConfig,
+		Alloc:  types.GenesisAlloc{testAddr: {Balance: big.NewInt(1000000)}},
+	}
+	chain, _ := core.NewBlockChain(db, nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil)
+
+	blockNum := 10
+	_, bs, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), blockNum, nil)
+	if _, err := chain.InsertChain(bs); err != nil {
+		panic(err)
+	}
+
+	block := chain.GetBlockByNumber(uint64(blockNum - 1))
+	require.NotNil(t, block)
+
+	witness, err := generateWitness(chain, block)
+	require.NoError(t, err)
+
+	_, _, err = core.ExecuteStateless(params.TestChainConfig, *chain.GetVMConfig(), block, witness)
+	require.NoError(t, err)
 }

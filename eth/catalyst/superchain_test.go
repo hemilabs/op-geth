@@ -4,7 +4,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/params"
@@ -57,10 +56,9 @@ func TestSignalSuperchainV1Halt(t *testing.T) {
 		{"patch", "patch", true},
 	}
 	for _, tc := range testCases {
-		tc := tc
 		t.Run(tc.cfg+"_"+tc.bump, func(t *testing.T) {
 			genesis, preMergeBlocks := generateMergeChain(2, false)
-			ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: downloader.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256}
+			ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: ethconfig.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256}
 			ethcfg.RollupHaltOnIncompatibleProtocolVersion = tc.cfg // opt-in to halting (or not)
 			n, ethservice := startEthServiceWithConfigFn(t, preMergeBlocks, ethcfg)
 			defer n.Close() // close at the end, regardless of any prior (failed) closing

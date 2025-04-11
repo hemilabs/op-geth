@@ -4,7 +4,7 @@ ARG VERSION=""
 ARG BUILDNUM=""
 
 # Build Geth in a stock Go builder container
-FROM golang:1.23.4-alpine@sha256:20c0c5ccf7c851ecde9f0664404213adabe2b47f34e5292bfbeaca203241836c as builder
+FROM golang:1.24-alpine AS builder
 
 RUN apk add --no-cache gcc musl-dev linux-headers git ca-certificates tzdata
 
@@ -33,7 +33,7 @@ COPY --from=builder /go-ethereum/build/bin/geth /usr/local/bin/geth
 
 EXPOSE 8545 8546 30303 30303/udp
 
-# Add some metadata labels to help programatic image consumption
+# Add some metadata labels to help programmatic image consumption
 ARG COMMIT=""
 ARG VERSION=""
 ARG BUILDNUM=""

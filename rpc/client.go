@@ -45,6 +45,7 @@ var (
 const (
 	defaultDialTimeout = 10 * time.Second // used if context has no deadline
 	subscribeTimeout   = 10 * time.Second // overall timeout eth_subscribe, rpc_modules calls
+	unsubscribeTimeout = 10 * time.Second // timeout for *_unsubscribe calls
 )
 
 const (
@@ -70,7 +71,7 @@ type BatchElem struct {
 	// discarded.
 	Result interface{}
 	// Error is set if the server returns an error for this request, or if
-	// unmarshaling into Result fails. It is not set for I/O errors.
+	// unmarshalling into Result fails. It is not set for I/O errors.
 	Error error
 }
 
@@ -104,6 +105,8 @@ type Client struct {
 	reqInit     chan *requestOp  // register response IDs, takes write lock
 	reqSent     chan error       // signals write completion, releases write lock
 	reqTimeout  chan *requestOp  // removes response IDs when call timeout expires
+
+	recorder Recorder // optional, may be nil
 }
 
 type reconnectFunc func(context.Context) (ServerCodec, error)
@@ -120,6 +123,7 @@ func (c *Client) newClientConn(conn ServerCodec) *clientConn {
 	ctx = context.WithValue(ctx, clientContextKey{}, c)
 	ctx = context.WithValue(ctx, peerInfoContextKey{}, conn.peerInfo())
 	handler := newHandler(ctx, conn, c.idgen, c.services, c.batchItemLimit, c.batchResponseMaxSize)
+	handler.recorder = c.recorder
 	return &clientConn{conn, handler}
 }
 
@@ -257,6 +261,7 @@ func initClient(conn ServerCodec, services *serviceRegistry, cfg *clientConfig) 
 		reqInit:              make(chan *requestOp),
 		reqSent:              make(chan error, 1),
 		reqTimeout:           make(chan *requestOp),
+		recorder:             cfg.recorder,
 	}
 
 	// Set defaults.
@@ -342,6 +347,10 @@ func (c *Client) CallContext(ctx context.Context, result interface{}, method str
 	if err != nil {
 		return err
 	}
+	var recordDone RecordDone
+	if c.recorder != nil {
+		recordDone = c.recorder.RecordOutgoing(ctx, msg)
+	}
 	op := &requestOp{
 		ids:  []json.RawMessage{msg.ID},
 		resp: make(chan []*jsonrpcMessage, 1),
@@ -362,6 +371,9 @@ func (c *Client) CallContext(ctx context.Context, result interface{}, method str
 		return err
 	}
 	resp := batchresp[0]
+	if recordDone != nil {
+		recordDone(ctx, msg, resp)
+	}
 	switch {
 	case resp.Error != nil:
 		return resp.Error
@@ -414,7 +426,13 @@ func (c *Client) BatchCallContext(ctx context.Context, b []BatchElem) error {
 		op.ids[i] = msg.ID
 		byID[string(msg.ID)] = i
 	}
-
+	var recordDone []RecordDone
+	if c.recorder != nil {
+		recordDone = make([]RecordDone, len(b))
+		for i, msg := range msgs {
+			recordDone[i] = c.recorder.RecordOutgoing(ctx, msg)
+		}
+	}
 	var err error
 	if c.isHTTP {
 		err = c.sendBatchHTTP(ctx, op, msgs)
@@ -431,7 +449,7 @@ func (c *Client) BatchCallContext(ctx context.Context, b []BatchElem) error {
 	}
 
 	// Wait for all responses to come back.
-	for n := 0; n < len(batchresp) && err == nil; n++ {
+	for n := 0; n < len(batchresp); n++ {
 		resp := batchresp[n]
 		if resp == nil {
 			// Ignore null responses. These can happen for batches sent via HTTP.
@@ -444,6 +462,10 @@ func (c *Client) BatchCallContext(ctx context.Context, b []BatchElem) error {
 			continue
 		}
 		delete(byID, string(resp.ID))
+
+		if recordDone != nil {
+			recordDone[index](ctx, msgs[index], resp)
+		}
 
 		// Assign result and error.
 		elem := &b[index]
@@ -461,6 +483,9 @@ func (c *Client) BatchCallContext(ctx context.Context, b []BatchElem) error {
 	for _, index := range byID {
 		elem := &b[index]
 		elem.Error = ErrMissingBatchResponse
+		if recordDone != nil {
+			recordDone[index](ctx, msgs[index], nil)
+		}
 	}
 
 	return err

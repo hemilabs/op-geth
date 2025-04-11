@@ -17,9 +17,10 @@
 package eth
 
 import (
-	"github.com/ethereum/go-ethereum/log"
 	"math/big"
 	"time"
+
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -36,30 +37,6 @@ const (
 type blockPropagation struct {
 	block *types.Block
 	td    *big.Int
-}
-
-// broadcastBlocks is a write loop that multiplexes blocks and block announcements
-// to the remote peer. The goal is to have an async writer that does not lock up
-// node internals and at the same time rate limits queued data.
-func (p *Peer) broadcastBlocks() {
-	for {
-		select {
-		case prop := <-p.queuedBlocks:
-			if err := p.SendNewBlock(prop.block, prop.td); err != nil {
-				return
-			}
-			p.Log().Trace("Propagated block", "number", prop.block.Number(), "hash", prop.block.Hash(), "td", prop.td)
-
-		case block := <-p.queuedBlockAnns:
-			if err := p.SendNewBlockHashes([]common.Hash{block.Hash()}, []uint64{block.NumberU64()}); err != nil {
-				return
-			}
-			p.Log().Trace("Announced block", "number", block.Number(), "hash", block.Hash())
-
-		case <-p.term:
-			return
-		}
-	}
 }
 
 func (p *Peer) prefetchBTCBlocks() {
@@ -103,7 +80,10 @@ func (p *Peer) broadcastTransactions() {
 				size        common.StorageSize
 			)
 			for i := 0; i < len(queue) && size < maxTxPacketSize; i++ {
-				if tx := p.txpool.Get(queue[i]); tx != nil {
+				// Transaction conditionals are tied to the block builder it was
+				// submitted to. Thus we do not broadcast transactions to peers that
+				// have a conditional attached to them.
+				if tx := p.txpool.Get(queue[i]); tx != nil && tx.Conditional() == nil {
 					txs = append(txs, tx)
 					size += common.StorageSize(tx.Size())
 				}
@@ -186,16 +166,9 @@ func (p *Peer) announceTransactions() {
 			if len(pending) > 0 {
 				done = make(chan struct{})
 				go func() {
-					if p.version >= ETH68 {
-						if err := p.sendPooledTransactionHashes68(pending, pendingTypes, pendingSizes); err != nil {
-							fail <- err
-							return
-						}
-					} else {
-						if err := p.sendPooledTransactionHashes66(pending); err != nil {
-							fail <- err
-							return
-						}
+					if err := p.sendPooledTransactionHashes(pending, pendingTypes, pendingSizes); err != nil {
+						fail <- err
+						return
 					}
 					close(done)
 					p.Log().Trace("Sent transaction announcements", "count", len(pending))

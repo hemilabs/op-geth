@@ -25,7 +25,6 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethclient/simulated"
@@ -57,7 +56,7 @@ func TestWaitDeployed(t *testing.T) {
 	t.Parallel()
 	for name, test := range waitDeployedTests {
 		backend := simulated.NewBackend(
-			core.GenesisAlloc{
+			types.GenesisAlloc{
 				crypto.PubkeyToAddress(testKey.PublicKey): {Balance: big.NewInt(10000000000000000)},
 			},
 		)
@@ -65,7 +64,7 @@ func TestWaitDeployed(t *testing.T) {
 
 		// Create the transaction
 		head, _ := backend.Client().HeaderByNumber(context.Background(), nil) // Should be child's, good enough
-		gasPrice := new(big.Int).Add(head.BaseFee, big.NewInt(1))
+		gasPrice := new(big.Int).Add(head.BaseFee, big.NewInt(params.GWei))
 
 		tx := types.NewContractCreation(0, big.NewInt(0), test.gas, gasPrice, common.FromHex(test.code))
 		tx, _ = types.SignTx(tx, types.LatestSignerForChainID(big.NewInt(1337)), testKey)
@@ -83,7 +82,9 @@ func TestWaitDeployed(t *testing.T) {
 		}()
 
 		// Send and mine the transaction.
-		backend.Client().SendTransaction(ctx, tx)
+		if err := backend.Client().SendTransaction(ctx, tx); err != nil {
+			t.Errorf("test %q: failed to send transaction: %v", name, err)
+		}
 		backend.Commit()
 
 		select {
@@ -102,7 +103,7 @@ func TestWaitDeployed(t *testing.T) {
 
 func TestWaitDeployedCornerCases(t *testing.T) {
 	backend := simulated.NewBackend(
-		core.GenesisAlloc{
+		types.GenesisAlloc{
 			crypto.PubkeyToAddress(testKey.PublicKey): {Balance: big.NewInt(10000000000000000)},
 		},
 	)
@@ -117,7 +118,9 @@ func TestWaitDeployedCornerCases(t *testing.T) {
 	tx, _ = types.SignTx(tx, types.LatestSigner(params.AllDevChainProtocolChanges), testKey)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	backend.Client().SendTransaction(ctx, tx)
+	if err := backend.Client().SendTransaction(ctx, tx); err != nil {
+		t.Errorf("failed to send transaction: %q", err)
+	}
 	backend.Commit()
 	notContractCreation := errors.New("tx is not contract creation")
 	if _, err := bind.WaitDeployed(ctx, backend.Client(), tx); err.Error() != notContractCreation.Error() {
@@ -135,6 +138,8 @@ func TestWaitDeployedCornerCases(t *testing.T) {
 		}
 	}()
 
-	backend.Client().SendTransaction(ctx, tx)
+	if err := backend.Client().SendTransaction(ctx, tx); err != nil {
+		t.Errorf("failed to send transaction: %q", err)
+	}
 	cancel()
 }

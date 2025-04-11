@@ -20,10 +20,11 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/log"
 	"io"
 	"math/big"
 	"unsafe"
+
+	"github.com/ethereum/go-ethereum/log"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -93,11 +94,16 @@ type Receipt struct {
 	BlockNumber      *big.Int    `json:"blockNumber,omitempty"`
 	TransactionIndex uint        `json:"transactionIndex"`
 
-	// OVM legacy: extend receipts with their L1 price (if a rollup tx)
-	L1GasPrice *big.Int   `json:"l1GasPrice,omitempty"`
-	L1GasUsed  *big.Int   `json:"l1GasUsed,omitempty"`
-	L1Fee      *big.Int   `json:"l1Fee,omitempty"`
-	FeeScalar  *big.Float `json:"l1FeeScalar,omitempty"` // always nil after Ecotone hardfork
+	// Optimism: extend receipts with L1 and operator fee info
+	L1GasPrice          *big.Int   `json:"l1GasPrice,omitempty"`          // Present from pre-bedrock. L1 Basefee after Bedrock
+	L1BlobBaseFee       *big.Int   `json:"l1BlobBaseFee,omitempty"`       // Always nil prior to the Ecotone hardfork
+	L1GasUsed           *big.Int   `json:"l1GasUsed,omitempty"`           // Present from pre-bedrock, deprecated as of Fjord
+	L1Fee               *big.Int   `json:"l1Fee,omitempty"`               // Present from pre-bedrock
+	FeeScalar           *big.Float `json:"l1FeeScalar,omitempty"`         // Present from pre-bedrock to Ecotone. Nil after Ecotone
+	L1BaseFeeScalar     *uint64    `json:"l1BaseFeeScalar,omitempty"`     // Always nil prior to the Ecotone hardfork
+	L1BlobBaseFeeScalar *uint64    `json:"l1BlobBaseFeeScalar,omitempty"` // Always nil prior to the Ecotone hardfork
+	OperatorFeeScalar   *uint64    `json:"operatorFeeScalar,omitempty"`   // Always nil prior to the Isthmus hardfork
+	OperatorFeeConstant *uint64    `json:"operatorFeeConstant,omitempty"` // Always nil prior to the Isthmus hardfork
 }
 
 type receiptMarshaling struct {
@@ -121,6 +127,11 @@ type receiptMarshaling struct {
 	DepositReceiptVersion       *hexutil.Uint64
 	PoPPayoutNonce              *hexutil.Uint64
 	BtcAttributesDepositedNonce *hexutil.Uint64
+	L1BlobBaseFee               *hexutil.Big
+	L1BaseFeeScalar             *hexutil.Uint64
+	L1BlobBaseFeeScalar         *hexutil.Uint64
+	OperatorFeeScalar           *hexutil.Uint64
+	OperatorFeeConstant         *hexutil.Uint64
 }
 
 // receiptRLP is the consensus encoding of a receipt.
@@ -364,7 +375,7 @@ func (r *Receipt) decodeTyped(b []byte) error {
 		return errShortTypedReceipt
 	}
 	switch b[0] {
-	case DynamicFeeTxType, AccessListTxType, BlobTxType:
+	case DynamicFeeTxType, AccessListTxType, BlobTxType, SetCodeTxType:
 		var data receiptRLP
 		err := rlp.DecodeBytes(b[1:], &data)
 		if err != nil {
@@ -516,7 +527,7 @@ func decodeLegacyOptimismReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	for i, log := range stored.Logs {
 		r.Logs[i] = (*Log)(log)
 	}
-	r.Bloom = CreateBloom(Receipts{(*Receipt)(r)})
+	r.Bloom = CreateBloom((*Receipt)(r))
 	// UsingOVM
 	scalar := new(big.Float)
 	if stored.FeeScalar != "" {
@@ -543,12 +554,8 @@ func decodeStoredReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	}
 	r.CumulativeGasUsed = stored.CumulativeGasUsed
 	r.Logs = stored.Logs
-	r.Bloom = CreateBloom(Receipts{(*Receipt)(r)})
-	// NilDepositDataPlaceholder value in *both* DepositNonce and DepositReceiptVersion indicates
-	// it was filled to populate later fields but should be treated as nil
-	if stored.DepositNonce != nil &&
-		!(*(stored.DepositNonce) == NilDepositDataPlaceholder &&
-			*(stored.DepositReceiptVersion) == NilDepositDataPlaceholder) {
+	r.Bloom = CreateBloom((*Receipt)(r))
+	if stored.DepositNonce != nil {
 		r.DepositNonce = stored.DepositNonce
 		r.DepositReceiptVersion = stored.DepositReceiptVersion
 	}
@@ -660,7 +667,7 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, nu
 		}
 	}
 	if config.Optimism != nil && len(txs) >= 2 && config.IsBedrock(new(big.Int).SetUint64(number)) { // need at least an info tx and a non-info tx
-		l1BaseFee, costFunc, feeScalar, err := extractL1GasParams(config, time, txs[0].Data())
+		gasParams, err := extractL1GasParams(config, time, txs[0].Data())
 		if err != nil {
 			return err
 		}
@@ -668,10 +675,25 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, hash common.Hash, nu
 			if txs[i].IsDepositTx() || txs[i].IsPopPayoutTx() || txs[i].IsBtcAttributesDepositedTx() {
 				continue
 			}
-			rs[i].L1GasPrice = l1BaseFee
-			rs[i].L1Fee, rs[i].L1GasUsed = costFunc(txs[i].RollupCostData())
-			rs[i].FeeScalar = feeScalar
+			rs[i].L1GasPrice = gasParams.l1BaseFee
+			rs[i].L1BlobBaseFee = gasParams.l1BlobBaseFee
+			rs[i].L1Fee, rs[i].L1GasUsed = gasParams.costFunc(txs[i].RollupCostData())
+			rs[i].FeeScalar = gasParams.feeScalar
+			rs[i].L1BaseFeeScalar = u32ptrTou64ptr(gasParams.l1BaseFeeScalar)
+			rs[i].L1BlobBaseFeeScalar = u32ptrTou64ptr(gasParams.l1BlobBaseFeeScalar)
+			if gasParams.operatorFeeScalar != nil && gasParams.operatorFeeConstant != nil && (*gasParams.operatorFeeScalar != 0 || *gasParams.operatorFeeConstant != 0) {
+				rs[i].OperatorFeeScalar = u32ptrTou64ptr(gasParams.operatorFeeScalar)
+				rs[i].OperatorFeeConstant = gasParams.operatorFeeConstant
+			}
 		}
 	}
 	return nil
+}
+
+func u32ptrTou64ptr(a *uint32) *uint64 {
+	if a == nil {
+		return nil
+	}
+	b := uint64(*a)
+	return &b
 }
