@@ -568,6 +568,9 @@ func (s *Ethereum) Start() error {
 	// Start the networking layer
 	s.handler.Start(s.p2pServer.MaxPeers)
 
+	// Start the connection manager
+	s.dropper.Start(s.p2pServer, func() bool { return !s.Synced() })
+
 	// start log indexer
 	s.filterMaps.Start()
 	go s.updateFilterMapsHeads()
