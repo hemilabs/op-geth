@@ -234,8 +234,7 @@ type BlockChainConfig struct {
 
 	// This defines the cutoff block for history expiry.
 	// Blocks before this number may be unavailable in the chain database.
-	HistoryPruningCutoffNumber uint64
-	HistoryPruningCutoffHash   common.Hash
+	ChainHistoryMode history.HistoryMode
 }
 
 // triedbConfig derives the configures for trie database.
@@ -1097,7 +1096,7 @@ func (bc *BlockChain) loadLastState() error {
 func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 	freezerTail, _ := bc.db.Tail()
 
-	switch bc.cfg.ChainHistoryMode {
+	switch bc.cacheConfig.ChainHistoryMode {
 	case history.KeepAll:
 		if freezerTail == 0 {
 			return nil
@@ -1107,7 +1106,7 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 		predefinedPoint := history.PrunePoints[bc.genesisBlock.Hash()]
 		if predefinedPoint == nil || freezerTail != predefinedPoint.BlockNumber {
 			log.Error("Chain history database is pruned with unknown configuration", "tail", freezerTail)
-			return errors.New("unexpected database tail")
+			return fmt.Errorf("unexpected database tail")
 		}
 		bc.historyPrunePoint.Store(predefinedPoint)
 		return nil
@@ -1118,23 +1117,23 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 			// postmerge directly on an existing DB. We could just trigger the pruning
 			// here, but it'd be a bit dangerous since they may not have intended this
 			// action to happen. So just tell them how to do it.
-			log.Error(fmt.Sprintf("Chain history mode is configured as %q, but database is not pruned.", bc.cfg.ChainHistoryMode.String()))
+			log.Error(fmt.Sprintf("Chain history mode is configured as %q, but database is not pruned.", bc.cacheConfig.ChainHistoryMode.String()))
 			log.Error(fmt.Sprintf("Run 'geth prune-history' to prune pre-merge history."))
-			return errors.New("history pruning requested via configuration")
+			return fmt.Errorf("history pruning requested via configuration")
 		}
 		predefinedPoint := history.PrunePoints[bc.genesisBlock.Hash()]
 		if predefinedPoint == nil {
 			log.Error("Chain history pruning is not supported for this network", "genesis", bc.genesisBlock.Hash())
-			return errors.New("history pruning requested for unknown network")
-		} else if freezerTail > 0 && freezerTail != predefinedPoint.BlockNumber {
+			return fmt.Errorf("history pruning requested for unknown network")
+		} else if freezerTail != predefinedPoint.BlockNumber {
 			log.Error("Chain history database is pruned to unknown block", "tail", freezerTail)
-			return errors.New("unexpected database tail")
+			return fmt.Errorf("unexpected database tail")
 		}
 		bc.historyPrunePoint.Store(predefinedPoint)
 		return nil
 
 	default:
-		return fmt.Errorf("invalid history mode: %d", bc.cfg.ChainHistoryMode)
+		return fmt.Errorf("invalid history mode: %d", bc.cacheConfig.ChainHistoryMode)
 	}
 }
 

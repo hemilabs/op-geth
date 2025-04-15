@@ -20,13 +20,16 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		Genesis                 *core.Genesis `toml:",omitempty"`
 		NetworkId               uint64
 		SyncMode                SyncMode
-		HistoryMode             HistoryMode
+		HistoryMode             history.HistoryMode
 		EthDiscoveryURLs        []string
 		SnapDiscoveryURLs       []string
 		NoPruning               bool
 		NoPrefetch              bool
-		TxLookupLimit           uint64                 `toml:",omitempty"`
-		TransactionHistory      uint64                 `toml:",omitempty"`
+		TxLookupLimit           uint64 `toml:",omitempty"`
+		TransactionHistory      uint64 `toml:",omitempty"`
+		LogHistory              uint64 `toml:",omitempty"`
+		LogNoHistory            bool   `toml:",omitempty"`
+		LogExportCheckpoints    string
 		StateHistory            uint64                 `toml:",omitempty"`
 		StateScheme             string                 `toml:",omitempty"`
 		RequiredBlocks          map[uint64]common.Hash `toml:"-"`
@@ -126,13 +129,16 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		Genesis                 *core.Genesis `toml:",omitempty"`
 		NetworkId               *uint64
 		SyncMode                *SyncMode
-		HistoryMode             *HistoryMode
+		HistoryMode             *history.HistoryMode
 		EthDiscoveryURLs        []string
 		SnapDiscoveryURLs       []string
 		NoPruning               *bool
 		NoPrefetch              *bool
-		TxLookupLimit           *uint64                `toml:",omitempty"`
-		TransactionHistory      *uint64                `toml:",omitempty"`
+		TxLookupLimit           *uint64 `toml:",omitempty"`
+		TransactionHistory      *uint64 `toml:",omitempty"`
+		LogHistory              *uint64 `toml:",omitempty"`
+		LogNoHistory            *bool   `toml:",omitempty"`
+		LogExportCheckpoints    *string
 		StateHistory            *uint64                `toml:",omitempty"`
 		StateScheme             *string                `toml:",omitempty"`
 		RequiredBlocks          map[uint64]common.Hash `toml:"-"`
