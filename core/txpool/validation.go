@@ -191,7 +191,28 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
 	}
 	if tx.Type() == types.BlobTxType {
-		return validateBlobTx(tx, head, opts)
+		// Ensure the blob fee cap satisfies the minimum blob gas price
+		if tx.BlobGasFeeCapIntCmp(blobTxMinBlobGasPrice) < 0 {
+			return fmt.Errorf("%w: blob fee cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.BlobGasFeeCap(), blobTxMinBlobGasPrice)
+		}
+		sidecar := tx.BlobTxSidecar()
+		if sidecar == nil {
+			return errors.New("missing sidecar in blob transaction")
+		}
+		// Ensure the number of items in the blob transaction and various side
+		// data match up before doing any expensive validations
+		hashes := tx.BlobHashes()
+		if len(hashes) == 0 {
+			return errors.New("blobless blob transaction")
+		}
+		maxBlobs := eip4844.MaxBlobsPerBlock(opts.Config, head.Time)
+		if len(hashes) > maxBlobs {
+			return fmt.Errorf("too many blobs in transaction: have %d, permitted %d", len(hashes), maxBlobs)
+		}
+		// Ensure commitments, proofs and hashes are valid
+		if err := validateBlobSidecar(hashes, sidecar); err != nil {
+			return err
+		}
 	}
 	if tx.Type() == types.SetCodeTxType {
 		if len(tx.SetCodeAuthorizations()) == 0 {
