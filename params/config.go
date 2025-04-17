@@ -1305,66 +1305,10 @@ func (c *ChainConfig) LatestFork(time uint64) forks.Fork {
 	}
 }
 
-// BlobConfig returns the blob config associated with the provided fork.
-func (c *ChainConfig) BlobConfig(fork forks.Fork) *BlobConfig {
-	// TODO: https://github.com/ethereum-optimism/op-geth/issues/685
-	// This function has a bug.
-	switch fork {
-	case forks.BPO5:
-		return c.BlobScheduleConfig.BPO5
-	case forks.BPO4:
-		return c.BlobScheduleConfig.BPO4
-	case forks.BPO3:
-		return c.BlobScheduleConfig.BPO3
-	case forks.BPO2:
-		return c.BlobScheduleConfig.BPO2
-	case forks.BPO1:
-		return c.BlobScheduleConfig.BPO1
-	case forks.Osaka:
-		return c.BlobScheduleConfig.Osaka
-	case forks.Prague:
-		return c.BlobScheduleConfig.Prague
-	case forks.Cancun:
-		return c.BlobScheduleConfig.Cancun
-	default:
-		return nil
-	}
-}
-
-// ActiveSystemContracts returns the currently active system contracts at the
-// given timestamp.
-func (c *ChainConfig) ActiveSystemContracts(time uint64) map[string]common.Address {
-	fork := c.LatestFork(time)
-	active := make(map[string]common.Address)
-	if fork >= forks.Osaka {
-		// no new system contracts
-	}
-	if fork >= forks.Prague {
-		active["CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS"] = ConsolidationQueueAddress
-		active["DEPOSIT_CONTRACT_ADDRESS"] = c.DepositContractAddress
-		active["HISTORY_STORAGE_ADDRESS"] = HistoryStorageAddress
-		active["WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS"] = WithdrawalQueueAddress
-	}
-	if fork >= forks.Cancun {
-		active["BEACON_ROOTS_ADDRESS"] = BeaconRootsAddress
-	}
-	return active
-}
-
 // Timestamp returns the timestamp associated with the fork or returns nil if
 // the fork isn't defined or isn't a time-based fork.
 func (c *ChainConfig) Timestamp(fork forks.Fork) *uint64 {
 	switch {
-	case fork == forks.BPO5:
-		return c.BPO5Time
-	case fork == forks.BPO4:
-		return c.BPO4Time
-	case fork == forks.BPO3:
-		return c.BPO3Time
-	case fork == forks.BPO2:
-		return c.BPO2Time
-	case fork == forks.BPO1:
-		return c.BPO1Time
 	case fork == forks.Osaka:
 		return c.OsakaTime
 	case fork == forks.Prague:
