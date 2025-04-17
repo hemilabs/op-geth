@@ -2100,11 +2100,8 @@ func (pool *LegacyPool) Clear() {
 	for addr := range pool.queue {
 		pool.reserver.Release(addr)
 	}
-	for addr := range pool.queue {
-		pool.reserver.Release(addr)
-	}
 	pool.all.Clear()
-	pool.priced.Reheap()
+	pool.priced = newPricedList(pool.all)
 	pool.pending = make(map[common.Address]*list)
 	pool.queue = make(map[common.Address]*list)
 	pool.pendingNonces = newNoncer(pool.currentState)
