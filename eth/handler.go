@@ -491,9 +491,10 @@ func (h *handler) BroadcastTransactions(txs types.Transactions) {
 		txset = make(map[*ethPeer][]common.Hash) // Set peer->hash to transfer directly
 		annos = make(map[*ethPeer][]common.Hash) // Set peer->hash to announce
 
-		signer = types.LatestSigner(h.chain.Config())
-		choice = newBroadcastChoice(h.nodeID, h.txBroadcastKey)
-		peers  = h.peers.all()
+	var (
+		signer = types.LatestSigner(h.chain.Config()) // Don't care about chain status, we just need *a* sender
+		hasher = crypto.NewKeccakState()
+		hash   = make([]byte, 32)
 	)
 
 	for _, tx := range txs {
