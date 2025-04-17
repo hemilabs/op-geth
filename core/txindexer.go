@@ -199,81 +199,17 @@ func (indexer *txIndexer) repair(head uint64) {
 	}
 }
 
-// repair ensures that transaction indexes are in a valid state and invalidates
-// them if they are not. The following cases are considered invalid:
-// * The index tail is higher than the chain head.
-// * The chain head is below the configured cutoff, but the index tail is not empty.
-// * The index tail is below the configured cutoff, but it is not empty.
-func (indexer *txIndexer) repair(head uint64) {
-	// If the transactions haven't been indexed yet, nothing to repair
-	tail := rawdb.ReadTxIndexTail(indexer.db)
-	if tail == nil {
-		return
-	}
-	// The transaction index tail is higher than the chain head, which may occur
-	// when the chain is rewound to a historical height below the index tail.
-	// Purge the transaction indexes from the database. **It's not a common case
-	// to rewind the chain head below the index tail**.
-	if *tail > head {
-		// A crash may occur between the two delete operations,
-		// potentially leaving dangling indexes in the database.
-		// However, this is considered acceptable.
-		indexer.tail.Store(nil)
-		rawdb.DeleteTxIndexTail(indexer.db)
-		rawdb.DeleteAllTxLookupEntries(indexer.db, nil)
-		log.Warn("Purge transaction indexes", "head", head, "tail", *tail)
-		return
-	}
-
-	// If the entire chain is below the configured cutoff point,
-	// removing the tail of transaction indexing and purges the
-	// transaction indexes. **It's not a common case, as the cutoff
-	// is usually defined below the chain head**.
-	if head < indexer.cutoff {
-		// A crash may occur between the two delete operations,
-		// potentially leaving dangling indexes in the database.
-		// However, this is considered acceptable.
-		//
-		// The leftover indexes can't be unindexed by scanning
-		// the blocks as they are not guaranteed to be available.
-		// Traversing the database directly within the transaction
-		// index namespace might be slow and expensive, but we
-		// have no choice.
-		indexer.tail.Store(nil)
-		rawdb.DeleteTxIndexTail(indexer.db)
-		rawdb.DeleteAllTxLookupEntries(indexer.db, nil)
-		log.Warn("Purge transaction indexes", "head", head, "cutoff", indexer.cutoff)
-		return
-	}
-
-	// The chain head is above the cutoff while the tail is below the
-	// cutoff. Shift the tail to the cutoff point and remove the indexes
-	// below.
-	if *tail < indexer.cutoff {
-		// A crash may occur between the two delete operations,
-		// potentially leaving dangling indexes in the database.
-		// However, this is considered acceptable.
-		indexer.tail.Store(&indexer.cutoff)
-		rawdb.WriteTxIndexTail(indexer.db, indexer.cutoff)
-		rawdb.DeleteAllTxLookupEntries(indexer.db, func(txhash common.Hash, blob []byte) bool {
-			n := rawdb.DecodeTxLookupEntry(blob, indexer.db)
-			return n != nil && *n < indexer.cutoff
-		})
-		log.Warn("Purge transaction indexes below cutoff", "tail", *tail, "cutoff", indexer.cutoff)
-	}
-}
-
 // resolveHead resolves the block number of the current chain head.
 func (indexer *txIndexer) resolveHead() uint64 {
 	headBlockHash := rawdb.ReadHeadBlockHash(indexer.db)
 	if headBlockHash == (common.Hash{}) {
 		return 0
 	}
-	headBlockNumber, ok := rawdb.ReadHeaderNumber(indexer.db, headBlockHash)
-	if !ok {
+	headBlockNumber := rawdb.ReadHeaderNumber(indexer.db, headBlockHash)
+	if headBlockNumber == nil {
 		return 0
 	}
-	return headBlockNumber
+	return *headBlockNumber
 }
 
 // loop is the scheduler of the indexer, assigning indexing/unindexing tasks depending
@@ -283,9 +219,9 @@ func (indexer *txIndexer) loop(chain *BlockChain) {
 
 	// Listening to chain events and manipulate the transaction indexes.
 	var (
-		stop chan struct{}                                 // Non-nil if background routine is active
-		done chan struct{}                                 // Non-nil if background routine is active
-		head = rawdb.ReadHeadBlock(indexer.db).NumberU64() // The latest announced chain head
+		stop chan struct{}           // Non-nil if background routine is active
+		done chan struct{}           // Non-nil if background routine is active
+		head = indexer.resolveHead() // The latest announced chain head
 
 		headCh = make(chan ChainHeadEvent)
 		sub    = chain.SubscribeChainHeadEvent(headCh)
