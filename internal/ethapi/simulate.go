@@ -347,10 +347,12 @@ func (sim *simulator) processBlock(ctx context.Context, block *simBlock, header,
 		}
 		// EIP-7002
 		if err := core.ProcessWithdrawalQueue(&requests, evm); err != nil {
-			return nil, nil, nil, nil, err
+			return nil, nil, err
 		}
 		// EIP-7251
-		core.ProcessConsolidationQueue(&requests, evm)
+		if err := core.ProcessConsolidationQueue(&requests, evm); err != nil {
+			return nil, nil, err
+		}
 	}
 	if requests != nil {
 		reqHash := types.CalcRequestsHash(requests)

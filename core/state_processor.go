@@ -117,16 +117,12 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		}
 		// EIP-7002
 		if err := ProcessWithdrawalQueue(&requests, evm); err != nil {
-			return nil, fmt.Errorf("failed to process withdrawal queue: %w", err)
+			return nil, err
 		}
 		// EIP-7251
 		if err := ProcessConsolidationQueue(&requests, evm); err != nil {
-			return nil, fmt.Errorf("failed to process consolidation queue: %w", err)
+			return nil, err
 		}
-	}
-
-	if isIsthmus {
-		requests = [][]byte{}
 	}
 
 	// Finalize the block, applying any consensus engine specific extras (e.g. block rewards)
