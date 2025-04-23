@@ -1576,7 +1576,8 @@ func SetNodeConfig(ctx *cli.Context, cfg *node.Config) {
 		cfg.USB = ctx.Bool(USBFlag.Name)
 	}
 	if ctx.IsSet(InsecureUnlockAllowedFlag.Name) {
-		log.Warn(fmt.Sprintf("Option %q is deprecated and has no effect", InsecureUnlockAllowedFlag.Name))
+		log.Warn(fmt.Sprintf("Option %q is deprecated", InsecureUnlockAllowedFlag.Name))
+		cfg.InsecureUnlockAllowed = ctx.Bool(InsecureUnlockAllowedFlag.Name)
 	}
 	if ctx.IsSet(DBEngineFlag.Name) {
 		dbEngine := ctx.String(DBEngineFlag.Name)
