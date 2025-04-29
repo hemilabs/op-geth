@@ -21,12 +21,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
 	"math/big"
 	"runtime"
 	"sync"
 	"time"
+
+	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/service/tbc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -421,6 +422,10 @@ func (s *Ethereum) APIs() []rpc.API {
 		}, {
 			Namespace: "net",
 			Service:   s.netRPCService,
+		},
+		{
+			Namespace: "kss",
+			Service:   ethapi.NewHemiAPI(),
 		},
 	}...)
 }
