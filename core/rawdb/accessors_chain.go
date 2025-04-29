@@ -992,7 +992,6 @@ func l2KeystoneToKey(l2Keystone hemi.L2Keystone) []byte {
 	}
 
 	key := fmt.Sprintf("%s-%s", l2KeystonePrefix, hex.EncodeToString(buf))
-	fmt.Printf("the keys is %s\n", key)
 	return []byte(key)
 }
 
