@@ -18,6 +18,7 @@ package ethapi
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -48,6 +49,8 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/hemilabs/heminetwork/api/protocol"
+	"github.com/hemilabs/heminetwork/hemi"
 	"github.com/holiman/uint256"
 	"github.com/tyler-smith/go-bip39"
 )
@@ -2352,13 +2355,65 @@ func (api *DebugAPI) ChainConfig() *params.ChainConfig {
 type HemiAPI struct {
 }
 
-// NewNetAPI creates a new net API instance.
+// NewHemiAPI creates a new net API instance.
 func NewHemiAPI() *HemiAPI {
 	return &HemiAPI{}
 }
 
-func (api *HemiAPI) TestFunc() string {
-	return "This is a test function!"
+type L2KeystoneResponse struct {
+	L2Keystones []hemi.L2Keystone `json:"keystones"`
+	Error       *protocol.Error   `json:"error,omitempty"`
+}
+
+func digest256(x []byte) []byte {
+	xx := sha256.Sum256(x)
+	return xx[:]
+}
+
+func (api *HemiAPI) GetKeystones(count int) L2KeystoneResponse {
+	l2Keystone := hemi.L2Keystone{
+		Version:            1,
+		L1BlockNumber:      0xbadc0ffe,
+		L2BlockNumber:      uint32(10),
+		ParentEPHash:       digest256([]byte{1, 1, 3, 7}),
+		PrevKeystoneEPHash: digest256([]byte{0x04, 0x20, 69}),
+		StateRoot:          digest256([]byte("Hello, world!")),
+		EPHash:             digest256([]byte{0xaa, 0x55}),
+	}
+
+	kss := make([]hemi.L2Keystone, 0, count)
+	for range count {
+		kss = append(kss, l2Keystone)
+	}
+
+	resp := L2KeystoneResponse{L2Keystones: kss}
+
+	return resp
+}
+
+// Logs creates a subscription that fires for all new log that match the given filter criteria.
+func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error) {
+	notifier, supported := rpc.NotifierFromContext(ctx)
+	if !supported {
+		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
+	}
+
+	rpcSub := notifier.CreateSubscription()
+
+	go func() {
+		for {
+			select {
+			case <-time.After(5 * time.Second):
+				notifier.Notify(rpcSub.ID, "New Keystone Available")
+			case <-rpcSub.Err(): // client send an unsubscribe request
+				return
+			case <-notifier.Closed(): // connection dropped
+				return
+			}
+		}
+	}()
+
+	return rpcSub, nil
 }
 
 // NetAPI offers network related RPC methods
