@@ -20,9 +20,11 @@ package catalyst
 import (
 	"errors"
 	"fmt"
-	"github.com/ethereum/go-ethereum/consensus"
 	"sync"
 	"time"
+
+	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/hemilabs/heminetwork/hemi"
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
@@ -222,6 +224,20 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV3(update engine.ForkchoiceStateV1, pa
 	// forkchoiceUpdate into a function that only updates the head and then a
 	// function that kicks off block construction.
 	return api.forkchoiceUpdated(update, params, engine.PayloadV3, false)
+}
+
+var availableKeystones = []hemi.L2Keystone{}
+
+func (api *ConsensusAPI) newKeystone(keystone hemi.L2Keystone) error {
+	availableKeystones = append(availableKeystones, keystone)
+	// apis := api.eth.APIs()
+	// for _, api := range apis {
+	// 	if api.Namespace == "kss" {
+	// 		kssApi := api.Service.(*ethapi.HemiAPI)
+	// 		kssApi.
+	// 	}
+	// }
+	return nil
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, simulatorMode bool) (engine.ForkChoiceResponse, error) {
