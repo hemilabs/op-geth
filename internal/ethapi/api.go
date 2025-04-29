@@ -2054,12 +2054,14 @@ func (api *DebugAPI) ChainConfig() *params.ChainConfig {
 }
 
 // KeystoneAPI offers HEMI keystone related RPC methods
+// XXX Add mutex
 type HemiAPI struct {
+	subscriptions map[rpc.ID]chan string
 }
 
 // NewHemiAPI creates a new net API instance.
 func NewHemiAPI() *HemiAPI {
-	return &HemiAPI{}
+	return &HemiAPI{subscriptions: make(map[rpc.ID]chan string)}
 }
 
 type L2KeystoneResponse struct {
@@ -2093,7 +2095,7 @@ func (api *HemiAPI) GetKeystones(count int) L2KeystoneResponse {
 	return resp
 }
 
-// Logs creates a subscription that fires for all new log that match the given filter criteria.
+// NewKeystones creates a subscription that notifies a pop miner when a new keystone is available.
 func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error) {
 	notifier, supported := rpc.NotifierFromContext(ctx)
 	if !supported {
@@ -2101,11 +2103,16 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 	}
 
 	rpcSub := notifier.CreateSubscription()
+	subCh := make(chan string, 10)
+	api.subscriptions[rpcSub.ID] = subCh
 
 	go func() {
+		defer func() {
+			delete(api.subscriptions, rpcSub.ID)
+		}()
 		for {
 			select {
-			case <-time.After(5 * time.Second):
+			case <-subCh:
 				notifier.Notify(rpcSub.ID, "New Keystone Available")
 			case <-rpcSub.Err(): // client send an unsubscribe request
 				return
