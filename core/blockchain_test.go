@@ -4362,6 +4362,53 @@ func TestL2Keystones(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("test l2 keystones insert more than two bytes", func(t *testing.T) {
+		_, _, blockchain, err := newCanonical(ethash.NewFaker(), 10, true, rawdb.HashScheme)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for i := 122500; i <= 122511; i++ {
+			l2Keystone := hemi.L2Keystone{
+				Version:            1,
+				L1BlockNumber:      5,
+				L2BlockNumber:      uint32(i),
+				ParentEPHash:       fillOutBytes("v1parentephash", 32),
+				PrevKeystoneEPHash: fillOutBytes("v1prevkeystoneephash", 32),
+				StateRoot:          fillOutBytes("v1stateroot", 32),
+				EPHash:             fillOutBytes("v1ephash", 32),
+			}
+
+			if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		l2Keystones, err := blockchain.GetMostRecentKeystones(5)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(l2Keystones) != 5 {
+			t.Fatalf("unexpected length: %d", len(l2Keystones))
+		}
+
+		// this needs to be more robust; check more than just the l2 block number
+		expected := map[int]uint32{
+			0: 122511,
+			1: 122510,
+			2: 122509,
+			3: 122508,
+			4: 122507,
+		}
+
+		for k, v := range expected {
+			if l2Keystones[k].L2BlockNumber != v {
+				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
+			}
+		}
+	})
 }
 
 func fillOutBytes(prefix string, size int) []byte {
