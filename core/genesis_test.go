@@ -18,6 +18,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"math/big"
 	"reflect"
@@ -122,7 +123,7 @@ func testSetupGenesis(t *testing.T, scheme string) {
 				tdb := triedb.NewDatabase(db, newDbConfig(scheme))
 				oldcustomg.Commit(db, tdb)
 
-				bc, _ := NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), &oldcustomg, nil, ethash.NewFullFaker(), vm.Config{}, nil)
+				bc, _ := NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), &oldcustomg, nil, ethash.NewFullFaker(), vm.Config{}, nil, nil, context.Background())
 				defer bc.Stop()
 
 				_, blocks, _ := GenerateChainWithGenesis(&oldcustomg, ethash.NewFaker(), 4, nil)

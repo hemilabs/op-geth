@@ -17,6 +17,7 @@
 package core
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"math/big"
 	"testing"
@@ -200,7 +201,7 @@ func benchInsertChain(b *testing.B, disk bool, gen func(int, *BlockGen)) {
 
 	// Time the insertion of the new chain.
 	// State and blocks are stored in the same DB.
-	chainman, _ := NewBlockChain(db, nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil)
+	chainman, _ := NewBlockChain(db, nil, gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil, context.Background())
 	defer chainman.Stop()
 	b.ReportAllocs()
 	b.ResetTimer()
@@ -336,9 +337,7 @@ func benchReadChain(b *testing.B, full bool, count uint64) {
 		if err != nil {
 			b.Fatalf("error opening database: %v", err)
 		}
-		db = rawdb.NewDatabase(pdb)
-
-		chain, err := NewBlockChain(db, &cacheConfig, genesis, nil, ethash.NewFaker(), vm.Config{}, nil)
+		chain, err := NewBlockChain(db, &cacheConfig, genesis, nil, ethash.NewFaker(), vm.Config{}, nil, nil, context.Background())
 		if err != nil {
 			b.Fatalf("error creating chain: %v", err)
 		}
