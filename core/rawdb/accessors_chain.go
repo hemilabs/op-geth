@@ -19,6 +19,8 @@ package rawdb
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/big"
@@ -31,6 +33,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/hemilabs/heminetwork/hemi"
 	"golang.org/x/exp/slices"
 )
 
@@ -972,4 +975,59 @@ func ReadHeadBlock(db ethdb.Reader) *types.Block {
 		return nil
 	}
 	return ReadBlock(db, headBlockHash, *headBlockNumber)
+}
+
+const l2KeystonePrefix = "l2keystone"
+
+func l2KeystoneToKey(l2Keystone hemi.L2Keystone) []byte {
+	buf := make([]byte, 8)
+
+	_, err := binary.Encode(buf, binary.BigEndian, uint64(l2Keystone.L2BlockNumber))
+	if err != nil {
+		panic(err)
+	}
+
+	for i, b := range buf {
+		buf[i] = b ^ 0xFF
+	}
+
+	key := fmt.Sprintf("%s-%s", l2KeystonePrefix, hex.EncodeToString(buf))
+	fmt.Printf("the keys is %s\n", key)
+	return []byte(key)
+}
+
+func WriteL2Keystone(db ethdb.KeyValueWriter, l2Keystone hemi.L2Keystone) error {
+	b, err := json.Marshal(&l2Keystone)
+	if err != nil {
+		return err
+	}
+
+	if err := db.Put(l2KeystoneToKey(l2Keystone), b); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func ReadMostRecentL2Keystones(db ethdb.Iteratee, count uint) ([]hemi.L2Keystone, error) {
+	if count > 100 {
+		return nil, errors.New("count too large")
+	}
+
+	results := []hemi.L2Keystone{}
+
+	it := db.NewIterator([]byte(l2KeystonePrefix), nil)
+	for it.Next() {
+		var l2Keystone hemi.L2Keystone
+		if err := json.Unmarshal(it.Value(), &l2Keystone); err != nil {
+			return nil, err
+		}
+
+		results = append(results, l2Keystone)
+		if len(results) >= int(count) {
+			return results, nil
+		}
+	}
+
+	return results, nil
 }

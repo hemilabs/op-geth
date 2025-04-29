@@ -36,6 +36,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/hemi"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/net/context"
 
@@ -2068,7 +2069,7 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	if len(headersToAdd) > 8 {
 		headersToAdd = headersToAdd[0:8]
 	}
-	log.Info(fmt.Sprintf("Headers to add while generating Bitcoin Attributes Deposited transaction: %d", headersToAdd))
+	log.Info(fmt.Sprintf("Headers to add while generating Bitcoin Attributes Deposited transaction: %x", headersToAdd))
 
 	// Walk up headersToAdd, and truncate blocks that TBC Full Node does not have complete information for
 	for i := 0; i < len(headersToAdd); i++ {
@@ -2646,7 +2647,7 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header, updateFull
 	if currentHead == nil {
 		log.Error(fmt.Sprintf("currentHead is nil, but should have been %x", currentHeadHash[:]))
 	} else {
-		log.Debug(fmt.Sprintf("Going to look for ancestor of %d @ %s and %d @ %s", newHead.Hash().String(),
+		log.Debug(fmt.Sprintf("Going to look for ancestor of %s @ %d and %s @ %d", newHead.Hash().String(),
 			newHead.Number.Uint64(), currentHead.Hash().String(), currentHead.Number.Uint64()))
 	}
 
@@ -4903,4 +4904,20 @@ func bytes2Header(header [80]byte) (*wire.BlockHeader, error) {
 		return nil, fmt.Errorf("deserialize block header: %w", err)
 	}
 	return &bh, nil
+}
+
+func (bc *BlockChain) InsertL2Keystone(l2Keystone hemi.L2Keystone) error {
+	if err := rawdb.WriteL2Keystone(bc.db, l2Keystone); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (bc *BlockChain) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	if count > 10 {
+		return nil, errors.New("count too large")
+	}
+
+	return rawdb.ReadMostRecentL2Keystones(bc.db, count)
 }
