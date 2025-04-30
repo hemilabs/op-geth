@@ -4,7 +4,7 @@ ARG VERSION=""
 ARG BUILDNUM=""
 
 # Build Geth in a stock Go builder container
-FROM golang:1.23.4-alpine@sha256:20c0c5ccf7c851ecde9f0664404213adabe2b47f34e5292bfbeaca203241836c as builder
+FROM golang:1.24.2-alpine3.21@sha256:7772cb5322baa875edd74705556d08f0eeca7b9c4b5367754ce3f2f00041ccee as builder
 
 RUN apk add --no-cache gcc musl-dev linux-headers git ca-certificates tzdata
 
