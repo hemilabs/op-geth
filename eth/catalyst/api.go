@@ -313,17 +313,11 @@ func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV3(update engine.Forkchoice
 	return api.forkchoiceUpdated(update, params, engine.PayloadV3, true)
 }
 
-var availableKeystones = []hemi.L2Keystone{}
-
-func (api *ConsensusAPI) newKeystone(keystone hemi.L2Keystone) error {
-	availableKeystones = append(availableKeystones, keystone)
-	// apis := api.eth.APIs()
-	// for _, api := range apis {
-	// 	if api.Namespace == "kss" {
-	// 		kssApi := api.Service.(*ethapi.HemiAPI)
-	// 		kssApi.
-	// 	}
-	// }
+func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) error {
+	if err := api.eth.BlockChain().InsertL2Keystone(keystone); err != nil {
+		return err
+	}
+	api.eth.KeystoneFeed().Send("New Keystone Available")
 	return nil
 }
 

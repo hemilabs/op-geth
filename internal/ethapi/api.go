@@ -18,7 +18,6 @@ package ethapi
 
 import (
 	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -2056,42 +2055,28 @@ func (api *DebugAPI) ChainConfig() *params.ChainConfig {
 // KeystoneAPI offers HEMI keystone related RPC methods
 // XXX Add mutex
 type HemiAPI struct {
-	subscriptions map[rpc.ID]chan string
+	b Backend
 }
 
 // NewHemiAPI creates a new net API instance.
-func NewHemiAPI() *HemiAPI {
-	return &HemiAPI{subscriptions: make(map[rpc.ID]chan string)}
+func NewHemiAPI(b Backend) *HemiAPI {
+	return &HemiAPI{b: b}
 }
 
+// XXX make this import when hemi refactor is complete
 type L2KeystoneResponse struct {
 	L2Keystones []hemi.L2Keystone `json:"keystones"`
 	Error       *protocol.Error   `json:"error,omitempty"`
 }
 
-func digest256(x []byte) []byte {
-	xx := sha256.Sum256(x)
-	return xx[:]
-}
-
-func (api *HemiAPI) GetKeystones(count int) L2KeystoneResponse {
-	l2Keystone := hemi.L2Keystone{
-		Version:            1,
-		L1BlockNumber:      0xbadc0ffe,
-		L2BlockNumber:      uint32(10),
-		ParentEPHash:       digest256([]byte{1, 1, 3, 7}),
-		PrevKeystoneEPHash: digest256([]byte{0x04, 0x20, 69}),
-		StateRoot:          digest256([]byte("Hello, world!")),
-		EPHash:             digest256([]byte{0xaa, 0x55}),
-	}
-
-	kss := make([]hemi.L2Keystone, 0, count)
-	for range count {
-		kss = append(kss, l2Keystone)
+func (api *HemiAPI) GetKeystones(count uint) L2KeystoneResponse {
+	kss, err := api.b.GetMostRecentKeystones(count)
+	if err != nil {
+		resp := L2KeystoneResponse{Error: protocol.Errorf("internal op-geth error")}
+		return resp
 	}
 
 	resp := L2KeystoneResponse{L2Keystones: kss}
-
 	return resp
 }
 
@@ -2104,16 +2089,16 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 
 	rpcSub := notifier.CreateSubscription()
 	subCh := make(chan string, 10)
-	api.subscriptions[rpcSub.ID] = subCh
+	feedSub := api.b.KeystoneFeed().Subscribe(subCh)
 
 	go func() {
 		defer func() {
-			delete(api.subscriptions, rpcSub.ID)
+			feedSub.Unsubscribe()
 		}()
 		for {
 			select {
-			case <-subCh:
-				notifier.Notify(rpcSub.ID, "New Keystone Available")
+			case notif := <-subCh:
+				notifier.Notify(rpcSub.ID, notif)
 			case <-rpcSub.Err(): // client send an unsubscribe request
 				return
 			case <-notifier.Closed(): // connection dropped
