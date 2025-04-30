@@ -2089,7 +2089,12 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 
 	rpcSub := notifier.CreateSubscription()
 	subCh := make(chan string, 10)
-	feedSub := api.b.KeystoneFeed().Subscribe(subCh)
+	kf := api.b.KeystoneFeed()
+	if kf == nil {
+		log.Info("subscription attempt during opgeth shutdown")
+		return nil, nil
+	}
+	feedSub := kf.Subscribe(subCh)
 
 	go func() {
 		defer func() {

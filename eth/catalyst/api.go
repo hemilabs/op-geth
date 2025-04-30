@@ -313,12 +313,17 @@ func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV3(update engine.Forkchoice
 	return api.forkchoiceUpdated(update, params, engine.PayloadV3, true)
 }
 
-func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) error {
+func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) (engine.KeystoneStatus, error) {
 	if err := api.eth.BlockChain().InsertL2Keystone(keystone); err != nil {
-		return err
+		return engine.KeystoneStatus{Status: engine.INVALID, ValidationError: err.Error()}, err
 	}
-	api.eth.KeystoneFeed().Send("New Keystone Available")
-	return nil
+	kf := api.eth.KeystoneFeed()
+	if kf == nil {
+		return engine.KeystoneStatus{Status: engine.INVALID, ValidationError: "subscription send during opgeth shutdown"}, nil
+	}
+	kf.Send("New Keystone Available")
+
+	return engine.KeystoneStatus{Status: engine.VALID}, nil
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
