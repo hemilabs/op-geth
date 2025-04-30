@@ -71,6 +71,8 @@ var TBCFullNodeCtxCancel context.CancelFunc
 var TBCFullNode *tbc.Server
 var tbcChainParams *chaincfg.Params
 
+var TBCUpstreamTip *wire.BlockHeader
+
 // TODO: Refactor all exported TBC methods to always use this context instead of allowing one to be passed in?
 var MainCtx context.Context
 
@@ -362,8 +364,9 @@ func FixMismatchedIndexesIfRequired(ctx context.Context) {
 }
 
 // TBCIndexToHeader is a convenience pass-through to TBCIndexToHashHeight with
-// a Bitcoin header provided.
-func TBCIndexToHeader(header *wire.BlockHeader) error {
+// a Bitcoin header provided, and also updates the known upstream consensus tip
+// that index advancement is based on.
+func TBCIndexToHeader(header *wire.BlockHeader, upstreamTip *wire.BlockHeader) error {
 	targetHash := header.BlockHash()
 	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(MainCtx, targetHash)
 	if err != nil {
@@ -378,7 +381,16 @@ func TBCIndexToHeader(header *wire.BlockHeader) error {
 		Height: targetHeight,
 	}
 
-	return TBCIndexToHashHeight(&hh)
+	err = TBCIndexToHashHeight(&hh)
+	if err != nil {
+		log.Error(fmt.Sprintf("Unable to advance TBC index to header %s with upstream tip %s",
+			header.BlockHash().String(), upstreamTip.BlockHash().String()))
+		return err
+	} else {
+		// Indexing was successful, now update upstream tip
+		TBCUpstreamTip = upstreamTip
+		return nil
+	}
 }
 
 func hashHeightForHeader(ctx context.Context, header *wire.BlockHeader) (*tbc.HashHeight, error) {
@@ -882,10 +894,9 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		return nil, err
 	}
 
-	heightBest, _, err := TBCFullNode.BlockHeaderBest(MainCtx)
+	_, heightBest, err := TBCFullNode.BlockHeaderByHash(MainCtx, TBCUpstreamTip.BlockHash())
 	if err != nil {
-		log.Error("Unable to get best block header")
-		return nil, err
+		log.Error("hVM precompile unable to get header of upstream best tip", "err", err)
 	}
 
 	resp := make([]byte, 4)
