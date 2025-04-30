@@ -170,4 +170,6 @@ exclude google.golang.org/genproto v0.0.0-20180817151627-c66870c02cf8
 
 exclude google.golang.org/genproto v0.0.0-20180518175338-11a468237815
 
+exclude google.golang.org/genproto v0.0.0-20230227214838-9b19f0bdc514
+
 //replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain
