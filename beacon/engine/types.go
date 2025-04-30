@@ -323,3 +323,8 @@ type ExecutionPayloadBodyV1 struct {
 	TransactionData []hexutil.Bytes     `json:"transactions"`
 	Withdrawals     []*types.Withdrawal `json:"withdrawals"`
 }
+
+type KeystoneStatus struct {
+	Status          string `json:"status"`
+	ValidationError string `json:"validationError"`
+}
