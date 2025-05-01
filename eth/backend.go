@@ -101,7 +101,7 @@ type Ethereum struct {
 	gasPrice  *big.Int
 	etherbase common.Address
 
-	kssFeed *event.Feed
+	kssFeed event.Feed
 
 	networkID     uint64
 	netRPCService *ethapi.NetAPI
@@ -566,7 +566,7 @@ func (s *Ethereum) StopMining() {
 func (s *Ethereum) IsMining() bool      { return s.miner.Mining() }
 func (s *Ethereum) Miner() *miner.Miner { return s.miner }
 
-func (s *Ethereum) KeystoneFeed() *event.Feed { return s.kssFeed }
+func (s *Ethereum) KeystoneFeed() *event.Feed { return &s.kssFeed }
 
 func (s *Ethereum) AccountManager() *accounts.Manager  { return s.accountManager }
 func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }
