@@ -26,11 +26,6 @@ jobs:
           cache: true
           check-latest: true
 
-      - name: "Download and verify dependencies"
-        id: deps
-        run: make GOCACHE="$(go env GOCACHE)" go-deps
-
-
       # tests are not currently reliable; we need to add testing packages
       # back in, one by one
       - name: "test core"
