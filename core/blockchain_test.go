@@ -41,8 +41,10 @@ import (
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
+	"github.com/go-test/deep"
 	"github.com/hemilabs/heminetwork/hemi"
 	"github.com/holiman/uint256"
+	"golang.org/x/exp/slices"
 )
 
 // So we can deterministically seed different blockchains
@@ -4468,6 +4470,128 @@ func TestL2Keystones(t *testing.T) {
 			if l2Keystones[k].L2BlockNumber != v {
 				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
 			}
+		}
+	})
+
+	t.Run("test l2 keystones more than exist", func(t *testing.T) {
+		_, _, blockchain, err := newCanonical(ethash.NewFaker(), 10, true, rawdb.HashScheme)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		for i := 122500; i <= 122501; i++ {
+			l2Keystone := hemi.L2Keystone{
+				Version:            1,
+				L1BlockNumber:      5,
+				L2BlockNumber:      uint32(i),
+				ParentEPHash:       fillOutBytes("v1parentephash", 32),
+				PrevKeystoneEPHash: fillOutBytes("v1prevkeystoneephash", 32),
+				StateRoot:          fillOutBytes("v1stateroot", 32),
+				EPHash:             fillOutBytes("v1ephash", 32),
+			}
+
+			if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		l2Keystones, err := blockchain.GetMostRecentKeystones(10)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(l2Keystones) != 2 {
+			t.Fatalf("unexpected length: %d", len(l2Keystones))
+		}
+
+		// this needs to be more robust; check more than just the l2 block number
+		expected := map[int]uint32{
+			0: 122501,
+			1: 122500,
+		}
+
+		for k, v := range expected {
+			if l2Keystones[k].L2BlockNumber != v {
+				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
+			}
+		}
+	})
+
+	t.Run("test l2 keystone by abrev hash", func(t *testing.T) {
+		_, _, blockchain, err := newCanonical(ethash.NewFaker(), 10, true, rawdb.HashScheme)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		l2Keystone := hemi.L2Keystone{
+			Version:            1,
+			L1BlockNumber:      5,
+			L2BlockNumber:      44,
+			ParentEPHash:       fillOutBytes("v1parentephash", 32),
+			PrevKeystoneEPHash: fillOutBytes("v1prevkeystoneephash", 32),
+			StateRoot:          fillOutBytes("v1stateroot", 32),
+			EPHash:             fillOutBytes("v1ephash", 32),
+		}
+
+		if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
+			t.Fatal(err)
+		}
+
+		otherL2Keystone := hemi.L2Keystone{
+			Version:            1,
+			L1BlockNumber:      5,
+			L2BlockNumber:      44444,
+			ParentEPHash:       fillOutBytes("v1parentephash", 32),
+			PrevKeystoneEPHash: fillOutBytes("v1prevkeystoneephash", 32),
+			StateRoot:          fillOutBytes("v1stateroot", 32),
+			EPHash:             fillOutBytes("v1ephash", 32),
+		}
+
+		if err := blockchain.InsertL2Keystone(otherL2Keystone); err != nil {
+			t.Fatal(err)
+		}
+
+		q := hemi.L2KeystoneAbbreviate(l2Keystone).Hash().CloneBytes()
+		slices.Reverse(q)
+		l2KeystoneFromDB, err := blockchain.GetKeystoneByAbrevHash(q)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if diff := deep.Equal(l2KeystoneFromDB, &l2Keystone); len(diff) > 0 {
+			t.Fatalf("unexpected diff: %s", diff)
+		}
+	})
+
+	t.Run("test l2 keystone by abrev hash not found", func(t *testing.T) {
+		_, _, blockchain, err := newCanonical(ethash.NewFaker(), 10, true, rawdb.HashScheme)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		l2Keystone := hemi.L2Keystone{
+			Version:            1,
+			L1BlockNumber:      5,
+			L2BlockNumber:      44,
+			ParentEPHash:       fillOutBytes("v1parentephash", 32),
+			PrevKeystoneEPHash: fillOutBytes("v1prevkeystoneephash", 32),
+			StateRoot:          fillOutBytes("v1stateroot", 32),
+			EPHash:             fillOutBytes("v1ephash", 32),
+		}
+
+		if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
+			t.Fatal(err)
+		}
+
+		q := hemi.L2KeystoneAbbreviate(l2Keystone).Hash().CloneBytes()
+		slices.Reverse(q)
+
+		// change some byte
+		q[2] ^= 0xFF
+
+		_, err = blockchain.GetKeystoneByAbrevHash(q)
+		if err == nil {
+			t.Fatalf("expected error")
 		}
 	})
 }

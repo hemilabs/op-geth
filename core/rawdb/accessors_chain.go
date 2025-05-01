@@ -979,7 +979,7 @@ func ReadHeadBlock(db ethdb.Reader) *types.Block {
 
 const l2KeystonePrefix = "l2keystone"
 
-func l2KeystoneToKey(l2Keystone hemi.L2Keystone) []byte {
+func l2KeystoneToHeightKey(l2Keystone hemi.L2Keystone) []byte {
 	buf := make([]byte, 8)
 
 	_, err := binary.Encode(buf, binary.BigEndian, uint64(l2Keystone.L2BlockNumber))
@@ -991,7 +991,14 @@ func l2KeystoneToKey(l2Keystone hemi.L2Keystone) []byte {
 		buf[i] = b ^ 0xFF
 	}
 
-	key := fmt.Sprintf("%s-%s", l2KeystonePrefix, hex.EncodeToString(buf))
+	key := fmt.Sprintf("%s-height-%s", l2KeystonePrefix, hex.EncodeToString(buf))
+	return []byte(key)
+}
+
+func l2KeystoneToHashKey(l2Keystone hemi.L2Keystone) []byte {
+	hash := hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
+	key := fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hash)
+	fmt.Printf("key is %s\n", key)
 	return []byte(key)
 }
 
@@ -1001,24 +1008,36 @@ func WriteL2Keystone(db ethdb.KeyValueWriter, l2Keystone hemi.L2Keystone) error 
 		return err
 	}
 
-	if err := db.Put(l2KeystoneToKey(l2Keystone), b); err != nil {
+	if err := db.Put(l2KeystoneToHashKey(l2Keystone), b); err != nil {
+		return err
+	}
+
+	if err := db.Put(l2KeystoneToHeightKey(l2Keystone), l2KeystoneToHashKey(l2Keystone)); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func ReadMostRecentL2Keystones(db ethdb.Iteratee, count uint) ([]hemi.L2Keystone, error) {
+func ReadMostRecentL2Keystones(db ethdb.Database, count uint) ([]hemi.L2Keystone, error) {
 	if count > 100 {
 		return nil, errors.New("count too large")
 	}
 
 	results := []hemi.L2Keystone{}
 
-	it := db.NewIterator([]byte(l2KeystonePrefix), nil)
+	it := db.NewIterator([]byte(fmt.Sprintf("%s-height", l2KeystonePrefix)), nil)
+	defer it.Release()
 	for it.Next() {
+
+		key := it.Value()
+		val, err := db.Get(key)
+		if err != nil {
+			return nil, err
+		}
+
 		var l2Keystone hemi.L2Keystone
-		if err := json.Unmarshal(it.Value(), &l2Keystone); err != nil {
+		if err := json.Unmarshal(val, &l2Keystone); err != nil {
 			return nil, err
 		}
 
@@ -1029,4 +1048,20 @@ func ReadMostRecentL2Keystones(db ethdb.Iteratee, count uint) ([]hemi.L2Keystone
 	}
 
 	return results, nil
+}
+
+func ReadL2KeystoneByAbrevHash(db ethdb.Database, l2KeystoneAbrevHash []byte) (*hemi.L2Keystone, error) {
+	key := []byte(fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hex.EncodeToString(l2KeystoneAbrevHash[:])))
+	fmt.Printf("key for query is %s\n", key)
+	b, err := db.Get(key)
+	if err != nil {
+		return nil, err
+	}
+
+	var l2Keystone hemi.L2Keystone
+	if err := json.Unmarshal(b, &l2Keystone); err != nil {
+		return nil, err
+	}
+
+	return &l2Keystone, nil
 }
