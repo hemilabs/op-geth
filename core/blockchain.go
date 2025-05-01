@@ -348,7 +348,8 @@ type BlockChain struct {
 
 	ctx context.Context
 
-	logger *tracing.Hooks
+	logger      *tracing.Hooks
+	keystoneMtx sync.Mutex
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -5044,6 +5045,9 @@ func bytes2Header(header [80]byte) (*wire.BlockHeader, error) {
 }
 
 func (bc *BlockChain) InsertL2Keystone(l2Keystone hemi.L2Keystone) error {
+	bc.keystoneMtx.Lock()
+	defer bc.keystoneMtx.Unlock()
+
 	if err := rawdb.WriteL2Keystone(bc.db, l2Keystone); err != nil {
 		return err
 	}
