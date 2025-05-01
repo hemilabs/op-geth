@@ -1061,5 +1061,11 @@ func ReadL2KeystoneByAbrevHash(db ethdb.Database, l2KeystoneAbrevHash []byte) (*
 		return nil, err
 	}
 
+	// if we can't find the keystone in the height index, then we can
+	// assume that it is not on the canonical chain any longer
+	if _, err := db.Get(l2KeystoneToHeightKey(l2Keystone)); err != nil {
+		return nil, err
+	}
+
 	return &l2Keystone, nil
 }
