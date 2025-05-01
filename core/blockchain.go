@@ -331,6 +331,8 @@ type BlockChain struct {
 	missingProgressionBlocks *wire.MsgHeaders
 
 	ctx context.Context
+
+	keystoneMtx sync.Mutex
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -4907,6 +4909,9 @@ func bytes2Header(header [80]byte) (*wire.BlockHeader, error) {
 }
 
 func (bc *BlockChain) InsertL2Keystone(l2Keystone hemi.L2Keystone) error {
+	bc.keystoneMtx.Lock()
+	defer bc.keystoneMtx.Unlock()
+
 	if err := rawdb.WriteL2Keystone(bc.db, l2Keystone); err != nil {
 		return err
 	}

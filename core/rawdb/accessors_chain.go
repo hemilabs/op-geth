@@ -998,7 +998,6 @@ func l2KeystoneToHeightKey(l2Keystone hemi.L2Keystone) []byte {
 func l2KeystoneToHashKey(l2Keystone hemi.L2Keystone) []byte {
 	hash := hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
 	key := fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hash)
-	fmt.Printf("key is %s\n", key)
 	return []byte(key)
 }
 
@@ -1052,7 +1051,6 @@ func ReadMostRecentL2Keystones(db ethdb.Database, count uint) ([]hemi.L2Keystone
 
 func ReadL2KeystoneByAbrevHash(db ethdb.Database, l2KeystoneAbrevHash []byte) (*hemi.L2Keystone, error) {
 	key := []byte(fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hex.EncodeToString(l2KeystoneAbrevHash[:])))
-	fmt.Printf("key for query is %s\n", key)
 	b, err := db.Get(key)
 	if err != nil {
 		return nil, err
