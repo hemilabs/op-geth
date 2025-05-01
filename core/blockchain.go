@@ -374,7 +374,7 @@ func (bc *BlockChain) getHeaderModeTBCEVMHeader() (*types.Header, error) {
 	if header != nil {
 		return header, nil
 	}
-	return nil, fmt.Errorf(fmt.Sprintf("Unable to find EVM header corresponding to hash %x", stateBlockHash[:]))
+	return nil, fmt.Errorf("Unable to find EVM header corresponding to hash %x", stateBlockHash[:])
 }
 
 // getHvmPhase0ActivationBlock descends the blockchain until it
@@ -2277,8 +2277,8 @@ func (bc *BlockChain) headersBetweenBlocks(ancestor *types.Header, head *types.H
 		// Don't overwrite cursor so we can print error correctly
 		cursorTmp := bc.getHeaderFromDiskOrHoldingPen(cursor.ParentHash)
 		if cursorTmp == nil {
-			return nil, fmt.Errorf(fmt.Sprintf("headersBetweenBlocks could not retrieve header %s @ %d",
-				cursor.ParentHash.String(), cursor.Number.Uint64()-1))
+			return nil, fmt.Errorf("headersBetweenBlocks could not retrieve header %s @ %d",
+				cursor.ParentHash.String(), cursor.Number.Uint64()-1)
 		}
 		path[index] = cursorTmp
 		cursor = cursorTmp
@@ -2290,9 +2290,9 @@ func (bc *BlockChain) headersBetweenBlocks(ancestor *types.Header, head *types.H
 func (bc *BlockChain) walkHvmHeaderConsensusForward(currentHead *types.Header, newHead *types.Header) error {
 	// Can't walk forwards from a block that is the same height or higher than the destination
 	if currentHead.Number.Uint64() >= newHead.Number.Uint64() {
-		return fmt.Errorf(fmt.Sprintf("Cannot walk hVM consensus forewards from "+
+		return fmt.Errorf("Cannot walk hVM consensus forewards from "+
 			"%s @ %d to %s @ %d - bad geometry", currentHead.Hash().String(), currentHead.Number.Uint64(),
-			newHead.Hash().String(), newHead.Number.Uint64()))
+			newHead.Hash().String(), newHead.Number.Uint64())
 	}
 
 	// It may be unsafe to walk forwards by number in case this method is called
@@ -5057,4 +5057,8 @@ func (bc *BlockChain) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, err
 	}
 
 	return rawdb.ReadMostRecentL2Keystones(bc.db, count)
+}
+
+func (bc *BlockChain) GetKeystoneByAbrevHash(hash []byte) (*hemi.L2Keystone, error) {
+	return rawdb.ReadL2KeystoneByAbrevHash(bc.db, hash)
 }
