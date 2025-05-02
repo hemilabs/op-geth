@@ -156,13 +156,18 @@ func (s *Suite) TestGetBlockHeaders(t *utesting.T) {
 }
 
 func (s *Suite) TestGetNonexistentBlockHeaders(t *utesting.T) {
-	t.Log(`This test sends GetBlockHeaders requests for nonexistent blocks (using max uint64 value)
+	t.Log(`This test sends GetBlockHeaders requests for nonexistent blocks (using max uint64 value) 
 to check if the node disconnects after receiving multiple invalid requests.`)
-	conn, err := s.dialAndPeer(nil)
+
+	conn, err := s.dial()
 	if err != nil {
-		t.Fatalf("peering failed: %v", err)
+		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
+
+	if err := conn.peer(s.chain, nil); err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
 
 	// Create request with max uint64 value for a nonexistent block
 	badReq := &eth.GetBlockHeadersPacket{
