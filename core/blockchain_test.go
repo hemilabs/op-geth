@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
@@ -4277,6 +4278,8 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		expectedHashes := make(map[uint32]*chainhash.Hash, 0)
+
 		for i := range 10 {
 			l2Keystone := hemi.L2Keystone{
 				Version:            1,
@@ -4287,6 +4290,8 @@ func TestL2Keystones(t *testing.T) {
 				StateRoot:          fillOutBytes("v1stateroot", 32),
 				EPHash:             fillOutBytes("v1ephash", 32),
 			}
+
+			expectedHashes[uint32(i)] = hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
 
 			if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
 				t.Fatal(err)
@@ -4302,18 +4307,11 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatalf("unexpected length: %d", len(l2Keystones))
 		}
 
-		// this needs to be more robust; check more than just the l2 block number
-		expected := map[int]uint32{
-			0: 9,
-			1: 8,
-			2: 7,
-			3: 6,
-			4: 5,
-		}
-
-		for k, v := range expected {
-			if l2Keystones[k].L2BlockNumber != v {
-				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
+		for i, k := range l2Keystones {
+			if *expectedHashes[k.L2BlockNumber] != *hemi.L2KeystoneAbbreviate(k).Hash() {
+				t.Fatalf("expected %dth keystone to have hash %x, but got %x",
+					i, expectedHashes[k.L2BlockNumber].CloneBytes(),
+					hemi.L2KeystoneAbbreviate(k).Hash().CloneBytes())
 			}
 		}
 	})
@@ -4323,6 +4321,8 @@ func TestL2Keystones(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		expectedHashes := make(map[uint32]*chainhash.Hash, 0)
 
 		for i := 500; i <= 511; i++ {
 			l2Keystone := hemi.L2Keystone{
@@ -4335,6 +4335,8 @@ func TestL2Keystones(t *testing.T) {
 				EPHash:             fillOutBytes("v1ephash", 32),
 			}
 
+			expectedHashes[uint32(i)] = hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
+
 			if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
 				t.Fatal(err)
 			}
@@ -4349,18 +4351,11 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatalf("unexpected length: %d", len(l2Keystones))
 		}
 
-		// this needs to be more robust; check more than just the l2 block number
-		expected := map[int]uint32{
-			0: 511,
-			1: 510,
-			2: 509,
-			3: 508,
-			4: 507,
-		}
-
-		for k, v := range expected {
-			if l2Keystones[k].L2BlockNumber != v {
-				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
+		for i, k := range l2Keystones {
+			if *expectedHashes[k.L2BlockNumber] != *hemi.L2KeystoneAbbreviate(k).Hash() {
+				t.Fatalf("expected %dth keystone to have hash %x, but got %x",
+					i, expectedHashes[k.L2BlockNumber].CloneBytes(),
+					hemi.L2KeystoneAbbreviate(k).Hash().CloneBytes())
 			}
 		}
 	})
@@ -4370,6 +4365,8 @@ func TestL2Keystones(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		expectedHashes := make(map[uint32]*chainhash.Hash, 0)
 
 		for i := 122500; i <= 122511; i++ {
 			l2Keystone := hemi.L2Keystone{
@@ -4382,6 +4379,8 @@ func TestL2Keystones(t *testing.T) {
 				EPHash:             fillOutBytes("v1ephash", 32),
 			}
 
+			expectedHashes[uint32(i)] = hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
+
 			if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
 				t.Fatal(err)
 			}
@@ -4396,18 +4395,11 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatalf("unexpected length: %d", len(l2Keystones))
 		}
 
-		// this needs to be more robust; check more than just the l2 block number
-		expected := map[int]uint32{
-			0: 122511,
-			1: 122510,
-			2: 122509,
-			3: 122508,
-			4: 122507,
-		}
-
-		for k, v := range expected {
-			if l2Keystones[k].L2BlockNumber != v {
-				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
+		for i, k := range l2Keystones {
+			if *expectedHashes[k.L2BlockNumber] != *hemi.L2KeystoneAbbreviate(k).Hash() {
+				t.Fatalf("expected %dth keystone to have hash %x, but got %x",
+					i, expectedHashes[k.L2BlockNumber].CloneBytes(),
+					hemi.L2KeystoneAbbreviate(k).Hash().CloneBytes())
 			}
 		}
 	})
@@ -4417,6 +4409,8 @@ func TestL2Keystones(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+
+		expectedHashes := make(map[uint32]*chainhash.Hash, 0)
 
 		for i := 122500; i <= 122501; i++ {
 			l2Keystone := hemi.L2Keystone{
@@ -4428,6 +4422,8 @@ func TestL2Keystones(t *testing.T) {
 				StateRoot:          fillOutBytes("v1stateroot", 32),
 				EPHash:             fillOutBytes("v1ephash", 32),
 			}
+
+			expectedHashes[uint32(i)] = hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
 
 			if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
 				t.Fatal(err)
@@ -4443,15 +4439,11 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatalf("unexpected length: %d", len(l2Keystones))
 		}
 
-		// this needs to be more robust; check more than just the l2 block number
-		expected := map[int]uint32{
-			0: 122501,
-			1: 122500,
-		}
-
-		for k, v := range expected {
-			if l2Keystones[k].L2BlockNumber != v {
-				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
+		for i, k := range l2Keystones {
+			if *expectedHashes[k.L2BlockNumber] != *hemi.L2KeystoneAbbreviate(k).Hash() {
+				t.Fatalf("expected %dth keystone to have hash %x, but got %x",
+					i, expectedHashes[k.L2BlockNumber].CloneBytes(),
+					hemi.L2KeystoneAbbreviate(k).Hash().CloneBytes())
 			}
 		}
 	})
@@ -4492,12 +4484,12 @@ func TestL2Keystones(t *testing.T) {
 
 		q := hemi.L2KeystoneAbbreviate(l2Keystone).Hash().CloneBytes()
 		slices.Reverse(q)
-		l2KeystoneFromDB, err := blockchain.GetKeystoneAndDescendants(q, 0)
+		l2KeystoneFromDB, err := blockchain.GetKeystoneByAbrevHash(q)
 		if err != nil {
 			t.Fatal(err)
 		}
 
-		if diff := deep.Equal(l2KeystoneFromDB[0], l2Keystone); len(diff) > 0 {
+		if diff := deep.Equal(l2KeystoneFromDB, &l2Keystone); len(diff) > 0 {
 			t.Fatalf("unexpected diff: %s", diff)
 		}
 	})
@@ -4528,7 +4520,7 @@ func TestL2Keystones(t *testing.T) {
 		// change some byte
 		q[2] ^= 0xFF
 
-		_, err = blockchain.GetKeystoneAndDescendants(q, 0)
+		_, err = blockchain.GetKeystoneByAbrevHash(q)
 		if err == nil {
 			t.Fatalf("expected error")
 		}
@@ -4540,6 +4532,8 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatal(err)
 		}
 
+		expectedHashes := make(map[uint32]*chainhash.Hash, 0)
+
 		for i := 122500; i <= 122600; i += 25 {
 			l2Keystone := hemi.L2Keystone{
 				Version:            1,
@@ -4550,6 +4544,8 @@ func TestL2Keystones(t *testing.T) {
 				StateRoot:          fillOutBytes("v1stateroot", 32),
 				EPHash:             fillOutBytes("v1ephash", 32),
 			}
+
+			expectedHashes[uint32(i)] = hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
 
 			if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
 				t.Fatal(err)
@@ -4578,19 +4574,44 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatalf("unexpected length: %d", len(l2Keystones))
 		}
 
-		// this needs to be more robust; check more than just the l2 block number
-		expected := map[int]uint32{
-			0: 122500,
-			1: 122525,
-			2: 122550,
-			3: 122575,
-			4: 122600,
+		for i, k := range l2Keystones {
+			if *expectedHashes[k.L2BlockNumber] != *hemi.L2KeystoneAbbreviate(k).Hash() {
+				t.Fatalf("expected %dth keystone to have hash %x, but got %x",
+					i, expectedHashes[k.L2BlockNumber].CloneBytes(),
+					hemi.L2KeystoneAbbreviate(k).Hash().CloneBytes())
+			}
+		}
+	})
+
+	t.Run("test l2 keystones get descendants not found", func(t *testing.T) {
+		_, _, blockchain, err := newCanonical(ethash.NewFaker(), 10, true, rawdb.HashScheme)
+		if err != nil {
+			t.Fatal(err)
 		}
 
-		for k, v := range expected {
-			if l2Keystones[k].L2BlockNumber != v {
-				t.Fatalf("expected %dth keystone to be number %d, but got %d", k, v, l2Keystones[k].L2BlockNumber)
-			}
+		l2Keystone := hemi.L2Keystone{
+			Version:            1,
+			L1BlockNumber:      5,
+			L2BlockNumber:      44,
+			ParentEPHash:       fillOutBytes("v1parentephash", 32),
+			PrevKeystoneEPHash: fillOutBytes("v1prevkeystoneephash", 32),
+			StateRoot:          fillOutBytes("v1stateroot", 32),
+			EPHash:             fillOutBytes("v1ephash", 32),
+		}
+
+		if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
+			t.Fatal(err)
+		}
+
+		q := hemi.L2KeystoneAbbreviate(l2Keystone).Hash().CloneBytes()
+		slices.Reverse(q)
+
+		// change some byte
+		q[2] ^= 0xFF
+
+		_, err = blockchain.GetKeystoneAndDescendants(q, 5)
+		if err == nil {
+			t.Fatalf("expected error")
 		}
 	})
 }

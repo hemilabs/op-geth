@@ -349,7 +349,7 @@ type BlockChain struct {
 	ctx context.Context
 
 	logger      *tracing.Hooks
-	keystoneMtx sync.Mutex
+	keystoneMtx sync.RWMutex
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -5056,6 +5056,9 @@ func (bc *BlockChain) InsertL2Keystone(l2Keystone hemi.L2Keystone) error {
 }
 
 func (bc *BlockChain) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	bc.keystoneMtx.RLock()
+	defer bc.keystoneMtx.RUnlock()
+
 	if count > 10 {
 		return nil, errors.New("count too large")
 	}
@@ -5064,5 +5067,15 @@ func (bc *BlockChain) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, err
 }
 
 func (bc *BlockChain) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	bc.keystoneMtx.RLock()
+	defer bc.keystoneMtx.RUnlock()
+
 	return rawdb.GetKeystoneAndDescendants(bc.db, hash, count)
+}
+
+func (bc *BlockChain) GetKeystoneByAbrevHash(hash []byte) (*hemi.L2Keystone, error) {
+	bc.keystoneMtx.RLock()
+	defer bc.keystoneMtx.RUnlock()
+
+	return rawdb.ReadL2KeystoneByAbrevHash(bc.db, hash)
 }

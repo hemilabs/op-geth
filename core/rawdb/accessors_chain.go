@@ -968,6 +968,7 @@ func GetKeystoneAndDescendants(db ethdb.Database, l2KeystoneAbrevHash []byte, co
 		return nil, errors.New("count too large")
 	}
 
+	// Find original keystone and add to results
 	results := make([]hemi.L2Keystone, 0)
 	curKss, err := ReadL2KeystoneByAbrevHash(db, l2KeystoneAbrevHash)
 	if err != nil {
@@ -975,22 +976,32 @@ func GetKeystoneAndDescendants(db ethdb.Database, l2KeystoneAbrevHash []byte, co
 	}
 	results = append(results, *curKss)
 
+	// Iterate through next block heights until
+	// we get N descendants
 	L2Height := curKss.L2BlockNumber
 	for i := range int(count) {
-		nextHeight := L2Height + (25 * (uint32(i) + 1))
+		// Next height is the L2 Block Height of the
+		// previous keystone + 25 (KeystoneHeaderPeriod)
+		nextHeight := L2Height + (hemi.KeystoneHeaderPeriod * (uint32(i) + 1))
 		heightKey := l2KeystoneHeightToKey(uint64(nextHeight))
 
+		// If we can't find a reference to a keystone at
+		// the new height, assume we reached the tip and return
 		kssKey, err := db.Get(heightKey)
 		if err != nil {
 			break
 		}
 
+		// If we can't find the keystone pointed to by the height
+		// index we continue but warn system of unexpected DB behavior
 		val, err := db.Get(kssKey)
 		if err != nil {
 			log.Error(err.Error())
 			continue
 		}
 
+		// If we can't unmarshal the stored bytes into a proper
+		// keystone we continue but warn system of unexpected DB state
 		var l2Keystone hemi.L2Keystone
 		if err := json.Unmarshal(val, &l2Keystone); err != nil {
 			log.Error(err.Error())
