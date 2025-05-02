@@ -321,7 +321,7 @@ func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) (engine.KeystoneS
 	if kf == nil {
 		return engine.KeystoneStatus{Status: engine.INVALID, ValidationError: "subscription send during opgeth shutdown"}, nil
 	}
-	kf.Send("New Keystone Available")
+	kf.Send(fmt.Sprintf("New Keystone Available: %x", hemi.L2KeystoneAbbreviate(keystone).Hash().CloneBytes()))
 
 	return engine.KeystoneStatus{Status: engine.VALID}, nil
 }
