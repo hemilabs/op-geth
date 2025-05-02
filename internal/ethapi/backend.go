@@ -104,6 +104,7 @@ type Backend interface {
 	// Hemi specific functions
 	KeystoneFeed() *event.Feed
 	GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error)
+	GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error)
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {
