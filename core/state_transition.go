@@ -611,22 +611,6 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		ret, st.gasRemaining, vmerr = st.evm.Call(msg.From, st.to(), msg.Data, st.gasRemaining, value)
 	}
 
-	// OP-Stack: pre-Regolith: if deposit, skip refunds, skip tipping coinbase
-	// Regolith changes this behaviour to report the actual gasUsed instead of always reporting all gas used.
-	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx) && !rules.IsOptimismRegolith {
-		// Record deposits as using all their gas (matches the gas pool)
-		// System Transactions and PoP Payout transactions are special & are not recorded as using any gas (anywhere)
-		gasUsed := st.msg.GasLimit
-		if st.msg.IsSystemTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx {
-			gasUsed = 0
-		}
-		return &ExecutionResult{
-			UsedGas:    gasUsed,
-			Err:        vmerr,
-			ReturnData: ret,
-		}, nil
-	}
-
 	// Record the gas used excluding gas refunds. This value represents the actual
 	// gas allowance required to complete execution.
 	peakGasUsed := st.gasUsed()
