@@ -19,6 +19,7 @@ package catalyst
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -321,7 +322,10 @@ func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) (engine.KeystoneS
 	if kf == nil {
 		return engine.KeystoneStatus{Status: engine.INVALID, ValidationError: "subscription send during opgeth shutdown"}, nil
 	}
-	kf.Send(fmt.Sprintf("New Keystone Available: %x", hemi.L2KeystoneAbbreviate(keystone).Hash().CloneBytes()))
+
+	stringHash := hex.EncodeToString(hemi.L2KeystoneAbbreviate(keystone).Hash().CloneBytes())
+
+	kf.Send(fmt.Sprintf("New Keystone Available: %s", stringHash))
 
 	return engine.KeystoneStatus{Status: engine.VALID}, nil
 }
