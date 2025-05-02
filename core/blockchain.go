@@ -5070,6 +5070,10 @@ func (bc *BlockChain) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi
 	bc.keystoneMtx.RLock()
 	defer bc.keystoneMtx.RUnlock()
 
+	if count > 10 {
+		return nil, errors.New("count too large")
+	}
+
 	return rawdb.GetKeystoneAndDescendants(bc.db, hash, count)
 }
 
