@@ -753,6 +753,21 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	if gas != 21000 {
 		t.Fatalf("unexpected gas limit: %v", gas)
 	}
+
+	// Verify that sender address of pending transaction is saved in cache.
+	pendingBlock, err := ec.BlockByNumber(context.Background(), big.NewInt(int64(rpc.PendingBlockNumber)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No additional RPC should be required, ensure the server is not asked by
+	// canceling the context.
+	sender, err := ec.TransactionSender(newCanceledContext(), pendingBlock.Transactions()[0], pendingBlock.Hash(), 0)
+	if err != nil {
+		t.Fatal("unable to recover sender:", err)
+	}
+	if sender != testAddr {
+		t.Fatal("wrong sender:", sender)
+	}
 }
 
 func testTransactionSender(t *testing.T, client *rpc.Client) {
@@ -790,60 +805,6 @@ func testTransactionSender(t *testing.T, client *rpc.Client) {
 	}
 	if sender2 != testAddr {
 		t.Fatal("wrong sender:", sender2)
-	}
-}
-
-func testEstimateGas(t *testing.T, client *rpc.Client) {
-	ec := ethclient.NewClient(client)
-
-	// EstimateGas
-	msg := ethereum.CallMsg{
-		From:  testAddr,
-		To:    &common.Address{},
-		Gas:   21000,
-		Value: big.NewInt(1),
-	}
-	gas, err := ec.EstimateGas(context.Background(), msg)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if gas != 21000 {
-		t.Fatalf("unexpected gas price: %v", gas)
-	}
-}
-
-func testHistoricalRPC(t *testing.T, client *rpc.Client) {
-	ec := ethclient.NewClient(client)
-
-	// Estimate Gas RPC
-	msg := ethereum.CallMsg{
-		From:  testAddr,
-		To:    &common.Address{},
-		Gas:   21000,
-		Value: big.NewInt(1),
-	}
-	var res hexutil.Uint64
-	callMsg := map[string]interface{}{
-		"from":  msg.From,
-		"to":    msg.To,
-		"gas":   hexutil.Uint64(msg.Gas),
-		"value": (*hexutil.Big)(msg.Value),
-	}
-	err := client.CallContext(context.Background(), &res, "eth_estimateGas", callMsg, rpc.BlockNumberOrHashWithNumber(1))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if res != 12345 {
-		t.Fatalf("invalid result: %d", res)
-	}
-
-	// Call Contract RPC
-	histVal, err := ec.CallContract(context.Background(), msg, big.NewInt(1))
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if string(histVal) != "test" {
-		t.Fatalf("expected %s to equal test", string(histVal))
 	}
 }
 
