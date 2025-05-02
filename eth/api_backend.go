@@ -472,3 +472,7 @@ func (b *EthAPIBackend) KeystoneFeed() *event.Feed {
 func (b *EthAPIBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
 	return b.eth.blockchain.GetMostRecentKeystones(count)
 }
+
+func (b *EthAPIBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return b.eth.blockchain.GetKeystoneAndDescendants(hash, count)
+}

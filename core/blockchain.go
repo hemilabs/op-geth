@@ -5063,6 +5063,6 @@ func (bc *BlockChain) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, err
 	return rawdb.ReadMostRecentL2Keystones(bc.db, count)
 }
 
-func (bc *BlockChain) GetKeystoneByAbrevHash(hash []byte) (*hemi.L2Keystone, error) {
-	return rawdb.ReadL2KeystoneByAbrevHash(bc.db, hash)
+func (bc *BlockChain) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return rawdb.GetKeystoneAndDescendants(bc.db, hash, count)
 }

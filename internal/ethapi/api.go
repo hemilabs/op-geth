@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
@@ -2069,10 +2070,37 @@ type L2KeystoneResponse struct {
 	Error       *protocol.Error   `json:"error,omitempty"`
 }
 
-func (api *HemiAPI) GetKeystones(count uint) L2KeystoneResponse {
+// GetLatestKeystones returns the N latest keystones,
+// ordered by L2 Block Number in descending order.
+func (api *HemiAPI) GetLatestKeystones(count uint) L2KeystoneResponse {
 	kss, err := api.b.GetMostRecentKeystones(count)
 	if err != nil {
-		resp := L2KeystoneResponse{Error: protocol.Errorf("internal op-geth error")}
+		resp := L2KeystoneResponse{Error: protocol.Errorf("failed to retrieve keystones")}
+		return resp
+	}
+
+	resp := L2KeystoneResponse{L2Keystones: kss}
+	return resp
+}
+
+// GetKeystone returns a keystones and N number
+// of its descendants.
+func (api *HemiAPI) GetKeystone(abrevHash string, count uint) L2KeystoneResponse {
+	h, err := chainhash.NewHashFromStr(abrevHash)
+	if err != nil {
+		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
+		return resp
+	}
+
+	b, err := h.MarshalJSON()
+	if err != nil {
+		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
+		return resp
+	}
+
+	kss, err := api.b.GetKeystoneAndDescendants(b, count)
+	if err != nil {
+		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
 		return resp
 	}
 

@@ -908,6 +908,22 @@ func ReadHeadBlock(db ethdb.Reader) *types.Block {
 
 const l2KeystonePrefix = "l2keystone"
 
+func l2KeystoneHeightToKey(height uint64) []byte {
+	buf := make([]byte, 8)
+
+	_, err := binary.Encode(buf, binary.BigEndian, uint64(height))
+	if err != nil {
+		panic(err)
+	}
+
+	for i, b := range buf {
+		buf[i] = b ^ 0xFF
+	}
+
+	key := fmt.Sprintf("%s-height-%s", l2KeystonePrefix, hex.EncodeToString(buf))
+	return []byte(key)
+}
+
 func l2KeystoneToHeightKey(l2Keystone hemi.L2Keystone) []byte {
 	buf := make([]byte, 8)
 
@@ -945,6 +961,45 @@ func WriteL2Keystone(db ethdb.KeyValueWriter, l2Keystone hemi.L2Keystone) error 
 	}
 
 	return nil
+}
+
+func GetKeystoneAndDescendants(db ethdb.Database, l2KeystoneAbrevHash []byte, count uint) ([]hemi.L2Keystone, error) {
+	if count > 100 {
+		return nil, errors.New("count too large")
+	}
+
+	results := make([]hemi.L2Keystone, 0)
+	curKss, err := ReadL2KeystoneByAbrevHash(db, l2KeystoneAbrevHash)
+	if err != nil {
+		return nil, err
+	}
+	results = append(results, *curKss)
+
+	L2Height := curKss.L2BlockNumber
+	for i := range int(count) {
+		nextHeight := L2Height + (25 * (uint32(i) + 1))
+		heightKey := l2KeystoneHeightToKey(uint64(nextHeight))
+
+		kssKey, err := db.Get(heightKey)
+		if err != nil {
+			break
+		}
+
+		val, err := db.Get(kssKey)
+		if err != nil {
+			log.Error(err.Error())
+			continue
+		}
+
+		var l2Keystone hemi.L2Keystone
+		if err := json.Unmarshal(val, &l2Keystone); err != nil {
+			log.Error(err.Error())
+			continue
+		}
+
+		results = append(results, l2Keystone)
+	}
+	return results, nil
 }
 
 func ReadMostRecentL2Keystones(db ethdb.Database, count uint) ([]hemi.L2Keystone, error) {
@@ -992,8 +1047,15 @@ func ReadL2KeystoneByAbrevHash(db ethdb.Database, l2KeystoneAbrevHash []byte) (*
 
 	// if we can't find the keystone in the height index, then we can
 	// assume that it is not on the canonical chain any longer
-	if _, err := db.Get(l2KeystoneToHeightKey(l2Keystone)); err != nil {
+	canonKey, err := db.Get(l2KeystoneToHeightKey(l2Keystone))
+	if err != nil {
 		return nil, err
+	}
+
+	// if the keystone hash pointed to at the height index is not the
+	// same as this keystone, it is considered not canonical
+	if !bytes.Equal(canonKey, key) {
+		return nil, fmt.Errorf("keystone %x not canonical", l2KeystoneAbrevHash)
 	}
 
 	return &l2Keystone, nil
