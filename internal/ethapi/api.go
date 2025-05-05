@@ -2086,13 +2086,13 @@ func (api *HemiAPI) GetLatestKeystones(count uint) L2KeystoneResponse {
 // GetKeystone returns a keystones and N number
 // of its descendants.
 func (api *HemiAPI) GetKeystone(abrevHash string, count uint) L2KeystoneResponse {
-	h, err := chainhash.NewHashFromStr(abrevHash)
+	_, err := chainhash.NewHashFromStr(abrevHash)
 	if err != nil {
 		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
 		return resp
 	}
 
-	b, err := h.MarshalJSON()
+	b, err := hex.DecodeString(abrevHash)
 	if err != nil {
 		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
 		return resp

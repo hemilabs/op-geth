@@ -1045,7 +1045,11 @@ func ReadMostRecentL2Keystones(db ethdb.Database, count uint) ([]hemi.L2Keystone
 }
 
 func ReadL2KeystoneByAbrevHash(db ethdb.Database, l2KeystoneAbrevHash []byte) (*hemi.L2Keystone, error) {
-	key := []byte(fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hex.EncodeToString(l2KeystoneAbrevHash[:])))
+	l2copy := make([]byte, len(l2KeystoneAbrevHash))
+	copy(l2copy, l2KeystoneAbrevHash)
+	slices.Reverse(l2copy)
+
+	key := []byte(fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hex.EncodeToString(l2copy[:])))
 	b, err := db.Get(key)
 	if err != nil {
 		return nil, err

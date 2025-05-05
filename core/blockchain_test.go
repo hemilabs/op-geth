@@ -49,7 +49,6 @@ import (
 	"github.com/go-test/deep"
 	"github.com/hemilabs/heminetwork/hemi"
 	"github.com/holiman/uint256"
-	"golang.org/x/exp/slices"
 )
 
 // So we can deterministically seed different blockchains
@@ -4483,7 +4482,6 @@ func TestL2Keystones(t *testing.T) {
 		}
 
 		q := hemi.L2KeystoneAbbreviate(l2Keystone).Hash().CloneBytes()
-		slices.Reverse(q)
 		l2KeystoneFromDB, err := blockchain.GetKeystoneByAbrevHash(q)
 		if err != nil {
 			t.Fatal(err)
@@ -4515,7 +4513,6 @@ func TestL2Keystones(t *testing.T) {
 		}
 
 		q := hemi.L2KeystoneAbbreviate(l2Keystone).Hash().CloneBytes()
-		slices.Reverse(q)
 
 		// change some byte
 		q[2] ^= 0xFF
@@ -4563,7 +4560,6 @@ func TestL2Keystones(t *testing.T) {
 		}
 
 		q := hemi.L2KeystoneAbbreviate(firstKeystone).Hash().CloneBytes()
-		slices.Reverse(q)
 
 		l2Keystones, err := blockchain.GetKeystoneAndDescendants(q, 4)
 		if err != nil {
@@ -4604,7 +4600,6 @@ func TestL2Keystones(t *testing.T) {
 		}
 
 		q := hemi.L2KeystoneAbbreviate(l2Keystone).Hash().CloneBytes()
-		slices.Reverse(q)
 
 		// change some byte
 		q[2] ^= 0xFF
