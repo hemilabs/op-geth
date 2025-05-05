@@ -23,8 +23,6 @@ import (
 	"errors"
 	"fmt"
 	"math/big"
-	"net"
-	"net/http"
 	"os"
 	"reflect"
 	"slices"
@@ -1485,9 +1483,9 @@ func TestStandardTraceBlockToFile(t *testing.T) {
 		b.AddTx(tx)
 		txHashs = append(txHashs, tx.Hash())
 	})
-	defer backend.teardown()
+	defer backend.chain.Stop()
 
-	testSuite := []struct {
+	var testSuite = []struct {
 		blockNumber rpc.BlockNumber
 		config      *StdTraceConfig
 		want        []string
