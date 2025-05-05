@@ -314,9 +314,7 @@ func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, max
 // A null will be returned if the transaction is not found. This can be due to
 // the transaction indexer not being finished. The caller must explicitly check
 // the indexer progress.
-//
-// Notably, only the transaction in the canonical chain is visible.
-func (bc *BlockChain) GetCanonicalTransaction(hash common.Hash) (*rawdb.LegacyTxLookupEntry, *types.Transaction) {
+func (bc *BlockChain) GetTransactionLookup(hash common.Hash) (*rawdb.LegacyTxLookupEntry, *types.Transaction) {
 	bc.txLookupLock.RLock()
 	defer bc.txLookupLock.RUnlock()
 
@@ -467,21 +465,6 @@ func (bc *BlockChain) TxIndexProgress() (TxIndexProgress, error) {
 		return TxIndexProgress{}, errors.New("tx indexer is not enabled")
 	}
 	return bc.txIndexer.txIndexProgress(), nil
-}
-
-// StateIndexProgress returns the historical state indexing progress.
-func (bc *BlockChain) StateIndexProgress() (uint64, error) {
-	return bc.triedb.IndexProgress()
-}
-
-// HistoryPruningCutoff returns the configured history pruning point.
-// Blocks before this might not be available in the database.
-func (bc *BlockChain) HistoryPruningCutoff() (uint64, common.Hash) {
-	pt := bc.historyPrunePoint.Load()
-	if pt == nil {
-		return 0, bc.genesisBlock.Hash()
-	}
-	return pt.BlockNumber, pt.BlockHash
 }
 
 // HistoryPruningCutoff returns the configured history pruning point.
