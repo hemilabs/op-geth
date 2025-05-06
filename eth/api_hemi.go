@@ -11,7 +11,7 @@ import (
 	"github.com/hemilabs/heminetwork/hemi"
 )
 
-const maxL2KeystoneCount uint = 20
+const maxL2KeystoneCount uint = 50
 
 type L2KeystoneValidityRequest struct {
 	L2KeystoneHash chainhash.Hash `json:"l2_keystone_hash"`
