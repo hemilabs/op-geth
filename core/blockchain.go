@@ -4923,20 +4923,12 @@ func (bc *BlockChain) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, err
 	bc.keystoneMtx.RLock()
 	defer bc.keystoneMtx.RUnlock()
 
-	if count > 10 {
-		return nil, errors.New("count too large")
-	}
-
 	return rawdb.ReadMostRecentL2Keystones(bc.db, count)
 }
 
 func (bc *BlockChain) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
 	bc.keystoneMtx.RLock()
 	defer bc.keystoneMtx.RUnlock()
-
-	if count > 10 {
-		return nil, errors.New("count too large")
-	}
 
 	return rawdb.GetKeystoneAndDescendants(bc.db, hash, count)
 }

@@ -25,7 +25,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
@@ -49,8 +48,6 @@ import (
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/ethereum/go-ethereum/trie"
-	"github.com/hemilabs/heminetwork/api/protocol"
-	"github.com/hemilabs/heminetwork/hemi"
 	"github.com/holiman/uint256"
 	"github.com/tyler-smith/go-bip39"
 )
@@ -2349,96 +2346,6 @@ func (api *DebugAPI) SetHead(number hexutil.Uint64) {
 
 func (api *DebugAPI) ChainConfig() *params.ChainConfig {
 	return api.b.ChainConfig()
-}
-
-// KeystoneAPI offers HEMI keystone related RPC methods
-// XXX Add mutex
-type HemiAPI struct {
-	b Backend
-}
-
-// NewHemiAPI creates a new net API instance.
-func NewHemiAPI(b Backend) *HemiAPI {
-	return &HemiAPI{b: b}
-}
-
-// XXX make this import when hemi refactor is complete
-type L2KeystoneResponse struct {
-	L2Keystones []hemi.L2Keystone `json:"keystones"`
-	Error       *protocol.Error   `json:"error,omitempty"`
-}
-
-// GetLatestKeystones returns the N latest keystones,
-// ordered by L2 Block Number in descending order.
-func (api *HemiAPI) GetLatestKeystones(count uint) L2KeystoneResponse {
-	kss, err := api.b.GetMostRecentKeystones(count)
-	if err != nil {
-		resp := L2KeystoneResponse{Error: protocol.Errorf("failed to retrieve keystones")}
-		return resp
-	}
-
-	resp := L2KeystoneResponse{L2Keystones: kss}
-	return resp
-}
-
-// GetKeystone returns a keystones and N number
-// of its descendants.
-func (api *HemiAPI) GetKeystone(abrevHash string, count uint) L2KeystoneResponse {
-	_, err := chainhash.NewHashFromStr(abrevHash)
-	if err != nil {
-		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
-		return resp
-	}
-
-	b, err := hex.DecodeString(abrevHash)
-	if err != nil {
-		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
-		return resp
-	}
-
-	kss, err := api.b.GetKeystoneAndDescendants(b, count)
-	if err != nil {
-		resp := L2KeystoneResponse{Error: protocol.Errorf(err.Error())}
-		return resp
-	}
-
-	resp := L2KeystoneResponse{L2Keystones: kss}
-	return resp
-}
-
-// NewKeystones creates a subscription that notifies a pop miner when a new keystone is available.
-func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error) {
-	notifier, supported := rpc.NotifierFromContext(ctx)
-	if !supported {
-		return &rpc.Subscription{}, rpc.ErrNotificationsUnsupported
-	}
-
-	rpcSub := notifier.CreateSubscription()
-	subCh := make(chan string, 10)
-	kf := api.b.KeystoneFeed()
-	if kf == nil {
-		log.Info("subscription attempt during opgeth shutdown")
-		return nil, nil
-	}
-	feedSub := kf.Subscribe(subCh)
-
-	go func() {
-		defer func() {
-			feedSub.Unsubscribe()
-		}()
-		for {
-			select {
-			case notif := <-subCh:
-				notifier.Notify(rpcSub.ID, notif)
-			case <-rpcSub.Err(): // client send an unsubscribe request
-				return
-			case <-notifier.Closed(): // connection dropped
-				return
-			}
-		}
-	}()
-
-	return rpcSub, nil
 }
 
 // NetAPI offers network related RPC methods
