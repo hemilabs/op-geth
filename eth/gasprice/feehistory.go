@@ -136,7 +136,7 @@ func (oracle *Oracle) processBlock(bf *blockFees, percentiles []float64) {
 	sorter := make([]txGasAndReward, len(bf.block.Transactions()))
 	for i, tx := range bf.block.Transactions() {
 		var reward *big.Int
-		if tx.Type() == types.PopPayoutTxType {
+		if tx.Type() == types.PopPayoutTxType || tx.Type() == types.BtcAttributesDepositedTxType {
 			reward = new(big.Int)
 		} else {
 			reward, _ = tx.EffectiveGasTip(bf.block.BaseFee())

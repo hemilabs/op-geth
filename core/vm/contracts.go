@@ -371,6 +371,7 @@ func FixMismatchedIndexesIfRequired(ctx context.Context) {
 
 // TBCIndexToHeader is a convenience pass-through to TBCIndexToHashHeight with
 // a Bitcoin header provided, and also updates the known upstream consensus tip
+// that index advancement is based on.
 func TBCIndexToHeader(header *wire.BlockHeader, upstreamTip *wire.BlockHeader) error {
 	targetHash := header.BlockHash()
 	_, targetHeight, err := TBCFullNode.BlockHeaderByHash(MainCtx, targetHash)
