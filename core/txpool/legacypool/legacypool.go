@@ -20,6 +20,7 @@ package legacypool
 import (
 	"context"
 	"errors"
+	"fmt"
 	"math"
 	"math/big"
 	"slices"
@@ -569,6 +570,7 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 	)
 	if filter.MinTip != nil {
 		minTipBig = filter.MinTip.ToBig()
+		log.Info(fmt.Sprintf("minTipBig: %d", minTipBig))
 	}
 	if filter.BaseFee != nil {
 		baseFeeBig = filter.BaseFee.ToBig()
@@ -583,6 +585,8 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 				if tx.EffectiveGasTipIntCmp(minTipBig, baseFeeBig) < 0 {
 					txs = txs[:i]
 					break
+				} else {
+					log.Info(fmt.Sprintf("tx %s is being removed for being below tip threshold", tx.Hash().String()))
 				}
 			}
 		}

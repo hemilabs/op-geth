@@ -516,6 +516,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		// Check interruption signal and abort building if it's fired.
 		if interrupt != nil {
 			if signal := interrupt.Load(); signal != commitInterruptNone {
+				log.Info("block building interrupted")
 				return signalToErr(signal)
 			}
 		}
@@ -552,6 +553,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			}
 		}
 		if ltx == nil {
+			log.Info("No transactions left in commitTransactions, breaking")
 			break
 		}
 		// If we don't have enough space for the next transaction, skip the account.
@@ -585,6 +587,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 				// then we can stop early.
 				daBytesRemaining := new(big.Int).Sub(miner.config.MaxDABlockSize, daBytesAfter)
 				if daBytesRemaining.Cmp(types.MinTransactionSize) < 0 {
+					log.Info("Hit max da bytes, breaking")
 					break
 				}
 				continue
@@ -623,6 +626,9 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		env.state.SetTxContext(tx.Hash(), env.tcount)
 
 		err := miner.commitTransaction(env, tx)
+		if err != nil {
+			log.Info(fmt.Sprintf("Encountered error processing tx %s", tx.Hash().String()), "err", err)
+		}
 		switch {
 		case errors.Is(err, core.ErrNonceTooLow):
 			// New head notification data race between the transaction pool and miner, shift
@@ -670,6 +676,8 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 	prio := miner.prio
 	miner.confMu.RUnlock()
 
+	log.Info(fmt.Sprintf("Filtering transactions with tip below %d", tip))
+
 	// Retrieve the pending transactions pre-filtered by the 1559/4844 dynamic fees
 	filter := txpool.PendingFilter{
 		MinTip:      uint256.MustFromBig(tip),
@@ -677,12 +685,19 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 	}
 	if env.header.BaseFee != nil {
 		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
+		log.Info(fmt.Sprintf("Filter base fee: %d", filter.BaseFee))
 	}
 	if env.header.ExcessBlobGas != nil {
 		filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(miner.chainConfig, env.header))
 	}
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = true, false
 	pendingPlainTxs := miner.txpool.Pending(filter)
+
+	count := 0
+	for addr, _ := range pendingPlainTxs {
+		count += len(pendingPlainTxs[addr])
+	}
+	log.Info(fmt.Sprintf("fill transactions has %d pending plain transactions", count))
 
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = false, true
 	pendingBlobTxs := miner.txpool.Pending(filter)
@@ -710,6 +725,9 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 			return err
 		}
 	}
+
+	log.Info(fmt.Sprintf("Have %d normal plain txes and %d normal blob txes", len(normalPlainTxs), len(normalBlobTxs)))
+
 	if len(normalPlainTxs) > 0 || len(normalBlobTxs) > 0 {
 		plainTxs := newTransactionsByPriceAndNonce(env.signer, normalPlainTxs, env.header.BaseFee)
 		blobTxs := newTransactionsByPriceAndNonce(env.signer, normalBlobTxs, env.header.BaseFee)
