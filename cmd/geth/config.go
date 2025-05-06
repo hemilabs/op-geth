@@ -446,7 +446,7 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 						continue
 					} else {
 						// All blocks are available to index up to the genesis header, so move the indexer forward
-						err := vm.TBCIndexToHeader(genesisHeader)
+						err := vm.TBCIndexToHeader(genesisHeader, genesisHeader)
 						if err != nil {
 							log.Crit(fmt.Sprintf("On startup, TBC Full Node reports full knowledge of all "+
 								"blocks required to index to the hVM effective genesis block %s @ %d but returned "+

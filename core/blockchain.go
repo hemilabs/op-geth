@@ -2593,7 +2593,7 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 	log.Info(fmt.Sprintf("Moving TBC Full Node indexes to BTC block %s", cursorHeader.BlockHash().String()))
 
 	// This single indexer function handles any reorgs required to move the TBC full node to the specified index.
-	err = vm.TBCIndexToHeader(cursorHeader)
+	err = vm.TBCIndexToHeader(cursorHeader, lightTipHeader)
 	if err != nil {
 		// If we attempted the indexing above, all of the data required to update the indexers is  known so any
 		//error that occurs here indicates either a bug or a data corruption issue with the full TBC node
