@@ -587,7 +587,7 @@ func (rs Receipts) EncodeIndex(i int, w *bytes.Buffer) {
 	}
 	w.WriteByte(r.Type)
 	switch r.Type {
-	case AccessListTxType, DynamicFeeTxType, BlobTxType, PopPayoutTxType, BtcAttributesDepositedTxType:
+	case AccessListTxType, DynamicFeeTxType, BlobTxType, PopPayoutTxType, BtcAttributesDepositedTxType, SetCodeTxType:
 		rlp.Encode(w, data)
 	case DepositTxType:
 		if r.DepositReceiptVersion != nil {
