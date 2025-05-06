@@ -1,4 +1,4 @@
-package ethapi
+package eth
 
 import (
 	"context"
@@ -36,12 +36,12 @@ type L2KeystoneLatestResponse struct {
 
 // KeystoneAPI offers HEMI keystone related RPC methods
 type HemiAPI struct {
-	b Backend
+	e *Ethereum
 }
 
 // NewHemiAPI creates a new net API instance.
-func NewHemiAPI(b Backend) *HemiAPI {
-	return &HemiAPI{b: b}
+func NewHemiAPI(e *Ethereum) *HemiAPI {
+	return &HemiAPI{e: e}
 }
 
 // GetLatestKeystones returns the N latest keystones,
@@ -52,7 +52,7 @@ func (api *HemiAPI) GetLatestKeystones(count uint) L2KeystoneLatestResponse {
 		return resp
 	}
 
-	kss, err := api.b.GetMostRecentKeystones(count)
+	kss, err := api.e.APIBackend.GetMostRecentKeystones(count)
 	if err != nil {
 		resp := L2KeystoneLatestResponse{Error: protocol.Errorf("failed to retrieve keystones")}
 		return resp
@@ -82,7 +82,7 @@ func (api *HemiAPI) GetKeystone(abrevHash string, count uint) L2KeystoneValidity
 		return resp
 	}
 
-	kss, err := api.b.GetKeystoneAndDescendants(b, count)
+	kss, err := api.e.APIBackend.GetKeystoneAndDescendants(b, count)
 	if err != nil {
 		resp := L2KeystoneValidityResponse{Error: protocol.Errorf(err.Error())}
 		return resp
@@ -101,7 +101,7 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 
 	rpcSub := notifier.CreateSubscription()
 	subCh := make(chan string, 10)
-	kf := api.b.KeystoneFeed()
+	kf := api.e.KeystoneFeed()
 	if kf == nil {
 		log.Info("subscription attempt during opgeth shutdown")
 		return nil, nil
