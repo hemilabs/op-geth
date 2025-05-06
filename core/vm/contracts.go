@@ -804,7 +804,17 @@ func activePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 
 // ActivePrecompiledContracts returns a copy of precompiled contracts enabled with the current configuration.
 func ActivePrecompiledContracts(rules params.Rules) PrecompiledContracts {
-	return maps.Clone(activePrecompiledContracts(rules))
+	precompiles := maps.Clone(activePrecompiledContracts(rules))
+
+	switch {
+	case rules.IsHvm0:
+		for k, v := range PrecompiledContractsHvm0 {
+			precompiles[k] = v
+		}
+		return precompiles
+	default:
+		return precompiles
+	}
 }
 
 // ActivePrecompiles returns the precompiles enabled with the current configuration.

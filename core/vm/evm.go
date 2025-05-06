@@ -164,7 +164,7 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, chainConfig *params.ChainCon
 		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
 		jumpDests:   make(map[common.Hash]bitvec),
 	}
-	evm.precompiles = activePrecompiledContracts(evm.chainRules)
+	evm.precompiles = ActivePrecompiledContracts(evm.chainRules)
 	evm.interpreter = NewEVMInterpreter(evm)
 
 	return evm
