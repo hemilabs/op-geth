@@ -131,9 +131,6 @@ func GetAPIs(apiBackend Backend) []rpc.API {
 		}, {
 			Namespace: "personal",
 			Service:   NewPersonalAccountAPI(apiBackend, nonceLock),
-		}, {
-			Namespace: "kss",
-			Service:   NewHemiAPI(apiBackend),
 		},
 	}
 }
