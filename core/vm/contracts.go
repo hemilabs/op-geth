@@ -238,7 +238,7 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 	log.Info("TBCIndexToHashHight called with target", "target", targetHH.String())
 	// Check for indexer desync and attempt to fix.
-	FixMismatchedIndexesIfRequired(context.Background())
+	FixMismatchedIndexesIfRequired(MainCtx)
 
 	targetHash := targetHH.Hash
 
