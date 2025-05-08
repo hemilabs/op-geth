@@ -396,9 +396,28 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct and store the state history first. If crash happens after storing
 	// the state history but without flushing the corresponding states(journal),
 	// the stored state history will be truncated from head in the next restart.
-	flush, err := dl.writeStateHistory(bottom)
-	if err != nil {
-		return nil, err
+	var (
+		overflow bool
+		oldest   uint64
+	)
+	if dl.db.freezer != nil {
+		// Bail out with an error if writing the state history fails.
+		// This can happen, for example, if the device is full.
+		err := writeHistory(dl.db.freezer, bottom)
+		if err != nil {
+			return nil, err
+		}
+		// Determine if the persisted history object has exceeded the configured
+		// limitation, set the overflow as true if so.
+		tail, err := dl.db.freezer.Tail()
+		if err != nil {
+			return nil, err
+		}
+		limit := dl.db.config.StateHistory
+		if limit != 0 && bottom.stateID()-tail > limit {
+			overflow = true
+			oldest = bottom.stateID() - limit + 1 // track the id of history **after truncation**
+		}
 	}
 	// Mark the diskLayer as stale before applying any mutations on top.
 	dl.stale = true
