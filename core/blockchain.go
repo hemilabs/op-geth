@@ -19,6 +19,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -51,6 +52,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/state/snapshot"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/internal/syncx"
@@ -176,6 +178,8 @@ const (
 	// 0x1a03fffc = difficulty of 4194304
 	testnet3LowDiffThresholdForTipLag = 436469756
 )
+
+var errNotFound = database.NotFoundError("")
 
 // CacheConfig contains the configuration values for the trie database
 // and state snapshot these are resident in a blockchain.
@@ -332,7 +336,10 @@ type BlockChain struct {
 
 	ctx context.Context
 
-	keystoneMtx sync.RWMutex
+	keystoneMtx         sync.RWMutex
+	keystoneBackfillMtx sync.RWMutex
+
+	keystonesBackfilled bool
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
@@ -1545,7 +1552,6 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		it, cbh, lbh, _, err := bc.tbcHeaderNode.AddExternalHeaders(
 			bc.ctx, reconstitutedHeaders, stateTransitionTargetHash[:])
 		if err != nil {
-			errNotFound := database.NotFoundError("")
 			if errors.Is(err, errNotFound) {
 				log.Warn("could not find (likely) previously block header, indicating a corrupt state: %s", err)
 				return consensus.ErrCorruptHVMHeaderOnlyModeState
@@ -4938,4 +4944,239 @@ func (bc *BlockChain) GetKeystoneByAbrevHash(hash []byte) (*hemi.L2Keystone, err
 	defer bc.keystoneMtx.RUnlock()
 
 	return rawdb.ReadL2KeystoneByAbrevHash(bc.db, hash)
+}
+
+func (bc *BlockChain) DeleteKeystonesAboveHeight(height uint64) error {
+	bc.keystoneMtx.RLock()
+	defer bc.keystoneMtx.RUnlock()
+
+	return rawdb.DeleteL2KeystonesAboveHeight(bc.db, height)
+}
+
+var (
+	errNoTransactionOnBlock = errors.New("no transactions on block?")
+)
+
+func (bc *BlockChain) l2BlockNumberToKeystone(l2BlockNumber uint32) (*hemi.L2Keystone, error) {
+	l2Block := bc.GetBlockByNumber(uint64(l2BlockNumber))
+	if l2Block == nil {
+		return nil, fmt.Errorf("could not get l2blockbynumber")
+	}
+
+	if len(l2Block.Transactions()) == 0 {
+		return nil, errNoTransactionOnBlock
+	}
+
+	if l2Block.Transactions()[0].Type() != types.DepositTxType {
+		return nil, fmt.Errorf("incorrect transaction type found: %d", l2Block.Transactions()[0].Type())
+	}
+
+	l1BlockNumber, err := bc.deriveL1BlockNumberFromData(l2Block.Time(), l2Block.Transactions()[0].Data())
+	if err != nil {
+		return nil, fmt.Errorf("could not derive l2 block number from data: %s", err)
+	}
+
+	l2Keystone := hemi.L2Keystone{
+		Version:            uint8(1),
+		L1BlockNumber:      uint32(l1BlockNumber),
+		L2BlockNumber:      l2BlockNumber,
+		ParentEPHash:       l2Block.ParentHash().Bytes(),
+		PrevKeystoneEPHash: nil,
+		StateRoot:          l2Block.Root().Bytes(),
+		EPHash:             l2Block.Hash().Bytes(),
+	}
+
+	if l2Keystone.L2BlockNumber >= hemi.KeystoneHeaderPeriod {
+		subResult := l2Keystone.L2BlockNumber - hemi.KeystoneHeaderPeriod
+
+		// note that genesis does not have any transaction so we can't derive
+		// l1 block info
+		if subResult > 0 {
+			prevKeystone, err := bc.l2BlockNumberToKeystone(subResult)
+			if err != nil {
+				return nil, fmt.Errorf("error getting previous keystone at block number %d: %s", subResult, err)
+			}
+
+			l2Keystone.PrevKeystoneEPHash = prevKeystone.EPHash
+		}
+
+	}
+
+	return &l2Keystone, nil
+}
+
+func (bc *BlockChain) upsertKeystoneAtL2BlockNumber(l2BlockNumber uint32) (bool, error) {
+	bc.keystoneBackfillMtx.Lock()
+	defer bc.keystoneBackfillMtx.Unlock()
+
+	l2Keystone, err := bc.l2BlockNumberToKeystone(l2BlockNumber)
+	if err != nil {
+		return false, fmt.Errorf("error getting l2keystone: %s", err)
+	}
+
+	l2KeystoneAbrev := hemi.L2KeystoneAbbreviate(*l2Keystone)
+
+	_, err = bc.GetKeystoneByAbrevHash(l2KeystoneAbrev.Hash().CloneBytes())
+	insertedNew := err != nil
+	if err != nil {
+		// there isn't a great way to determine if this is a "not found"
+		// error, so assume it is.  thus debug log level when not nil
+		log.Debug("error when finding keystone by abrev hash is not nil",
+			"error", err)
+	}
+
+	if err := bc.InsertL2Keystone(*l2Keystone); err != nil {
+		return false, err
+	}
+
+	return insertedNew, nil
+}
+
+func (bc *BlockChain) BackfillKeystones() error {
+	bc.keystoneBackfillMtx.Lock()
+
+	headL2Block := bc.CurrentBlock()
+	if headL2Block == nil {
+		bc.keystoneBackfillMtx.Unlock()
+		return fmt.Errorf("could not find current head")
+	}
+
+	l2BlockNumber := headL2Block.Number.Uint64()
+	if err := bc.DeleteKeystonesAboveHeight(l2BlockNumber); err != nil {
+		bc.keystoneBackfillMtx.Unlock()
+		return err
+	}
+
+	bc.keystoneBackfillMtx.Unlock()
+
+	// we want to start backfilling at the unsafe block
+	// we will continue to either the finalized block if it exists or genesis
+	// if not
+	finalizedBlockNumber := uint64(0)
+	finalizedBlock := bc.CurrentFinalBlock()
+	if finalizedBlock != nil {
+		finalizedBlockNumber = finalizedBlock.Number.Uint64()
+	}
+
+	// this should not be the case
+	if l2BlockNumber < finalizedBlockNumber {
+		return fmt.Errorf("unsafe block behind finalized block? %d < %d", l2BlockNumber, finalizedBlockNumber)
+	}
+
+	log.Debug("will backfill", "start", l2BlockNumber, "end", finalizedBlockNumber)
+
+	for {
+		// note that genesis does not have any transaction so we can't derive
+		// l1 block info
+		if l2BlockNumber == 0 {
+			break
+		}
+
+		// we upsert the keystone, and we make not if we inserted vs upserted
+		// we use this a few lines below
+		insertedNew, err := bc.upsertKeystoneAtL2BlockNumber(uint32(l2BlockNumber))
+		if err != nil {
+			return fmt.Errorf("error upserting keystone: %s", err)
+		}
+
+		if l2BlockNumber <= 0 {
+			break
+		}
+
+		// if insertedNew is true then we have inserted a brand new keystone
+		// (not upserted) if this is the case it MAY be due to missing keystones
+		// so continue the for loop if we inserted a new one to handle
+		// more missing ones
+
+		bc.keystoneBackfillMtx.Lock()
+		keystonesBackfilled := bc.keystonesBackfilled
+		bc.keystoneBackfillMtx.Unlock()
+
+		if keystonesBackfilled && l2BlockNumber < finalizedBlockNumber && !insertedNew {
+			break
+		}
+
+		l2BlockNumber -= hemi.KeystoneHeaderPeriod
+	}
+
+	// we always want this to run to genesis once on startup to backfill
+	// all keystones and validate that they are correct
+	// once this initial backfill is done, then we can continue from
+	// either the finalized block or the last known keystone
+	bc.keystoneBackfillMtx.Lock()
+	bc.keystonesBackfilled = true
+	bc.keystoneBackfillMtx.Unlock()
+
+	return nil
+}
+
+// note that below here was code all-but-copied from optimism to derive l1 block info
+// from the l2 chain
+
+const (
+	l1InfoFuncBedrockSignature = "setL1BlockValues(uint64,uint64,uint256,bytes32,uint64,bytes32,uint256,uint256)"
+	l1InfoFuncEcotoneSignature = "setL1BlockValuesEcotone()"
+	l1InfoArguments            = 8
+	l1InfoBedrockLen           = 4 + 32*l1InfoArguments
+	l1InfoEcotoneLen           = 4 + 32*5 // after Ecotone upgrade, args are packed into 5 32-byte slots
+)
+
+var (
+	l1InfoFuncBedrockBytes4          = crypto.Keccak256([]byte(l1InfoFuncBedrockSignature))[:4]
+	l1InfoFuncEcotoneBytes4          = crypto.Keccak256([]byte(l1InfoFuncEcotoneSignature))[:4]
+	l1InfoDepositerAddress           = common.HexToAddress("0xdeaddeaddeaddeaddeaddeaddeaddeaddead0001")
+	l1BlockAddress                   = common.HexToAddress("0x4200000000000000000000000000000000000015")
+	uint8EmptyPadding       [31]byte = [31]byte{}
+	addressEmptyPadding     [12]byte = [12]byte{}
+	uint64EmptyPadding      [24]byte = [24]byte{}
+)
+
+func validateSignature(potentialSignature []byte, expectedSignature []byte) ([]byte, error) {
+	if !bytes.Equal(potentialSignature, expectedSignature) {
+		return nil, errors.New("invalid function signature")
+	}
+	return potentialSignature, nil
+}
+
+func unmarshalBinaryEcotone(data []byte) (uint64, error) {
+	if len(data) != l1InfoEcotoneLen {
+		return 0, fmt.Errorf("data is unexpected length for ecootone: %d", len(data))
+	}
+
+	if _, err := validateSignature(data[:4], l1InfoFuncEcotoneBytes4); err != nil {
+		return 0, err
+	}
+
+	offset := 4 + // signature
+		4 + // base fee
+		4 + // base fee scalar
+		8 + // sequence number
+		8 // time
+	size := 8
+
+	return binary.BigEndian.Uint64(data[offset : offset+size]), nil
+}
+
+func unmarshalBinaryBedrock(data []byte) (uint64, error) {
+	if len(data) != l1InfoBedrockLen {
+		return 0, fmt.Errorf("data is unexpected length for bedrock: %d", len(data))
+	}
+
+	if _, err := validateSignature(data[:4], l1InfoFuncBedrockBytes4); err != nil {
+		return 0, err
+	}
+
+	offset := 4 + // signature
+		(32 - 8) //padding
+
+	size := 8
+
+	return binary.BigEndian.Uint64(data[offset : offset+size]), nil
+}
+
+func (bc *BlockChain) deriveL1BlockNumberFromData(l2BlockTime uint64, data []byte) (uint64, error) {
+	if bc.chainConfig.IsEcotone(l2BlockTime) {
+		return unmarshalBinaryEcotone(data)
+	}
+	return unmarshalBinaryBedrock(data)
 }

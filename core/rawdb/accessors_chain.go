@@ -1115,6 +1115,32 @@ func ReadMostRecentL2Keystones(db ethdb.Database, count uint) ([]hemi.L2Keystone
 	return results, nil
 }
 
+func DeleteL2KeystonesAboveHeight(db ethdb.Database, height uint64) error {
+	it := db.NewIterator([]byte(fmt.Sprintf("%s-height", l2KeystonePrefix)), nil)
+	defer it.Release()
+	for it.Next() {
+
+		key := it.Value()
+		val, err := db.Get(key)
+		if err != nil {
+			return err
+		}
+
+		var l2Keystone hemi.L2Keystone
+		if err := json.Unmarshal(val, &l2Keystone); err != nil {
+			return err
+		}
+
+		if uint64(l2Keystone.L2BlockNumber) > height {
+			if err := db.Delete(key); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func ReadL2KeystoneByAbrevHash(db ethdb.Database, l2KeystoneAbrevHash []byte) (*hemi.L2Keystone, error) {
 	l2copy := make([]byte, len(l2KeystoneAbrevHash))
 	copy(l2copy, l2KeystoneAbrevHash)
