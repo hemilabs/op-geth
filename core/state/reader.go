@@ -19,7 +19,6 @@ package state
 import (
 	"errors"
 	"sync"
-	"sync/atomic"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/lru"
@@ -34,6 +33,24 @@ import (
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/ethereum/go-ethereum/triedb/database"
 )
+
+// bufferPool holds the buffers for keccak calculation.
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		return crypto.NewKeccakState()
+	},
+}
+
+// allocBuff allocates the keccak buffer from the pool
+func allocBuff() crypto.KeccakState {
+	return bufferPool.Get().(crypto.KeccakState)
+}
+
+// releaseBuff returns the provided keccak buffer to the pool. It's unnecessary
+// to clear the buffer, as it will be cleared before the calculation.
+func releaseBuff(buff crypto.KeccakState) {
+	bufferPool.Put(buff)
+}
 
 // ContractCodeReader defines the interface for accessing contract code.
 type ContractCodeReader interface {
@@ -165,7 +182,10 @@ func newFlatReader(reader database.StateReader) *flatReader {
 //
 // The returned account might be nil if it's not existent.
 func (r *flatReader) Account(addr common.Address) (*types.StateAccount, error) {
-	account, err := r.reader.Account(crypto.Keccak256Hash(addr.Bytes()))
+	buff := allocBuff()
+	defer releaseBuff(buff)
+
+	account, err := r.reader.Account(crypto.HashData(buff, addr.Bytes()))
 	if err != nil {
 		return nil, err
 	}
@@ -195,8 +215,11 @@ func (r *flatReader) Account(addr common.Address) (*types.StateAccount, error) {
 //
 // The returned storage slot might be empty if it's not existent.
 func (r *flatReader) Storage(addr common.Address, key common.Hash) (common.Hash, error) {
-	addrHash := crypto.Keccak256Hash(addr.Bytes())
-	slotHash := crypto.Keccak256Hash(key.Bytes())
+	buff := allocBuff()
+	defer releaseBuff(buff)
+
+	addrHash := crypto.HashData(buff, addr.Bytes())
+	slotHash := crypto.HashData(buff, key.Bytes())
 	ret, err := r.reader.Storage(addrHash, slotHash)
 	if err != nil {
 		return common.Hash{}, err
@@ -220,8 +243,9 @@ func (r *flatReader) Storage(addr common.Address, key common.Hash) (common.Hash,
 //
 // trieReader is safe for concurrent read.
 type trieReader struct {
-	root common.Hash      // State root which uniquely represent a state
-	db   *triedb.Database // Database for loading trie
+	root common.Hash        // State root which uniquely represent a state
+	db   *triedb.Database   // Database for loading trie
+	buff crypto.KeccakState // Buffer for keccak256 hashing
 
 	// Main trie, resolved in constructor. Note either the Merkle-Patricia-tree
 	// or Verkle-tree is not safe for concurrent read.
@@ -442,43 +466,35 @@ func newReaderWithCache(reader Reader) *readerWithCache {
 	return r
 }
 
-// account retrieves the account specified by the address along with a flag
-// indicating whether it's found in the cache or not. The returned account
-// might be nil if it's not existent.
-//
-// An error will be returned if the state is corrupted in the underlying reader.
-func (r *readerWithCache) account(addr common.Address) (*types.StateAccount, bool, error) {
-	// Try to resolve the requested account in the local cache
-	r.accountLock.RLock()
-	acct, ok := r.accounts[addr]
-	r.accountLock.RUnlock()
-	if ok {
-		return acct, true, nil
-	}
-	// Try to resolve the requested account from the underlying reader
-	acct, err := r.Reader.Account(addr)
-	if err != nil {
-		return nil, false, err
-	}
-	r.accountLock.Lock()
-	r.accounts[addr] = acct
-	r.accountLock.Unlock()
-	return acct, false, nil
-}
-
 // Account implements StateReader, retrieving the account specified by the address.
 // The returned account might be nil if it's not existent.
 //
 // An error will be returned if the state is corrupted in the underlying reader.
 func (r *readerWithCache) Account(addr common.Address) (*types.StateAccount, error) {
-	account, _, err := r.account(addr)
-	return account, err
+	// Try to resolve the requested account in the local cache
+	r.accountLock.RLock()
+	acct, ok := r.accounts[addr]
+	r.accountLock.RUnlock()
+	if ok {
+		return acct, nil
+	}
+	// Try to resolve the requested account from the underlying reader
+	acct, err := r.Reader.Account(addr)
+	if err != nil {
+		return nil, err
+	}
+	r.accountLock.Lock()
+	r.accounts[addr] = acct
+	r.accountLock.Unlock()
+	return acct, nil
 }
 
-// storage retrieves the storage slot specified by the address and slot key, along
-// with a flag indicating whether it's found in the cache or not. The returned
-// storage slot might be empty if it's not existent.
-func (r *readerWithCache) storage(addr common.Address, slot common.Hash) (common.Hash, bool, error) {
+// Storage implements StateReader, retrieving the storage slot specified by the
+// address and slot key. The returned storage slot might be empty if it's not
+// existent.
+//
+// An error will be returned if the state is corrupted in the underlying reader.
+func (r *readerWithCache) Storage(addr common.Address, slot common.Hash) (common.Hash, error) {
 	var (
 		value  common.Hash
 		ok     bool
@@ -492,12 +508,12 @@ func (r *readerWithCache) storage(addr common.Address, slot common.Hash) (common
 	}
 	bucket.lock.RUnlock()
 	if ok {
-		return value, true, nil
+		return value, nil
 	}
 	// Try to resolve the requested storage slot from the underlying reader
 	value, err := r.Reader.Storage(addr, slot)
 	if err != nil {
-		return common.Hash{}, false, err
+		return common.Hash{}, err
 	}
 	bucket.lock.Lock()
 	slots, ok = bucket.storages[addr]
@@ -508,75 +524,5 @@ func (r *readerWithCache) storage(addr common.Address, slot common.Hash) (common
 	slots[slot] = value
 	bucket.lock.Unlock()
 
-	return value, false, nil
-}
-
-// Storage implements StateReader, retrieving the storage slot specified by the
-// address and slot key. The returned storage slot might be empty if it's not
-// existent.
-//
-// An error will be returned if the state is corrupted in the underlying reader.
-func (r *readerWithCache) Storage(addr common.Address, slot common.Hash) (common.Hash, error) {
-	value, _, err := r.storage(addr, slot)
-	return value, err
-}
-
-type readerWithCacheStats struct {
-	*readerWithCache
-	accountHit  atomic.Int64
-	accountMiss atomic.Int64
-	storageHit  atomic.Int64
-	storageMiss atomic.Int64
-}
-
-// newReaderWithCacheStats constructs the reader with additional statistics tracked.
-func newReaderWithCacheStats(reader *readerWithCache) *readerWithCacheStats {
-	return &readerWithCacheStats{
-		readerWithCache: reader,
-	}
-}
-
-// Account implements StateReader, retrieving the account specified by the address.
-// The returned account might be nil if it's not existent.
-//
-// An error will be returned if the state is corrupted in the underlying reader.
-func (r *readerWithCacheStats) Account(addr common.Address) (*types.StateAccount, error) {
-	account, incache, err := r.readerWithCache.account(addr)
-	if err != nil {
-		return nil, err
-	}
-	if incache {
-		r.accountHit.Add(1)
-	} else {
-		r.accountMiss.Add(1)
-	}
-	return account, nil
-}
-
-// Storage implements StateReader, retrieving the storage slot specified by the
-// address and slot key. The returned storage slot might be empty if it's not
-// existent.
-//
-// An error will be returned if the state is corrupted in the underlying reader.
-func (r *readerWithCacheStats) Storage(addr common.Address, slot common.Hash) (common.Hash, error) {
-	value, incache, err := r.readerWithCache.storage(addr, slot)
-	if err != nil {
-		return common.Hash{}, err
-	}
-	if incache {
-		r.storageHit.Add(1)
-	} else {
-		r.storageMiss.Add(1)
-	}
 	return value, nil
-}
-
-// GetStats implements ReaderWithStats, returning the statistics of state reader.
-func (r *readerWithCacheStats) GetStats() ReaderStats {
-	return ReaderStats{
-		AccountHit:  r.accountHit.Load(),
-		AccountMiss: r.accountMiss.Load(),
-		StorageHit:  r.storageHit.Load(),
-		StorageMiss: r.storageMiss.Load(),
-	}
 }

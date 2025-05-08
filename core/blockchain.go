@@ -3839,7 +3839,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	)
 	defer interrupt.Store(true) // terminate the prefetch at the end
 
-	if bc.cfg.NoPrefetch {
+	if bc.cacheConfig.TrieCleanNoPrefetch {
 		statedb, err = state.New(parentRoot, bc.statedb)
 		if err != nil {
 			return nil, err
@@ -3850,35 +3850,21 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 		//
 		// Note: the main processor and prefetcher share the same reader with a local
 		// cache for mitigating the overhead of state access.
-		prefetch, process, err := bc.statedb.ReadersWithCacheStats(parentRoot)
+		reader, err := bc.statedb.ReaderWithCache(parentRoot)
 		if err != nil {
 			return nil, err
 		}
-		throwaway, err := state.NewWithReader(parentRoot, bc.statedb, prefetch)
+		throwaway, err := state.NewWithReader(parentRoot, bc.statedb, reader)
 		if err != nil {
 			return nil, err
 		}
-		statedb, err = state.NewWithReader(parentRoot, bc.statedb, process)
+		statedb, err = state.NewWithReader(parentRoot, bc.statedb, reader)
 		if err != nil {
 			return nil, err
 		}
-		// Upload the statistics of reader at the end
-		defer func() {
-			stats := prefetch.GetStats()
-			accountCacheHitPrefetchMeter.Mark(stats.AccountHit)
-			accountCacheMissPrefetchMeter.Mark(stats.AccountMiss)
-			storageCacheHitPrefetchMeter.Mark(stats.StorageHit)
-			storageCacheMissPrefetchMeter.Mark(stats.StorageMiss)
-			stats = process.GetStats()
-			accountCacheHitMeter.Mark(stats.AccountHit)
-			accountCacheMissMeter.Mark(stats.AccountMiss)
-			storageCacheHitMeter.Mark(stats.StorageHit)
-			storageCacheMissMeter.Mark(stats.StorageMiss)
-		}()
-
 		go func(start time.Time, throwaway *state.StateDB, block *types.Block) {
 			// Disable tracing for prefetcher executions.
-			vmCfg := bc.cfg.VmConfig
+			vmCfg := bc.vmConfig
 			vmCfg.Tracer = nil
 			bc.prefetcher.Prefetch(block, throwaway, vmCfg, &interrupt)
 
@@ -3892,24 +3878,18 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	// If we are past Byzantium, enable prefetching to pull in trie node paths
 	// while processing transactions. Before Byzantium the prefetcher is mostly
 	// useless due to the intermediate root hashing after each transaction.
-	var (
-		witness      *stateless.Witness
-		witnessStats *stateless.WitnessStats
-	)
+	var witness *stateless.Witness
 	if bc.chainConfig.IsByzantium(block.Number()) {
 		// Generate witnesses either if we're self-testing, or if it's the
 		// only block being inserted. A bit crude, but witnesses are huge,
 		// so we refuse to make an entire chain of them.
-		if bc.cfg.VmConfig.StatelessSelfValidation || makeWitness {
+		if bc.vmConfig.StatelessSelfValidation || makeWitness {
 			witness, err = stateless.NewWitness(block.Header(), bc)
 			if err != nil {
 				return nil, err
 			}
-			if bc.cfg.VmConfig.EnableWitnessStats {
-				witnessStats = stateless.NewWitnessStats()
-			}
 		}
-		statedb.StartPrefetcher("chain", witness, witnessStats)
+		statedb.StartPrefetcher("chain", witness)
 		defer statedb.StopPrefetcher()
 	}
 
@@ -4185,6 +4165,8 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 			return nil, fmt.Errorf("stateless self-validation receipt root mismatch (cross: %x local: %x)", crossReceiptRoot, block.ReceiptHash())
 		}
 	}
+	xvtime := time.Since(xvstart)
+	proctime := time.Since(startTime) // processing + validation + cross validation
 
 	proctime := time.Since(startTime) // processing + validation + cross validation
 
@@ -4214,12 +4196,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	triedbCommitTimer.Update(statedb.TrieDBCommits)     // Trie database commits are complete, we can mark them
 
 	blockWriteTimer.Update(time.Since(wstart) - max(statedb.AccountCommits, statedb.StorageCommits) /* concurrent */ - statedb.SnapshotCommits - statedb.TrieDBCommits)
-	elapsed := time.Since(startTime) + 1 // prevent zero division
-	blockInsertTimer.Update(elapsed)
-
-	// TODO(rjl493456442) generalize the ResettingTimer
-	mgasps := float64(res.GasUsed) * 1000 / float64(elapsed)
-	chainMgaspsMeter.Update(time.Duration(mgasps))
+	blockInsertTimer.UpdateSince(startTime)
 
 	return &blockProcessingResult{
 		usedGas:  res.GasUsed,

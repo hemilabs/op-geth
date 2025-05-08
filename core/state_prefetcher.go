@@ -57,7 +57,7 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 		workers errgroup.Group
 		reader  = statedb.Reader()
 	)
-	workers.SetLimit(max(1, 4*runtime.NumCPU()/5)) // Aggressively run the prefetching
+	workers.SetLimit(runtime.NumCPU() / 2)
 
 	// Iterate over and process the individual transactions
 	for i, tx := range block.Transactions() {
@@ -92,7 +92,7 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 				}
 			}
 			// Execute the message to preload the implicit touched states
-			evm := vm.NewEVM(NewEVMBlockContext(header, p.chain, nil, p.config, stateCpy), stateCpy, p.config, cfg)
+			evm := vm.NewEVM(NewEVMBlockContext(header, p.chain, nil), stateCpy, p.config, cfg)
 
 			// Convert the transaction into an executable message and pre-cache its sender
 			msg, err := TransactionToMessage(tx, signer, header.BaseFee)
@@ -111,6 +111,12 @@ func (p *statePrefetcher) Prefetch(block *types.Block, statedb *state.StateDB, c
 				fails.Add(1)
 				return nil // Ugh, something went horribly wrong, bail out
 			}
+			// Pre-load trie nodes for the intermediate root.
+			//
+			// This operation incurs significant memory allocations due to
+			// trie hashing and node decoding. TODO(rjl493456442): investigate
+			// ways to mitigate this overhead.
+			stateCpy.IntermediateRoot(true)
 			return nil
 		})
 	}
