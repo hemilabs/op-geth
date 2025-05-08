@@ -177,7 +177,7 @@ func (l panicLogger) Fatalf(format string, args ...interface{}) {
 
 // New returns a wrapped pebble DB object. The namespace is the prefix that the
 // metrics reporting should use for surfacing internal stats.
-func New(file string, cache int, handles int, namespace string, readonly bool, ephemeral bool) (*Database, error) {
+func New(file string, cache int, handles int, namespace string, readonly bool) (*Database, error) {
 	// Ensure we have some minimal caching and file guarantees
 	if cache < minCache {
 		cache = minCache
@@ -218,10 +218,18 @@ func New(file string, cache int, handles int, namespace string, readonly bool, e
 		memTableSize = maxMemTableSize - 1
 	}
 	db := &Database{
-		fn:           file,
-		log:          logger,
-		quitChan:     make(chan chan error),
-		writeOptions: &pebble.WriteOptions{Sync: !ephemeral},
+		fn:       file,
+		log:      logger,
+		quitChan: make(chan chan error),
+
+		// Use asynchronous write mode by default. Otherwise, the overhead of frequent fsync
+		// operations can be significant, especially on platforms with slow fsync performance
+		// (e.g., macOS) or less capable SSDs.
+		//
+		// Note that enabling async writes means recent data may be lost in the event of an
+		// application-level panic (writes will also be lost on a machine-level failure,
+		// of course). Geth is expected to handle recovery from an unclean shutdown.
+		writeOptions: pebble.NoSync,
 	}
 	opt := &pebble.Options{
 		// Pebble has a single combined cache area and the write
@@ -273,17 +281,6 @@ func New(file string, cache int, handles int, namespace string, readonly bool, e
 		// By setting the WALBytesPerSync, the cached WAL writes will be periodically
 		// flushed at the background if the accumulated size exceeds this threshold.
 		WALBytesPerSync: 5 * ethdb.IdealBatchSize,
-
-		// L0CompactionThreshold specifies the number of L0 read-amplification
-		// necessary to trigger an L0 compaction. It essentially refers to the
-		// number of sub-levels at the L0. For each sub-level, it contains several
-		// L0 files which are non-overlapping with each other, typically produced
-		// by a single memory-table flush.
-		//
-		// The default value in Pebble is 4, which is a bit too large to have
-		// the compaction debt as around 10GB. By reducing it to 2, the compaction
-		// debt will be less than 1GB, but with more frequent compactions scheduled.
-		L0CompactionThreshold: 2,
 	}
 	// Disable seek compaction explicitly. Check https://github.com/ethereum/go-ethereum/pull/20130
 	// for more details.

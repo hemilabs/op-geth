@@ -139,7 +139,23 @@ func (b *buffer) flush(root common.Hash, db ethdb.KeyValueStore, freezer ethdb.A
 	if b.done != nil {
 		panic("duplicated flush operation")
 	}
-	b.done = make(chan struct{}) // allocate the channel for notification
+	// Terminate the state snapshot generation if it's active
+	var (
+		start = time.Now()
+		batch = db.NewBatchWithSize(b.nodes.dbsize() * 11 / 10) // extra 10% for potential pebble internal stuff
+	)
+	// Explicitly sync the state freezer to ensure all written data is persisted to disk
+	// before updating the key-value store.
+	//
+	// This step is crucial to guarantee that the corresponding state history remains
+	// available for state rollback.
+	if freezer != nil {
+		if err := freezer.SyncAncient(); err != nil {
+			return err
+		}
+	}
+	nodes := b.nodes.write(batch, nodesCache)
+	rawdb.WritePersistentStateID(batch, id)
 
 	// Schedule the background thread to construct the batch, which usually
 	// take a few seconds.

@@ -3258,14 +3258,6 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		if err := batch.Write(); err != nil {
 			return 0, err
 		}
-		// Write hash to number mappings
-		batch := bc.db.NewBatch()
-		for _, block := range blockChain {
-			rawdb.WriteHeaderNumber(batch, block.Hash(), block.NumberU64())
-		}
-		if err := batch.Write(); err != nil {
-			return 0, err
-		}
 		// Update the current snap block because all block data is now present in DB.
 		if err := updateHead(blockChain[len(blockChain)-1].Header()); err != nil {
 			return 0, err
@@ -4828,7 +4820,8 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 	if err != nil {
 		return 0, err
 	}
-	if err := bc.db.Sync(); err != nil {
+	// Sync the ancient store explicitly to ensure all data has been flushed to disk.
+	if err := bc.db.SyncAncient(); err != nil {
 		return 0, err
 	}
 	// Write hash to number mappings

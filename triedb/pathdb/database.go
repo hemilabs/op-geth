@@ -582,6 +582,8 @@ func (db *Database) Recover(root common.Hash) error {
 		// disk layer won't be accessible from outside.
 		db.tree.init(dl)
 	}
+	rawdb.DeleteTrieJournal(db.diskdb)
+
 	// Explicitly sync the key-value store to ensure all recent writes are
 	// flushed to disk. This step is crucial to prevent a scenario where
 	// recent key-value writes are lost due to an application panic, while
@@ -590,7 +592,7 @@ func (db *Database) Recover(root common.Hash) error {
 	if err := db.diskdb.SyncKeyValue(); err != nil {
 		return err
 	}
-	_, err := truncateFromHead(db.stateFreezer, dl.stateID())
+	_, err := truncateFromHead(db.diskdb, db.freezer, dl.stateID())
 	if err != nil {
 		return err
 	}
