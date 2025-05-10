@@ -83,7 +83,7 @@ var (
 	headSafeBlockGauge      = metrics.NewRegisteredGauge("chain/head/safe", nil)
 
 	chainInfoGauge   = metrics.NewRegisteredGaugeInfo("chain/info", nil)
-	chainMgaspsMeter = metrics.NewRegisteredResettingTimer("chain/mgasps", nil)
+	chainMgaspsGauge = metrics.NewRegisteredGauge("chain/mgasps", nil)
 
 	accountReadTimer   = metrics.NewRegisteredResettingTimer("chain/account/reads", nil)
 	accountHashTimer   = metrics.NewRegisteredResettingTimer("chain/account/hashes", nil)
