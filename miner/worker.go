@@ -155,25 +155,8 @@ func (miner *Miner) generateWork(params *generateParams, witness bool) *newPaylo
 			return &newPayloadResult{err: fmt.Errorf("failed to force-include tx: %s type: %d sender: %s nonce: %d, err: %w", tx.Hash(), tx.Type(), from, tx.Nonce(), err)}
 		}
 	}
-	if !params.noTxs {
-		// use shared interrupt if present
-		interrupt := params.interrupt
-		if interrupt == nil {
-			interrupt = new(atomic.Int32)
-		}
-		timer := time.AfterFunc(max(minRecommitInterruptInterval, miner.config.Recommit), func() {
-			interrupt.Store(commitInterruptTimeout)
-		})
 
-		err := miner.fillTransactions(interrupt, work)
-		timer.Stop() // don't need timeout interruption any more
-		if errors.Is(err, errBlockInterruptedByTimeout) {
-			log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(miner.config.Recommit))
-		} else if errors.Is(err, errBlockInterruptedByResolve) {
-			log.Info("Block building got interrupted by payload resolution")
-		}
-	}
-
+	containsBtcAttrDepTx := false
 	if !params.noTxs {
 		// First, check whether a new Bitcoin Attributes Deposited tx should be included.
 		// This is a redundant check since GetBitcoinAttributesForNextBlock will return nil with no error if hVM is not enabled/activated.
@@ -191,6 +174,7 @@ func (miner *Miner) generateWork(params *generateParams, witness bool) *newPaylo
 					return &newPayloadResult{err: fmt.Errorf("failed to force-include Bitcoin Attributes Deposited tx: %s type: %d sender: %s nonce: %d, err: %w", cast.Hash(), cast.Type(), from, cast.Nonce(), err)}
 				}
 				work.tcount++
+				containsBtcAttrDepTx = true
 			}
 		} else {
 			log.Info("worker not generating a Bitcoin Attributes Deposited transaction")
@@ -204,6 +188,25 @@ func (miner *Miner) generateWork(params *generateParams, witness bool) *newPaylo
 
 		err = miner.fillTransactions(interrupt, work)
 		if errors.Is(err, errBlockInterruptedByResolve) {
+			log.Info("Block building got interrupted by payload resolution")
+		}
+	}
+
+	if !params.noTxs && !containsBtcAttrDepTx {
+		// use shared interrupt if present
+		interrupt := params.interrupt
+		if interrupt == nil {
+			interrupt = new(atomic.Int32)
+		}
+		timer := time.AfterFunc(max(minRecommitInterruptInterval, miner.config.Recommit), func() {
+			interrupt.Store(commitInterruptTimeout)
+		})
+
+		err := miner.fillTransactions(interrupt, work)
+		timer.Stop() // don't need timeout interruption any more
+		if errors.Is(err, errBlockInterruptedByTimeout) {
+			log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(miner.config.Recommit))
+		} else if errors.Is(err, errBlockInterruptedByResolve) {
 			log.Info("Block building got interrupted by payload resolution")
 		}
 	}
