@@ -73,6 +73,7 @@ import (
 	"github.com/ethereum/go-ethereum/trie/triedb/hashdb"
 	"github.com/ethereum/go-ethereum/trie/triedb/pathdb"
 	pcsclite "github.com/gballet/go-libpcsclite"
+	"github.com/hemilabs/heminetwork/service/deucalion"
 	gopsutil "github.com/shirou/gopsutil/mem"
 	"github.com/urfave/cli/v2"
 )
@@ -2060,6 +2061,33 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, ctx context.Con
 	if err != nil {
 		Fatalf("Failed to register the Ethereum service: %v", err)
 	}
+
+	d, err := deucalion.New(&deucalion.Config{
+		ListenAddress: "localhost:8196",
+	})
+
+	if err != nil {
+		log.Error("create server", "err", err)
+	}
+
+	go func() {
+		if err := d.Run(ctx, nil, func(ctx context.Context) (bool, any, error) {
+			oldHeader := backend.BlockChain().CurrentHeader()
+			for range 3 {
+				time.Sleep(1500 * time.Millisecond)
+				curHeader := backend.BlockChain().CurrentHeader()
+				if curHeader.Number.Cmp(oldHeader.Number) <= 0 {
+					return false, nil, nil
+				}
+			}
+			return true, backend.Synced(), nil
+		}); !errors.Is(err, context.Canceled) {
+			log.Error("prometheus terminated with error", "err", err)
+			return
+		}
+		log.Info("prometheus clean shutdown")
+	}()
+
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))
 	return backend.APIBackend, backend
 }
