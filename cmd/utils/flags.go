@@ -1002,6 +1002,12 @@ var (
 		Category: flags.RollupCategory,
 		Value:    "", // No Prometheus by default
 	}
+	HealthDeucalionAddress = &cli.StringFlag{
+		Name:     "hvm.deucalionaddress",
+		Usage:    "Deucalion address for health checks",
+		Category: flags.RollupCategory,
+		Value:    "", // No Deucalion by default
+	}
 	TBCSeeds = &cli.StringSliceFlag{
 		Name:     "tbc.seeds",
 		Usage:    "override tbc seeds when finding peers",

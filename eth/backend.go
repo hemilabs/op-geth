@@ -297,8 +297,10 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 
 		eth.blockchain.SetupHvmHeaderNode(tbcCfg)
 
-		if err = eth.blockchain.SetupDeucalion(ctx); err != nil {
-			log.Crit("error setting up deucalion", "err", err)
+		if config.DeucalionAddress != "" {
+			if err = eth.blockchain.SetupDeucalion(ctx, config.DeucalionAddress); err != nil {
+				log.Crit("error setting up deucalion", "err", err)
+			}
 		}
 
 	}

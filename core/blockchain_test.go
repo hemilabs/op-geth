@@ -25,6 +25,7 @@ import (
 	gomath "math"
 	"math/big"
 	"math/rand"
+	"net/http"
 	"os"
 	"path"
 	"sync"
@@ -4268,6 +4269,53 @@ func TestEIP7702(t *testing.T) {
 	)
 	if actual.Cmp(fortyTwo) != 0 {
 		t.Fatalf("addr2 storage wrong: expected %d, got %d", fortyTwo, actual)
+	}
+}
+
+func TestHealthCheck(t *testing.T) {
+	genDb, _, bc, err := newCanonical(ethash.NewFaker(), 10, true, rawdb.HashScheme)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Second)
+	defer cancel()
+
+	progressionInterval = 10 * time.Millisecond
+
+	dURL := "localhost:9060"
+	if err = bc.SetupDeucalion(ctx, dURL); err != nil {
+		t.Fatal(err)
+	}
+
+	blocks := makeBlockChain(bc.chainConfig, bc.GetBlockByHash(bc.CurrentBlock().Hash()), 5, ethash.NewFaker(), genDb, forkSeed)
+
+	for _, block := range blocks {
+		if _, err := bc.InsertChain([]*types.Block{block}); err != nil {
+			t.Fatalf("block %d: failed to insert into chain: %v", block.NumberU64(), err)
+		}
+
+		time.Sleep(progressionInterval)
+
+		resp, err := http.Get("http://" + dURL + "/health")
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("status code %d, expected %d", resp.StatusCode, http.StatusOK)
+		}
+	}
+
+	time.Sleep(progressionInterval)
+
+	resp, err := http.Get("http://" + dURL + "/health")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status code %d, expected %d", resp.StatusCode, http.StatusServiceUnavailable)
 	}
 }
 

@@ -133,6 +133,9 @@ var (
 
 	emptyArray = [32]byte{}
 
+	// deucalion interval between progression check
+	progressionInterval = 15 * time.Second
+
 	// Special error thrown when blockchain state manipulation functions find that the external header mode TBC
 	// instance is in an impossible state implying data corruption or incrrect application of previous state trnsitions.
 	ErrExternalHeaderTBCInvalidState = errors.New("external header TBC instance is in an invalid state")
@@ -332,6 +335,7 @@ type BlockChain struct {
 	awaitingHvmSnapSync   bool
 	processingHvmSnapSync bool
 	finishedHvmSnapSync   bool
+	healthyNode           atomic.Bool
 
 	// Temporary workaround to allow restarting TBC Full Node when its not progressing
 	fullBlockFailureCount       uint32
@@ -570,36 +574,44 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	bc.hvmEnabled = true
 }
 
-const (
-	progressionInterval = 15 * time.Second
-	checkNumber         = 3
-)
-
-func (bc *BlockChain) SetupDeucalion(ctx context.Context) error {
+func (bc *BlockChain) SetupDeucalion(pctx context.Context, address string) error {
 	d, err := deucalion.New(&deucalion.Config{
-		ListenAddress: "localhost:8196",
+		ListenAddress: address,
 	})
-
 	if err != nil {
 		return err
 	}
 
+	ctx, cancel := context.WithCancel(pctx)
+
 	go func() {
+		defer cancel()
 		if err := d.Run(ctx, nil, func(ctx context.Context) (bool, any, error) {
-			oldHeader := bc.CurrentHeader()
-			for range checkNumber {
-				time.Sleep(progressionInterval)
-				curHeader := bc.CurrentHeader()
-				if curHeader.Number.Cmp(oldHeader.Number) <= 0 {
-					return false, nil, nil
-				}
-			}
-			return true, nil, nil
+			return bc.healthyNode.Load(), bc.CurrentBlock(), nil
 		}); !errors.Is(err, context.Canceled) {
-			log.Error("prometheus terminated with error", "err", err)
+			log.Error("deucalion terminated with error", "err", err)
 			return
 		}
-		log.Info("prometheus clean shutdown")
+		log.Info("deucalion clean shutdown")
+	}()
+
+	go func() {
+		defer cancel()
+		oldHeader := bc.CurrentHeader()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(progressionInterval):
+				curHeader := bc.CurrentHeader()
+				if curHeader.Number.Cmp(oldHeader.Number) <= 0 {
+					bc.healthyNode.Store(false)
+				} else {
+					bc.healthyNode.Store(true)
+				}
+				oldHeader = curHeader
+			}
+		}
 	}()
 
 	return nil

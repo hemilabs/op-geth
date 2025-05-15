@@ -160,6 +160,8 @@ type Config struct {
 	HvmGenesisHeight uint64 `toml:",omitempty"`
 	HvmHeaderDataDir string `toml:",omitempty"`
 
+	DeucalionAddress string `toml:",omitempty"`
+
 	// OverrideCancun (TODO: remove after the fork)
 	OverrideCancun *uint64 `toml:",omitempty"`
 
