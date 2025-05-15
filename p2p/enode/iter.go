@@ -38,7 +38,7 @@ type SourceIterator interface {
 	NodeSource() string // source of current node
 }
 
-// WithSourceName attaches a 'source name' to an iterator.
+// WithSource attaches a 'source name' to an iterator.
 func WithSourceName(name string, it Iterator) SourceIterator {
 	return sourceIter{it, name}
 }
@@ -58,11 +58,6 @@ type sourceIter struct {
 // NodeSource implements IteratorSource.
 func (it sourceIter) NodeSource() string {
 	return it.name
-}
-
-type iteratorItem struct {
-	n      *Node
-	source string
 }
 
 // ReadNodes reads at most n nodes from the given iterator. The return value contains no
@@ -313,9 +308,9 @@ func (b *bufferIter) Close() {
 // It's safe to call AddSource and Close concurrently with Next.
 type FairMix struct {
 	wg      sync.WaitGroup
-	fromAny chan iteratorItem
+	fromAny chan mixItem
 	timeout time.Duration
-	cur     iteratorItem
+	cur     mixItem
 
 	mu      sync.Mutex
 	closed  chan struct{}
@@ -325,8 +320,13 @@ type FairMix struct {
 
 type mixSource struct {
 	it      SourceIterator
-	next    chan iteratorItem
+	next    chan mixItem
 	timeout time.Duration
+}
+
+type mixItem struct {
+	n      *Node
+	source string
 }
 
 // NewFairMix creates a mixer.
@@ -337,7 +337,7 @@ type mixSource struct {
 // timeout makes the mixer completely fair.
 func NewFairMix(timeout time.Duration) *FairMix {
 	m := &FairMix{
-		fromAny: make(chan iteratorItem),
+		fromAny: make(chan mixItem),
 		closed:  make(chan struct{}),
 		timeout: timeout,
 	}
@@ -355,7 +355,7 @@ func (m *FairMix) AddSource(it Iterator) {
 	m.wg.Add(1)
 	source := &mixSource{
 		it:      ensureSourceIter(it),
-		next:    make(chan iteratorItem),
+		next:    make(chan mixItem),
 		timeout: m.timeout,
 	}
 	m.sources = append(m.sources, source)
@@ -383,7 +383,7 @@ func (m *FairMix) Close() {
 
 // Next returns a node from a random source.
 func (m *FairMix) Next() bool {
-	m.cur = iteratorItem{}
+	m.cur = mixItem{}
 
 	for {
 		source := m.pickSource()
@@ -471,7 +471,7 @@ func (m *FairMix) runSource(closed chan struct{}, s *mixSource) {
 	defer m.wg.Done()
 	defer close(s.next)
 	for s.it.Next() {
-		item := iteratorItem{s.it.Node(), s.it.NodeSource()}
+		item := mixItem{s.it.Node(), s.it.NodeSource()}
 		select {
 		case s.next <- item:
 		case m.fromAny <- item:
