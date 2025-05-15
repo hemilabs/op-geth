@@ -336,7 +336,7 @@ func doTest(cmdline []string) {
 // downloadSpecTestFixtures downloads and extracts the execution-spec-tests fixtures.
 func downloadSpecTestFixtures(csdb *download.ChecksumDB, cachedir string) string {
 	ext := ".tar.gz"
-	base := "fixtures_fusaka-devnet-3"
+	base := "fixtures_pectra-devnet-6" // TODO(s1na) rename once the version becomes part of the filename
 	archivePath := filepath.Join(cachedir, base+ext)
 	if err := csdb.DownloadFileFromKnownURL(archivePath); err != nil {
 		log.Fatal(err)
@@ -824,7 +824,7 @@ func downloadGoBootstrapSources(cachedir string) []string {
 
 	var bundles []string
 	for _, booter := range []string{"ppa-builder-1.19", "ppa-builder-1.21", "ppa-builder-1.23"} {
-		gobootVersion, err := build.Version(csdb, booter)
+		gobootVersion, err := csdb.FindVersion(booter)
 		if err != nil {
 			log.Fatal(err)
 		}
