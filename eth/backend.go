@@ -296,6 +296,11 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 			tbcCfg.EffectiveGenesisBlock.BlockHash().String(), tbcCfg.GenesisHeightOffset, tbcCfg.LevelDBHome, tbcCfg.Network))
 
 		eth.blockchain.SetupHvmHeaderNode(tbcCfg)
+
+		if err = eth.blockchain.SetupDeucalion(ctx); err != nil {
+			log.Crit("error setting up deucalion", "err", err)
+		}
+
 	}
 	if err != nil {
 		return nil, err

@@ -40,6 +40,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/hemi"
+	"github.com/hemilabs/heminetwork/service/deucalion"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/net/context"
 
@@ -567,6 +568,41 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	bc.tbcHeaderNode = tbcHeaderNode
 	bc.tbcHeaderNodeConfig = config
 	bc.hvmEnabled = true
+}
+
+const (
+	progressionInterval = 15 * time.Second
+	checkNumber         = 3
+)
+
+func (bc *BlockChain) SetupDeucalion(ctx context.Context) error {
+	d, err := deucalion.New(&deucalion.Config{
+		ListenAddress: "localhost:8196",
+	})
+
+	if err != nil {
+		return err
+	}
+
+	go func() {
+		if err := d.Run(ctx, nil, func(ctx context.Context) (bool, any, error) {
+			oldHeader := bc.CurrentHeader()
+			for range checkNumber {
+				time.Sleep(progressionInterval)
+				curHeader := bc.CurrentHeader()
+				if curHeader.Number.Cmp(oldHeader.Number) <= 0 {
+					return false, nil, nil
+				}
+			}
+			return true, nil, nil
+		}); !errors.Is(err, context.Canceled) {
+			log.Error("prometheus terminated with error", "err", err)
+			return
+		}
+		log.Info("prometheus clean shutdown")
+	}()
+
+	return nil
 }
 
 func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
