@@ -118,7 +118,7 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 				notifier.Notify(rpcSub.ID, notif)
 			case <-rpcSub.Err(): // client send an unsubscribe request
 				return
-			case <-notifier.Closed(): // connection dropped
+			case <-ctx.Done(): // connection dropped, Antonio: double-check this
 				return
 			}
 		}
