@@ -572,7 +572,7 @@ func TestHighCommitCrashWithNewSnapshot(t *testing.T) {
 	//
 	// Expected head header    : C8
 	// Expected head fast block: C8
-	// Expected head block     : G (Hash mode), C6 (Path mode)
+	// Expected head block     : G (Hash mode), C6 (Hash mode)
 	// Expected snapshot disk  : C4 (Hash mode)
 	for _, scheme := range []string{rawdb.HashScheme, rawdb.PathScheme} {
 		expHead := uint64(0)

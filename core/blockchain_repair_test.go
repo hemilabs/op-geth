@@ -1792,8 +1792,8 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	)
 	defer engine.Close()
 	if snapshots && scheme == rawdb.HashScheme {
-		option.SnapshotLimit = 256
-		option.SnapshotWait = true
+		config.SnapshotLimit = 256
+		config.SnapshotWait = true
 	}
 	chain, err := NewBlockChain(db, gspec, nil, engine, option, nil, nil, t.Context())
 	if err != nil {

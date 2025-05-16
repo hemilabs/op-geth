@@ -56,9 +56,11 @@ var (
 	nodeDiskFalseMeter  = metrics.NewRegisteredMeter("pathdb/disk/false", nil)
 	nodeDiffFalseMeter  = metrics.NewRegisteredMeter("pathdb/diff/false", nil)
 
-	commitTimeTimer  = metrics.NewRegisteredResettingTimer("pathdb/commit/time", nil)
-	commitNodesMeter = metrics.NewRegisteredMeter("pathdb/commit/nodes", nil)
-	commitBytesMeter = metrics.NewRegisteredMeter("pathdb/commit/bytes", nil)
+	commitTimeTimer     = metrics.NewRegisteredResettingTimer("pathdb/commit/time", nil)
+	commitNodesMeter    = metrics.NewRegisteredMeter("pathdb/commit/nodes", nil)
+	commitAccountsMeter = metrics.NewRegisteredMeter("pathdb/commit/accounts", nil)
+	commitStoragesMeter = metrics.NewRegisteredMeter("pathdb/commit/slots", nil)
+	commitBytesMeter    = metrics.NewRegisteredMeter("pathdb/commit/bytes", nil)
 
 	gcTrieNodeMeter      = metrics.NewRegisteredMeter("pathdb/gc/node/count", nil)
 	gcTrieNodeBytesMeter = metrics.NewRegisteredMeter("pathdb/gc/node/bytes", nil)
@@ -79,6 +81,31 @@ var (
 
 	historicalAccountReadTimer = metrics.NewRegisteredResettingTimer("pathdb/history/account/reads", nil)
 	historicalStorageReadTimer = metrics.NewRegisteredResettingTimer("pathdb/history/storage/reads", nil)
+)
+
+// Metrics in generation
+var (
+	generatedAccountMeter     = metrics.NewRegisteredMeter("pathdb/generation/account/generated", nil)
+	recoveredAccountMeter     = metrics.NewRegisteredMeter("pathdb/generation/account/recovered", nil)
+	wipedAccountMeter         = metrics.NewRegisteredMeter("pathdb/generation/account/wiped", nil)
+	missallAccountMeter       = metrics.NewRegisteredMeter("pathdb/generation/account/missall", nil)
+	generatedStorageMeter     = metrics.NewRegisteredMeter("pathdb/generation/storage/generated", nil)
+	recoveredStorageMeter     = metrics.NewRegisteredMeter("pathdb/generation/storage/recovered", nil)
+	wipedStorageMeter         = metrics.NewRegisteredMeter("pathdb/generation/storage/wiped", nil)
+	missallStorageMeter       = metrics.NewRegisteredMeter("pathdb/generation/storage/missall", nil)
+	danglingStorageMeter      = metrics.NewRegisteredMeter("pathdb/generation/storage/dangling", nil)
+	successfulRangeProofMeter = metrics.NewRegisteredMeter("pathdb/generation/proof/success", nil)
+	failedRangeProofMeter     = metrics.NewRegisteredMeter("pathdb/generation/proof/failure", nil)
+
+	accountProveCounter    = metrics.NewRegisteredCounter("pathdb/generation/duration/account/prove", nil)
+	accountTrieReadCounter = metrics.NewRegisteredCounter("pathdb/generation/duration/account/trieread", nil)
+	accountSnapReadCounter = metrics.NewRegisteredCounter("pathdb/generation/duration/account/snapread", nil)
+	accountWriteCounter    = metrics.NewRegisteredCounter("pathdb/generation/duration/account/write", nil)
+	storageProveCounter    = metrics.NewRegisteredCounter("pathdb/generation/duration/storage/prove", nil)
+	storageTrieReadCounter = metrics.NewRegisteredCounter("pathdb/generation/duration/storage/trieread", nil)
+	storageSnapReadCounter = metrics.NewRegisteredCounter("pathdb/generation/duration/storage/snapread", nil)
+	storageWriteCounter    = metrics.NewRegisteredCounter("pathdb/generation/duration/storage/write", nil)
+	storageCleanCounter    = metrics.NewRegisteredCounter("state/snapshot/generation/duration/storage/clean", nil)
 )
 
 // Metrics in generation

@@ -135,14 +135,16 @@ func (b *buffer) size() uint64 {
 
 // flush persists the in-memory dirty trie node into the disk if the configured
 // memory threshold is reached. Note, all data must be written atomically.
-func (b *buffer) flush(root common.Hash, db ethdb.KeyValueStore, freezer ethdb.AncientWriter, progress []byte, nodesCache, statesCache *fastcache.Cache, id uint64, postFlush func()) {
-	if b.done != nil {
-		panic("duplicated flush operation")
+func (b *buffer) flush(root common.Hash, db ethdb.KeyValueStore, freezer ethdb.AncientWriter, progress []byte, nodesCache, statesCache *fastcache.Cache, id uint64) error {
+	// Ensure the target state id is aligned with the internal counter.
+	head := rawdb.ReadPersistentStateID(db)
+	if head+b.layers != id {
+		return fmt.Errorf("buffer layers (%d) cannot be applied on top of persisted state id (%d) to reach requested state id (%d)", b.layers, head, id)
 	}
 	// Terminate the state snapshot generation if it's active
 	var (
 		start = time.Now()
-		batch = db.NewBatchWithSize(b.nodes.dbsize() * 11 / 10) // extra 10% for potential pebble internal stuff
+		batch = db.NewBatchWithSize((b.nodes.dbsize() + b.states.dbsize()) * 11 / 10) // extra 10% for potential pebble internal stuff
 	)
 	// Explicitly sync the state freezer to ensure all written data is persisted to disk
 	// before updating the key-value store.
@@ -155,74 +157,21 @@ func (b *buffer) flush(root common.Hash, db ethdb.KeyValueStore, freezer ethdb.A
 		}
 	}
 	nodes := b.nodes.write(batch, nodesCache)
+	accounts, slots := b.states.write(batch, progress, statesCache)
 	rawdb.WritePersistentStateID(batch, id)
+	rawdb.WriteSnapshotRoot(batch, root)
 
-	// Schedule the background thread to construct the batch, which usually
-	// take a few seconds.
-	go func() {
-		defer func() {
-			if postFlush != nil {
-				postFlush()
-			}
-			close(b.done)
-		}()
-
-		// Ensure the target state id is aligned with the internal counter.
-		head := rawdb.ReadPersistentStateID(db)
-		if head+b.layers != id {
-			b.flushErr = fmt.Errorf("buffer layers (%d) cannot be applied on top of persisted state id (%d) to reach requested state id (%d)", b.layers, head, id)
-			return
-		}
-
-		// Terminate the state snapshot generation if it's active
-		var (
-			start = time.Now()
-			batch = db.NewBatchWithSize((b.nodes.dbsize() + b.states.dbsize()) * 11 / 10) // extra 10% for potential pebble internal stuff
-		)
-		// Explicitly sync the state freezer to ensure all written data is persisted to disk
-		// before updating the key-value store.
-		//
-		// This step is crucial to guarantee that the corresponding state history remains
-		// available for state rollback.
-		if freezer != nil {
-			if err := freezer.SyncAncient(); err != nil {
-				b.flushErr = err
-				return
-			}
-		}
-		nodes := b.nodes.write(batch, nodesCache)
-		accounts, slots := b.states.write(batch, progress, statesCache)
-		rawdb.WritePersistentStateID(batch, id)
-		rawdb.WriteSnapshotRoot(batch, root)
-
-		// Flush all mutations in a single batch
-		size := batch.ValueSize()
-		if err := batch.Write(); err != nil {
-			b.flushErr = err
-			return
-		}
-		commitBytesMeter.Mark(int64(size))
-		commitNodesMeter.Mark(int64(nodes))
-		commitAccountsMeter.Mark(int64(accounts))
-		commitStoragesMeter.Mark(int64(slots))
-		commitTimeTimer.UpdateSince(start)
-
-		// The content in the frozen buffer is kept for consequent state access,
-		// TODO (rjl493456442) measure the gc overhead for holding this struct.
-		// TODO (rjl493456442) can we somehow get rid of it after flushing??
-		// TODO (rjl493456442) buffer itself is not thread-safe, add the lock
-		// protection if try to reset the buffer here.
-		// b.reset()
-		log.Debug("Persisted buffer content", "nodes", nodes, "accounts", accounts, "slots", slots, "bytes", common.StorageSize(size), "elapsed", common.PrettyDuration(time.Since(start)))
-	}()
-}
-
-// waitFlush blocks until the buffer has been fully flushed and returns any
-// stored errors that occurred during the process.
-func (b *buffer) waitFlush() error {
-	if b.done == nil {
-		return errors.New("the buffer is not frozen")
+	// Flush all mutations in a single batch
+	size := batch.ValueSize()
+	if err := batch.Write(); err != nil {
+		return err
 	}
-	<-b.done
-	return b.flushErr
+	commitBytesMeter.Mark(int64(size))
+	commitNodesMeter.Mark(int64(nodes))
+	commitAccountsMeter.Mark(int64(accounts))
+	commitStoragesMeter.Mark(int64(slots))
+	commitTimeTimer.UpdateSince(start)
+	b.reset()
+	log.Debug("Persisted buffer content", "nodes", nodes, "accounts", accounts, "slots", slots, "bytes", common.StorageSize(size), "elapsed", common.PrettyDuration(time.Since(start)))
+	return nil
 }

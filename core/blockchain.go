@@ -254,17 +254,14 @@ func (cfg *BlockChainConfig) triedbConfig(isVerkle bool) *triedb.Config {
 	}
 	if cfg.StateScheme == rawdb.PathScheme {
 		config.PathDB = &pathdb.Config{
-			StateHistory:        cfg.StateHistory,
-			EnableStateIndexing: cfg.ArchiveMode,
-			TrieCleanSize:       cfg.TrieCleanLimit * 1024 * 1024,
-			StateCleanSize:      cfg.SnapshotLimit * 1024 * 1024,
-			JournalDirectory:    cfg.TrieJournalDirectory,
+			StateHistory:   c.StateHistory,
+			TrieCleanSize:  c.TrieCleanLimit * 1024 * 1024,
+			StateCleanSize: c.SnapshotLimit * 1024 * 1024,
 
 			// TODO(rjl493456442): The write buffer represents the memory limit used
 			// for flushing both trie data and state data to disk. The config name
 			// should be updated to eliminate the confusion.
-			WriteBufferSize: cfg.TrieDirtyLimit * 1024 * 1024,
-			NoAsyncFlush:    cfg.TrieNoAsyncFlush,
+			WriteBufferSize: c.TrieDirtyLimit * 1024 * 1024,
 		}
 	}
 	return config
@@ -456,7 +453,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 			// Note it's unnecessary in path mode which always keep trie data and
 			// state data consistent.
 			var diskRoot common.Hash
-			if bc.cfg.SnapshotLimit > 0 && bc.cfg.StateScheme == rawdb.HashScheme {
+			if bc.cacheConfig.SnapshotLimit > 0 && bc.cacheConfig.StateScheme == rawdb.HashScheme {
 				diskRoot = rawdb.ReadSnapshotRoot(bc.db)
 			}
 			if diskRoot != (common.Hash{}) {
@@ -538,13 +535,42 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 		rawdb.WriteChainConfig(db, genesisHash, chainConfig)
 	}
 
-	bc.engine.VerifyHeader(bc, bc.CurrentHeader())
-
 	// Start tx indexer if it's enabled.
-	if bc.cfg.TxLookupLimit >= 0 {
-		bc.txIndexer = newTxIndexer(uint64(bc.cfg.TxLookupLimit), bc)
+	if txLookupLimit != nil {
+		bc.txIndexer = newTxIndexer(*txLookupLimit, bc)
 	}
 	return bc, nil
+}
+
+func (bc *BlockChain) setupSnapshot() {
+	// Short circuit if the chain is established with path scheme, as the
+	// state snapshot has been integrated into path database natively.
+	if bc.cacheConfig.StateScheme == rawdb.PathScheme {
+		return
+	}
+	// Load any existing snapshot, regenerating it if loading failed
+	if bc.cacheConfig.SnapshotLimit > 0 {
+		// If the chain was rewound past the snapshot persistent layer (causing
+		// a recovery block number to be persisted to disk), check if we're still
+		// in recovery mode and in that case, don't invalidate the snapshot on a
+		// head mismatch.
+		var recover bool
+		head := bc.CurrentBlock()
+		if layer := rawdb.ReadSnapshotRecoveryNumber(bc.db); layer != nil && *layer >= head.Number.Uint64() {
+			log.Warn("Enabling snapshot recovery", "chainhead", head.Number, "diskbase", *layer)
+			recover = true
+		}
+		snapconfig := snapshot.Config{
+			CacheSize:  bc.cacheConfig.SnapshotLimit,
+			Recovery:   recover,
+			NoBuild:    bc.cacheConfig.SnapshotNoBuild,
+			AsyncBuild: !bc.cacheConfig.SnapshotWait,
+		}
+		bc.snaps, _ = snapshot.New(snapconfig, bc.db, bc.triedb, head.Root)
+
+		// Re-initialize the state database with snapshot
+		bc.statedb = state.NewDatabase(bc.triedb, bc.snaps)
+	}
 }
 
 func (bc *BlockChain) setupSnapshot() {

@@ -115,18 +115,12 @@ type layer interface {
 
 // Config contains the settings for database.
 type Config struct {
-	StateHistory        uint64 // Number of recent blocks to maintain state history for
-	EnableStateIndexing bool   // Whether to enable state history indexing for external state access
-	TrieCleanSize       int    // Maximum memory allowance (in bytes) for caching clean trie nodes
-	StateCleanSize      int    // Maximum memory allowance (in bytes) for caching clean state data
-	WriteBufferSize     int    // Maximum memory allowance (in bytes) for write buffer
-	ReadOnly            bool   // Flag whether the database is opened in read only mode
-	JournalDirectory    string // Absolute path of journal directory (null means the journal data is persisted in key-value store)
-
-	// Testing configurations
-	SnapshotNoBuild   bool // Flag Whether the state generation is allowed
-	NoAsyncFlush      bool // Flag whether the background buffer flushing is allowed
-	NoAsyncGeneration bool // Flag whether the background generation is allowed
+	StateHistory    uint64 // Number of recent blocks to maintain state history for
+	TrieCleanSize   int    // Maximum memory allowance (in bytes) for caching clean trie nodes
+	StateCleanSize  int    // Maximum memory allowance (in bytes) for caching clean state data
+	WriteBufferSize int    // Maximum memory allowance (in bytes) for write buffer
+	ReadOnly        bool   // Flag whether the database is opened in read only mode
+	SnapshotNoBuild bool   // Flag Whether the background generation is allowed
 }
 
 // sanitize checks the provided user configurations and changes anything that's
@@ -276,11 +270,6 @@ func New(diskdb ethdb.Database, config *Config, isVerkle bool) *Database {
 	if err := db.setStateGenerator(); err != nil {
 		log.Crit("Failed to setup the generator", "err", err)
 	}
-	// TODO (rjl493456442) disable the background indexing in read-only mode
-	if db.stateFreezer != nil && db.config.EnableStateIndexing {
-		db.stateIndexer = newHistoryIndexer(db.diskdb, db.stateFreezer, db.tree.bottom().stateID())
-		log.Info("Enabled state history indexing")
-	}
 	fields := config.fields()
 	if db.isVerkle {
 		fields = append(fields, "verkle", true)
@@ -395,12 +384,6 @@ func (db *Database) setStateGenerator() error {
 	}
 	stats.log("Starting snapshot generation", root, generator.Marker)
 	dl.generator.run(root)
-
-	// Block until the generation completes. It's the feature used in
-	// unit tests.
-	if db.config.NoAsyncGeneration {
-		<-dl.generator.done
-	}
 	return nil
 }
 
@@ -469,8 +452,8 @@ func (db *Database) Disable() error {
 	// Terminate the state generator if it's active and mark the disk layer
 	// as stale to prevent access to persistent state.
 	disk := db.tree.bottom()
-	if err := disk.terminate(); err != nil {
-		return err
+	if disk.generator != nil {
+		disk.generator.stop()
 	}
 	disk.markStale()
 
@@ -501,6 +484,7 @@ func (db *Database) Enable(root common.Hash) error {
 	// Drop the stale state journal in persistent database and
 	// reset the persistent state id back to zero.
 	batch := db.diskdb.NewBatch()
+	rawdb.DeleteTrieJournal(batch)
 	rawdb.DeleteSnapshotRoot(batch)
 	rawdb.WritePersistentStateID(batch, 0)
 	if err := batch.Write(); err != nil {
@@ -528,17 +512,7 @@ func (db *Database) Enable(root common.Hash) error {
 
 	// Re-construct a new disk layer backed by persistent state
 	// and schedule the state snapshot generation if it's permitted.
-	db.tree.init(generateSnapshot(db, root, db.isVerkle || db.config.SnapshotNoBuild))
-
-	// After snap sync, the state of the database may have changed completely.
-	// To ensure the history indexer always matches the current state, we must:
-	//   1. Close any existing indexer
-	//   2. Re-initialize the indexer so it starts indexing from the new state root.
-	if db.stateIndexer != nil && db.stateFreezer != nil && db.config.EnableStateIndexing {
-		db.stateIndexer.close()
-		db.stateIndexer = newHistoryIndexer(db.diskdb, db.stateFreezer, db.tree.bottom().stateID())
-		log.Info("Re-enabled state history indexing")
-	}
+	db.tree.reset(generateSnapshot(db, root, db.isVerkle || db.config.SnapshotNoBuild))
 	log.Info("Rebuilt trie database", "root", root)
 	return nil
 }
@@ -643,14 +617,12 @@ func (db *Database) Close() error {
 	// following mutations.
 	db.readOnly = true
 
-	// Block until the background flushing is finished. It must
-	// be done before terminating the potential background snapshot
-	// generator.
-	dl := db.tree.bottom()
-	if err := dl.terminate(); err != nil {
-		return err
+	// Terminate the background generation if it's active
+	disk := db.tree.bottom()
+	if disk.generator != nil {
+		disk.generator.stop()
 	}
-	dl.resetCache() // release the memory held by clean cache
+	disk.resetCache() // release the memory held by clean cache
 
 	// Terminate the background state history indexer
 	if db.stateIndexer != nil {
@@ -742,6 +714,16 @@ func (db *Database) IndexProgress() (uint64, error) {
 	return db.stateIndexer.progress()
 }
 
+// waitGeneration waits until the background generation is finished. It assumes
+// that the generation is permitted; otherwise, it will block indefinitely.
+func (db *Database) waitGeneration() {
+	gen := db.tree.bottom().generator
+	if gen == nil || gen.completed() {
+		return
+	}
+	<-gen.done
+}
+
 // AccountIterator creates a new account iterator for the specified root hash and
 // seeks to a starting account hash.
 func (db *Database) AccountIterator(root common.Hash, seek common.Hash) (AccountIterator, error) {
@@ -751,7 +733,7 @@ func (db *Database) AccountIterator(root common.Hash, seek common.Hash) (Account
 	if wait {
 		return nil, errDatabaseWaitSync
 	}
-	if !db.tree.bottom().genComplete() {
+	if gen := db.tree.bottom().generator; gen != nil && !gen.completed() {
 		return nil, errNotConstructed
 	}
 	return newFastAccountIterator(db, root, seek)
@@ -766,7 +748,7 @@ func (db *Database) StorageIterator(root common.Hash, account common.Hash, seek 
 	if wait {
 		return nil, errDatabaseWaitSync
 	}
-	if !db.tree.bottom().genComplete() {
+	if gen := db.tree.bottom().generator; gen != nil && !gen.completed() {
 		return nil, errNotConstructed
 	}
 	return newFastStorageIterator(db, root, account, seek)
