@@ -35,12 +35,12 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/triedb"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 var dumper = spew.ConfigState{Indent: "    "}
@@ -68,15 +68,15 @@ func newTestBlockChain(t *testing.T, n int, gspec *core.Genesis, generator func(
 	_, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, n, generator)
 
 	// Import the canonical chain
-	options := &core.BlockChainConfig{
-		TrieCleanLimit: 256,
-		TrieDirtyLimit: 256,
-		TrieTimeLimit:  5 * time.Minute,
-		SnapshotLimit:  0,
-		Preimages:      true,
-		ArchiveMode:    true, // Archive mode
+	cacheConfig := &core.CacheConfig{
+		TrieCleanLimit:    256,
+		TrieDirtyLimit:    256,
+		TrieTimeLimit:     5 * time.Minute,
+		SnapshotLimit:     0,
+		Preimages:         true,
+		TrieDirtyDisabled: true, // Archive mode
 	}
-	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), gspec, engine, options)
+	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), cacheConfig, gspec, nil, engine, vm.Config{}, nil)
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -335,31 +335,4 @@ func TestGetModifiedAccounts(t *testing.T) {
 			}
 		}
 	})
-}
-
-func TestExecutionWitness(t *testing.T) {
-	t.Parallel()
-
-	// Create a database pre-initialize with a genesis block
-	db := rawdb.NewMemoryDatabase()
-	gspec := &core.Genesis{
-		Config: params.TestChainConfig,
-		Alloc:  types.GenesisAlloc{testAddr: {Balance: big.NewInt(1000000)}},
-	}
-	chain, _ := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
-
-	blockNum := 10
-	_, bs, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), blockNum, nil)
-	if _, err := chain.InsertChain(bs); err != nil {
-		panic(err)
-	}
-
-	block := chain.GetBlockByNumber(uint64(blockNum - 1))
-	require.NotNil(t, block)
-
-	witness, err := generateWitness(chain, block)
-	require.NoError(t, err)
-
-	_, _, err = core.ExecuteStateless(params.TestChainConfig, *chain.GetVMConfig(), block, witness)
-	require.NoError(t, err)
 }
