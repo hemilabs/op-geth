@@ -19,6 +19,7 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	gomath "math"
@@ -4609,6 +4610,177 @@ func TestL2Keystones(t *testing.T) {
 			t.Fatalf("expected error")
 		}
 	})
+
+	t.Run("test derive l2 keystones", func(t *testing.T) {
+
+		var (
+			key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+			address = crypto.PubkeyToAddress(key.PublicKey)
+		)
+
+		genDb, _, blockchain, err := newCanonical(ethash.NewFaker(), 0, true, rawdb.HashScheme)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		blocks, _ := GenerateChain(params.TestChainConfig, blockchain.GetBlockByHash(blockchain.CurrentBlock().Hash()), ethash.NewFaker(), genDb, 1000, func(i int, b *BlockGen) {
+			b.SetCoinbase(address)
+
+			data := make([]byte, 260)
+
+			copy(data, []byte(fmt.Sprintf("%s", l1InfoFuncBedrockBytes4)))
+
+			// add a constant here to shift the block numbers a bit for testing
+			binary.BigEndian.PutUint64(data[len(uint64EmptyPadding)+4:], uint64(i+97))
+
+			t.Logf("data is %v", data)
+			t.Logf("data after sig is %v", data[4:])
+			t.Logf("data big endian for %d is %v", i, data[4+24:4+24+8])
+
+			txdata := &types.DepositTx{
+				To:   &address,
+				Gas:  30000,
+				Data: data[:],
+			}
+			tx := types.NewTx(txdata)
+
+			b.AddTx(tx)
+		})
+
+		blockchain.insertChain(blocks, true)
+
+		expectedKeystones := map[uint64]hemi.L2Keystone{}
+
+		for i := uint64(1); i <= 1000; i++ {
+			l2Block := blockchain.GetBlockByNumber(i)
+			if l2Block == nil {
+				t.Fatalf("could not find l2block at number %d", i)
+			}
+
+			var l1BlockNumber uint64
+
+			if len(l2Block.Transactions()) > 0 {
+				l1BlockNumber, err = blockchain.deriveL1BlockNumberFromData(l2Block.Time(), l2Block.Transactions()[0].Data())
+				if err != nil {
+					t.Fatalf("error determining l1 block info for l2 block %d: %s", l2Block.NumberU64(), err)
+				}
+			} else {
+				t.Fatalf("no transactions found")
+			}
+
+			expectedKeystones[i] = hemi.L2Keystone{
+				Version:            1,
+				L1BlockNumber:      uint32(l1BlockNumber),
+				L2BlockNumber:      uint32(i),
+				StateRoot:          l2Block.Root().Bytes(),
+				EPHash:             l2Block.Hash().Bytes(),
+				ParentEPHash:       l2Block.ParentHash().Bytes(),
+				PrevKeystoneEPHash: nil,
+			}
+
+		}
+
+		// none of these should be nil
+		block := blockchain.GetBlockByNumber(1000)
+		parentBlock := blockchain.GetBlockByNumber(999)
+		prevKeystoneBlock := blockchain.GetBlockByNumber(975)
+
+		l2Keystone := hemi.L2Keystone{
+			Version:            1,
+			L1BlockNumber:      0,
+			L2BlockNumber:      uint32(block.Number().Uint64()),
+			ParentEPHash:       parentBlock.Hash().Bytes(),
+			PrevKeystoneEPHash: prevKeystoneBlock.Hash().Bytes(),
+			StateRoot:          block.Root().Bytes(),
+			EPHash:             block.Hash().Bytes(),
+		}
+
+		if err := blockchain.InsertL2Keystone(l2Keystone); err != nil {
+			t.Fatal(err)
+		}
+
+		if err := blockchain.BackfillKeystones(); err != nil {
+			t.Fatal(err)
+		}
+
+		l2Keystones, err := blockchain.GetMostRecentKeystones(100)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		if len(l2Keystones) != 40 {
+			t.Fatalf("received unexpected length for l2keystones: %d", len(l2Keystones))
+		}
+
+		for i := uint64(1); i < 1000; i++ {
+			if i%25 != 0 {
+				continue
+			}
+
+			t.Logf("checking keystone for l2 block number %d", i)
+
+			expectedL2k := expectedKeystones[i]
+
+			last := uint64(0)
+			prevkeystone := uint64(0)
+			if i > 0 {
+				last = i - 1
+				prevkeystone = i - 25
+				parentBlock := blockchain.GetBlockByNumber(uint64(last))
+				prevKeystoneBlock := blockchain.GetBlockByNumber(uint64(prevkeystone))
+				expectedL2k.ParentEPHash = parentBlock.Hash().Bytes()
+				if i != 25 {
+					expectedL2k.PrevKeystoneEPHash = prevKeystoneBlock.Hash().Bytes()
+				}
+			}
+
+			var keystoneUnderTest hemi.L2Keystone
+			found := false
+			for _, l2k := range l2Keystones {
+				if l2k.L2BlockNumber == uint32(i) {
+					keystoneUnderTest = l2k
+					found = true
+					break
+				}
+			}
+
+			if !found {
+				t.Fatalf("could not find keystone by l2blocknumber %d", i)
+			}
+
+			if diff := deep.Equal(expectedL2k, keystoneUnderTest); len(diff) > 0 {
+				t.Fatalf("unexpected diff: %s", diff)
+			}
+
+			if keystoneUnderTest.L2BlockNumber+97 != keystoneUnderTest.L1BlockNumber+1 {
+				t.Fatalf("block number mismatch: %d != %d", keystoneUnderTest.L2BlockNumber, keystoneUnderTest.L1BlockNumber)
+			}
+
+		}
+	})
+
+}
+
+func TestUnmarshalBinaryEcotone(t *testing.T) {
+	data := make([]byte, 164)
+
+	copy(data, []byte(fmt.Sprintf("%s", l1InfoFuncEcotoneBytes4)))
+
+	// put the number at 4 fields away from start,
+	// plus signatute (uint32*3,uint64*2)
+	binary.BigEndian.PutUint64(data[8+8+4+4+4:], 44)
+
+	t.Logf("data is %v", data)
+	t.Logf("data after sig is %v", data[4:])
+
+	l1BlockNumber, err := unmarshalBinaryEcotone(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if l1BlockNumber != 44 {
+		t.Fatalf("wrong l1blocknumber %d", l1BlockNumber)
+	}
 }
 
 func fillOutBytes(prefix string, size int) []byte {

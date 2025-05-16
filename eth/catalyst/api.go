@@ -327,6 +327,12 @@ func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) (engine.KeystoneS
 
 	kf.Send(fmt.Sprintf("New Keystone Available: %s", stringHash))
 
+	go func() {
+		if err := api.eth.BlockChain().BackfillKeystones(); err != nil {
+			log.Error("error backfilling keystones", "error", err)
+		}
+	}()
+
 	return engine.KeystoneStatus{Status: engine.VALID}, nil
 }
 
