@@ -22,6 +22,7 @@ import (
 	"errors"
 	"maps"
 	"math"
+	"math/big"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -30,7 +31,6 @@ import (
 	"github.com/dchest/siphash"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/forkid"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
@@ -123,11 +123,6 @@ type handler struct {
 	maxPeers int
 
 	noTxGossip bool
-
-	downloader     *downloader.Downloader
-	txFetcher      *fetcher.TxFetcher
-	peers          *peerSet
-	txBroadcastKey [16]byte
 
 	eventMux   *event.TypeMux
 	txsCh      chan core.NewTxsEvent
@@ -588,7 +583,7 @@ func newBlockRangeState(chain *core.BlockChain, typeMux *event.TypeMux) *blockRa
 	return st
 }
 
-// blockRangeLoop announces changes in locally-available block range to peers.
+// blockRangeBroadcastLoop announces changes in locally-available block range to peers.
 // The range to announce is the range that is available in the store, so it's not just
 // about imported blocks.
 func (h *handler) blockRangeLoop(st *blockRangeState) {
@@ -689,63 +684,4 @@ func (st *blockRangeState) stop() {
 // This is safe to call from any goroutine.
 func (st *blockRangeState) currentRange() eth.BlockRangeUpdatePacket {
 	return *st.next.Load()
-}
-
-// broadcastChoice implements a deterministic random choice of peers. This is designed
-// specifically for choosing which peer receives a direct broadcast of a transaction.
-//
-// The choice is made based on the involved p2p node IDs and the transaction sender,
-// ensuring that the flow of transactions is grouped by account to (try and) avoid nonce
-// gaps.
-type broadcastChoice struct {
-	self   enode.ID
-	key    [16]byte
-	buffer map[*ethPeer]struct{}
-	tmp    []broadcastPeer
-}
-
-type broadcastPeer struct {
-	p     *ethPeer
-	score uint64
-}
-
-func newBroadcastChoiceKey() (k [16]byte) {
-	crand.Read(k[:])
-	return k
-}
-
-func newBroadcastChoice(self enode.ID, key [16]byte) *broadcastChoice {
-	return &broadcastChoice{
-		self:   self,
-		key:    key,
-		buffer: make(map[*ethPeer]struct{}),
-	}
-}
-
-// choosePeers selects the peers that will receive a direct transaction broadcast message.
-// Note the return value will only stay valid until the next call to choosePeers.
-func (bc *broadcastChoice) choosePeers(peers []*ethPeer, txSender common.Address) map[*ethPeer]struct{} {
-	// Compute randomized scores.
-	bc.tmp = slices.Grow(bc.tmp[:0], len(peers))[:len(peers)]
-	hash := siphash.New(bc.key[:])
-	for i, peer := range peers {
-		hash.Reset()
-		hash.Write(bc.self[:])
-		hash.Write(peer.Peer.Peer.ID().Bytes())
-		hash.Write(txSender[:])
-		bc.tmp[i] = broadcastPeer{peer, hash.Sum64()}
-	}
-
-	// Sort by score.
-	slices.SortFunc(bc.tmp, func(a, b broadcastPeer) int {
-		return cmp.Compare(a.score, b.score)
-	})
-
-	// Take top n.
-	clear(bc.buffer)
-	n := int(math.Ceil(math.Sqrt(float64(len(bc.tmp)))))
-	for i := range n {
-		bc.buffer[bc.tmp[i].p] = struct{}{}
-	}
-	return bc.buffer
 }

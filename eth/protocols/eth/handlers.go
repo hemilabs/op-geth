@@ -36,10 +36,7 @@ import (
 )
 
 // requestTracker is a singleton tracker for eth/66 and newer request times.
-var (
-	requestTracker = tracker.New(ProtocolName, 5*time.Minute)
-	errDecode         = errors.New("invalid message")
-)
+var requestTracker = tracker.New(ProtocolName, 5*time.Minute)
 
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the complex header query
@@ -253,69 +250,6 @@ func ServiceGetBlockBodiesQuery(chain *core.BlockChain, query GetBlockBodiesRequ
 		}
 	}
 	return bodies
-}
-
-func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
-	// Decode the block body retrieval message
-	var query GetBTCBlocksPacket
-	if err := msg.Decode(&query); err != nil {
-		log.Error("Unable to decode GetBTCBlocksPacket", "err", err)
-		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
-	}
-	response := ServiceGetBTCBlocksQuery(backend.Chain(), query.GetBTCBlocksRequest)
-
-	return peer.ReplyBTCBlocksPacket(query.RequestId, response)
-}
-
-func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest) []*common.BitcoinBlock {
-	// Gather Bitcoin blocks until the fetch or network limits is reached
-	var (
-		bytesCount int
-		blocks     []*common.BitcoinBlock
-	)
-
-	log.Info("P2P requested BTC blocks", "numBlocks", len(query))
-
-	for lookups, hash := range query {
-		if bytesCount >= softResponseLimitBTC || len(blocks) >= maxBtcBlocksServe ||
-			lookups >= 2*maxBtcBlocksServe {
-			break
-		}
-
-		var ch chainhash.Hash
-		err := ch.SetBytes(hash.Bytes())
-		if err != nil {
-			log.Error(fmt.Sprintf("Unable to convert hash %s to a chainhash", hash.String()), "err", err)
-			continue // Keep searching for other valid blocks
-		}
-
-		block, err := vm.TBCFullNode.BlockByHash(vm.MainCtx, ch)
-		if err != nil {
-			log.Error(fmt.Sprintf("did not find BTC block %s requested by peer", hash.String()), "err", err)
-			continue
-		}
-		if block == nil {
-			log.Error(fmt.Sprintf("did not encounter error when looking up BTC block %s but block is nil", hash.String()))
-			continue
-		}
-		var blockBuf bytes.Buffer
-
-		// Note that this might not always be congruent with BTC wire format in the future
-		err = block.MsgBlock().Serialize(&blockBuf)
-		if err != nil {
-			log.Error(fmt.Sprintf("error serializing BTC block %s for peer", hash.String()), "err", err)
-			continue
-		}
-
-		blockBytes := blockBuf.Bytes()
-		if len(blockBytes) != 0 {
-			btcBlock := common.BytesToBitcoinBlock(blockBytes)
-			blocks = append(blocks, &btcBlock)
-			bytesCount += len(blockBytes)
-		}
-	}
-
-	return blocks
 }
 
 func handleGetReceipts68(backend Backend, msg Decoder, peer *Peer) error {

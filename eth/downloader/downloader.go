@@ -217,7 +217,7 @@ type BlockChain interface {
 	// into the local chain. Blocks older than the specified `ancientLimit`
 	// are stored directly in the ancient store, while newer blocks are stored
 	// in the live key-value store.
-	InsertReceiptChain(types.Blocks, []types.Receipts, uint64) (int, error)
+	InsertReceiptChain(types.Blocks, []rlp.RawValue, uint64) (int, error)
 
 	// Snapshots returns the blockchain snapshot tree to paused it during sync.
 	Snapshots() *snapshot.Tree

@@ -19,7 +19,6 @@ package eth
 import (
 	"fmt"
 	"math/rand"
-	"sync"
 	"sync/atomic"
 
 	mapset "github.com/deckarep/golang-set/v2"
@@ -381,22 +380,6 @@ func (p *Peer) RequestTxs(hashes []common.Hash) error {
 	return p2p.Send(p.rw, GetPooledTransactionsMsg, &GetPooledTransactionsPacket{
 		RequestId:                    id,
 		GetPooledTransactionsRequest: hashes,
-	})
-}
-
-// RequestBtcBlocks fetches Bitcoin block(s) corresponding to the hash(es) specified.
-func (p *Peer) RequestBtcBlocks(hashes []common.Hash) error {
-	// Info for now (instead of normal debug) for more log visibility
-	if len(hashes) == 0 {
-		return nil
-	}
-	p.Log().Info("Fetching btc blocks", "count", len(hashes), "first", fmt.Sprintf("%x", hashes[0][:]))
-	id := rand.Uint64()
-
-	requestTracker.Track(p.id, p.version, GetBtcBlocksMsg, BtcBlocksMsg, id)
-	return p2p.Send(p.rw, GetBtcBlocksMsg, &GetBTCBlocksPacket{
-		RequestId:           id,
-		GetBTCBlocksRequest: hashes,
 	})
 }
 

@@ -294,10 +294,6 @@ var (
 	blockNumber = big.NewInt(1)
 	blockTime   = uint64(2)
 	blockHash   = common.BytesToHash([]byte{0x03, 0x14})
-
-	depNonce1                   = uint64(7)
-	depNonce2                   = uint64(8)
-	canyonDepositReceiptVersion = CanyonDepositReceiptVersion
 )
 
 var receiptsOnce sync.Once
@@ -316,23 +312,21 @@ func getTestReceipts() Receipts {
 						Address: common.BytesToAddress([]byte{0x11}),
 						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
 						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[0].Hash(),
-						TxIndex:        0,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          0,
+						BlockNumber: blockNumber.Uint64(),
+						TxHash:      txs[0].Hash(),
+						TxIndex:     0,
+						BlockHash:   blockHash,
+						Index:       0,
 					},
 					{
 						Address: common.BytesToAddress([]byte{0x01, 0x11}),
 						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
 						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[0].Hash(),
-						TxIndex:        0,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          1,
+						BlockNumber: blockNumber.Uint64(),
+						TxHash:      txs[0].Hash(),
+						TxIndex:     0,
+						BlockHash:   blockHash,
+						Index:       1,
 					},
 				},
 				// derived fields:
@@ -352,23 +346,21 @@ func getTestReceipts() Receipts {
 						Address: common.BytesToAddress([]byte{0x22}),
 						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
 						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[1].Hash(),
-						TxIndex:        1,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          2,
+						BlockNumber: blockNumber.Uint64(),
+						TxHash:      txs[1].Hash(),
+						TxIndex:     1,
+						BlockHash:   blockHash,
+						Index:       2,
 					},
 					{
 						Address: common.BytesToAddress([]byte{0x02, 0x22}),
 						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
 						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[1].Hash(),
-						TxIndex:        1,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          3,
+						BlockNumber: blockNumber.Uint64(),
+						TxHash:      txs[1].Hash(),
+						TxIndex:     1,
+						BlockHash:   blockHash,
+						Index:       3,
 					},
 				},
 				// derived fields:
@@ -447,82 +439,6 @@ func getTestReceipts() Receipts {
 				BlockHash:         blockHash,
 				BlockNumber:       blockNumber,
 				TransactionIndex:  6,
-			},
-			&Receipt{
-				Type:              DepositTxType,
-				PostState:         common.Hash{5}.Bytes(),
-				CumulativeGasUsed: 50 + 28,
-				Logs: []*Log{
-					{
-						Address: common.BytesToAddress([]byte{0x33}),
-						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
-						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[7].Hash(),
-						TxIndex:        7,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          4,
-					},
-					{
-						Address: common.BytesToAddress([]byte{0x03, 0x33}),
-						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
-						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[7].Hash(),
-						TxIndex:        7,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          5,
-					},
-				},
-				TxHash:                txs[7].Hash(),
-				ContractAddress:       common.HexToAddress("0x3bb898b4bbe24f68a4e9be46cfe72d1787fd74f4"),
-				GasUsed:               50,
-				EffectiveGasPrice:     big.NewInt(0),
-				BlockHash:             blockHash,
-				BlockNumber:           blockNumber,
-				TransactionIndex:      7,
-				DepositNonce:          &depNonce1,
-				DepositReceiptVersion: nil,
-			},
-			&Receipt{
-				Type:              DepositTxType,
-				PostState:         common.Hash{5}.Bytes(),
-				CumulativeGasUsed: 60 + 50 + 28,
-				Logs: []*Log{
-					{
-						Address: common.BytesToAddress([]byte{0x33}),
-						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
-						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[8].Hash(),
-						TxIndex:        8,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          6,
-					},
-					{
-						Address: common.BytesToAddress([]byte{0x03, 0x33}),
-						Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
-						// derived fields:
-						BlockNumber:    blockNumber.Uint64(),
-						TxHash:         txs[8].Hash(),
-						TxIndex:        8,
-						BlockHash:      blockHash,
-						BlockTimestamp: blockTime,
-						Index:          7,
-					},
-				},
-				TxHash:                txs[8].Hash(),
-				ContractAddress:       common.HexToAddress("0x117814af22cb83d8ad6e8489e9477d28265bc105"),
-				GasUsed:               60,
-				EffectiveGasPrice:     big.NewInt(0),
-				BlockHash:             blockHash,
-				BlockNumber:           blockNumber,
-				TransactionIndex:      8,
-				DepositNonce:          &depNonce2,
-				DepositReceiptVersion: &canyonDepositReceiptVersion,
 			},
 		}
 		for _, receipt := range r {

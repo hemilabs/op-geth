@@ -616,7 +616,6 @@ func decodeStoredReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	}
 	r.CumulativeGasUsed = stored.CumulativeGasUsed
 	r.Logs = stored.Logs
-	r.Bloom = CreateBloom((*Receipt)(r))
 
 	if stored.DepositNonce != nil && *stored.DepositNonce != NilDepositDataPlaceholder {
 		r.DepositNonce = stored.DepositNonce
@@ -697,8 +696,38 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, blockHash common.Has
 		logIndex += uint(len(rs[i].Logs))
 	}
 
-	if config.IsOptimismBedrock(new(big.Int).SetUint64(blockNumber)) && len(txs) >= 2 {
-		return rs.deriveOPStackFields(config, blockTime, txs)
+		// block location fields
+		rs[i].BlockHash = hash
+		rs[i].BlockNumber = new(big.Int).SetUint64(number)
+		rs[i].TransactionIndex = uint(i)
+
+		// The contract address can be derived from the transaction itself
+		if txs[i].To() == nil {
+			// Deriving the signer is expensive, only do if it's actually needed
+			from, _ := Sender(signer, txs[i])
+			rs[i].ContractAddress = crypto.CreateAddress(from, txs[i].Nonce())
+		} else {
+			rs[i].ContractAddress = common.Address{}
+		}
+
+		// The used gas can be calculated based on previous r
+		if i == 0 {
+			rs[i].GasUsed = rs[i].CumulativeGasUsed
+		} else {
+			rs[i].GasUsed = rs[i].CumulativeGasUsed - rs[i-1].CumulativeGasUsed
+		}
+
+		// The derived log fields can simply be set from the block and transaction
+		for j := 0; j < len(rs[i].Logs); j++ {
+			rs[i].Logs[j].BlockNumber = number
+			rs[i].Logs[j].BlockHash = hash
+			rs[i].Logs[j].TxHash = rs[i].TxHash
+			rs[i].Logs[j].TxIndex = uint(i)
+			rs[i].Logs[j].Index = logIndex
+			logIndex++
+		}
+		// also derive the Bloom if not derived yet
+		rs[i].Bloom = CreateBloom(rs[i])
 	}
 	return nil
 }
@@ -719,12 +748,4 @@ func EncodeBlockReceiptLists(receipts []Receipts) []rlp.RawValue {
 		result[i] = bytes
 	}
 	return result
-}
-
-func u32ptrTou64ptr(a *uint32) *uint64 {
-	if a == nil {
-		return nil
-	}
-	b := uint64(*a)
-	return &b
 }

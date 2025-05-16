@@ -81,6 +81,8 @@ func (s *Suite) EthTests() []utesting.Test {
 		// get history
 		{Name: "GetBlockBodies", Fn: s.TestGetBlockBodies},
 		{Name: "GetReceipts", Fn: s.TestGetReceipts},
+		// // malicious handshakes + status
+		{Name: "MaliciousHandshake", Fn: s.TestMaliciousHandshake},
 		// test transactions
 		{Name: "LargeTxRequest", Fn: s.TestLargeTxRequest, Slow: true},
 		{Name: "Transaction", Fn: s.TestTransaction},
@@ -402,11 +404,15 @@ func (s *Suite) TestGetBlockBodies(t *utesting.T) {
 
 func (s *Suite) TestGetReceipts(t *utesting.T) {
 	t.Log(`This test sends GetReceipts requests to the node for known blocks in the test chain.`)
-	conn, err := s.dialAndPeer(nil)
+
+	conn, err := s.dial()
 	if err != nil {
-		t.Fatalf("peering failed: %v", err)
+		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
+	if err := conn.peer(s.chain, nil); err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
 
 	// Find some blocks containing receipts.
 	var hashes = make([]common.Hash, 0, 3)
@@ -523,13 +529,17 @@ func (s *Suite) TestMaliciousHandshake(t *utesting.T) {
 	}
 }
 
-func (s *Suite) TestBlockRangeUpdateInvalid(t *utesting.T) {
+func (s *Suite) TestInvalidBlockRangeUpdate(t *utesting.T) {
 	t.Log(`This test sends an invalid BlockRangeUpdate message to the node and expects to be disconnected.`)
-	conn, err := s.dialAndPeer(nil)
+
+	conn, err := s.dial()
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
+	if err := conn.peer(s.chain, nil); err != nil {
+		t.Fatalf("peering failed: %v", err)
+	}
 
 	conn.Write(ethProto, eth.BlockRangeUpdateMsg, &eth.BlockRangeUpdatePacket{
 		EarliestBlock:   10,
@@ -541,76 +551,6 @@ func (s *Suite) TestBlockRangeUpdateInvalid(t *utesting.T) {
 		t.Fatalf("expected disconnect, got err: %v", err)
 	} else if code != discMsg {
 		t.Fatalf("expected disconnect message, got msg code %d", code)
-	}
-}
-
-func (s *Suite) TestBlockRangeUpdateFuture(t *utesting.T) {
-	t.Log(`This test sends a BlockRangeUpdate that is beyond the chain head.
-The node should accept the update and should not disonnect.`)
-	conn, err := s.dialAndPeer(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-
-	head := s.chain.Head().NumberU64()
-	var hash common.Hash
-	rand.Read(hash[:])
-	conn.Write(ethProto, eth.BlockRangeUpdateMsg, &eth.BlockRangeUpdatePacket{
-		EarliestBlock:   head + 10,
-		LatestBlock:     head + 50,
-		LatestBlockHash: hash,
-	})
-
-	// Ensure the node does not disconnect us.
-	// Just send a few ping messages.
-	for range 10 {
-		time.Sleep(100 * time.Millisecond)
-		if err := conn.Write(baseProto, pingMsg, []any{}); err != nil {
-			t.Fatal("write error:", err)
-		}
-		code, _, err := conn.Read()
-		switch {
-		case err != nil:
-			t.Fatal("read error:", err)
-		case code == discMsg:
-			t.Fatal("got disconnect")
-		case code == pongMsg:
-		}
-	}
-}
-
-func (s *Suite) TestBlockRangeUpdateHistoryExp(t *utesting.T) {
-	t.Log(`This test sends a BlockRangeUpdate announcing incomplete (expired) history.
-The node should accept the update and should not disonnect.`)
-	conn, err := s.dialAndPeer(nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer conn.Close()
-
-	head := s.chain.Head()
-	conn.Write(ethProto, eth.BlockRangeUpdateMsg, &eth.BlockRangeUpdatePacket{
-		EarliestBlock:   head.NumberU64() - 10,
-		LatestBlock:     head.NumberU64(),
-		LatestBlockHash: head.Hash(),
-	})
-
-	// Ensure the node does not disconnect us.
-	// Just send a few ping messages.
-	for range 10 {
-		time.Sleep(100 * time.Millisecond)
-		if err := conn.Write(baseProto, pingMsg, []any{}); err != nil {
-			t.Fatal("write error:", err)
-		}
-		code, _, err := conn.Read()
-		switch {
-		case err != nil:
-			t.Fatal("read error:", err)
-		case code == discMsg:
-			t.Fatal("got disconnect")
-		case code == pongMsg:
-		}
 	}
 }
 
