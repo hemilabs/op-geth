@@ -2620,7 +2620,7 @@ func testSideImportPrunedBlocks(t *testing.T, scheme string) {
 	}
 	defer db.Close()
 
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), DefaultCacheConfigWithScheme(scheme), genesis, nil, engine, vm.Config{}, nil, nil, context.Background())
+	chain, err := NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), genesis, nil, engine, vm.Config{}, nil, nil, context.Background())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -4061,7 +4061,7 @@ func TestEIP3651(t *testing.T) {
 
 		b.AddTx(tx)
 	})
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{Tracer: logger.NewMarkdownLogger(&logger.Config{}, os.Stderr)}, nil, nil, context.Background())
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{Tracer: logger.NewJSONLogger(nil, os.Stdout)}, nil, nil, context.Background())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -4170,7 +4170,7 @@ func TestPragueRequests(t *testing.T) {
 	}
 
 	// Insert block to check validation.
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{}, nil)
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{}, nil, nil, context.Background())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -4242,7 +4242,7 @@ func TestEIP7702(t *testing.T) {
 		tx := types.MustSignNewTx(key1, signer, txdata)
 		b.AddTx(tx)
 	})
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{}, nil)
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{}, nil, nil, context.Background())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -4647,7 +4647,7 @@ func TestL2Keystones(t *testing.T) {
 			b.AddTx(tx)
 		})
 
-		blockchain.insertChain(blocks, true)
+		blockchain.insertChain(blocks, true, false)
 
 		expectedKeystones := map[uint64]hemi.L2Keystone{}
 
