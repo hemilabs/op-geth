@@ -19,6 +19,7 @@ package core
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -572,6 +573,48 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 	currentHash := current.Hash()
 
 	log.Info(fmt.Sprintf("hVM node initiated, stateId=%x, current EVM tip=%s", stateId[:], currentHash.String()))
+
+	tnFix, _ := hex.DecodeString("2decc762c95d7c392b5e852fc861aab2044b5e5748d1696a0cb00de70014d0f4")
+	// Special case for testnet
+	if bytes.Equal(stateId[:], tnFix[:]) {
+		correctPrevStateId, _ := hex.DecodeString("4d1bafde31ffe9d02b81131333340c762a639865361b9429cdf21181e78d8bff")
+		badBTCBlock, _ := hex.DecodeString("000000000001bdeacca48fd53488d5a8ecf8af7370eb1703623e30e16655f4ae")
+
+		var badBlock chainhash.Hash
+		_ = badBlock.SetBytes(badBTCBlock[:])
+		badBlockHeader, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), badBlock)
+		if err != nil {
+			log.Crit("Unable to get bad BTC block", "block", badBTCBlock, "err", err)
+		}
+
+		headersToRemove := make([]*wire.BlockHeader, 1)
+		headersToRemove[0] = badBlockHeader
+
+		msgHeaders := &wire.MsgHeaders{
+			Headers: headersToRemove,
+		}
+
+		correctHead, _ := hex.DecodeString("0000000000a811c5b42e4a63b9adbaf18686ecbaff8044260bce43a7bdee70d8")
+
+		var ch chainhash.Hash
+		_ = ch.SetBytes(correctHead[:])
+		prevHeader, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), ch)
+		if err != nil {
+			log.Crit("Unable to get correct previous block", "block", badBTCBlock, "err", err)
+		}
+
+		// Remove partial hVM state transition and set state back to hVM state at 4d1bafde31ffe9d02b81131333340c762a639865361b9429cdf21181e78d8bff
+		_, _, err = bc.tbcHeaderNode.RemoveExternalHeaders(context.Background(), msgHeaders, prevHeader, correctPrevStateId)
+		if err != nil {
+			log.Crit("Unable to remove external headers", "err", err)
+		}
+
+		// Get updated state ID after fix to continue initialization
+		stateId, err = bc.tbcHeaderNode.UpstreamStateId(bc.ctx)
+		if err != nil {
+			log.Crit("Unable to get upstream state ID from TBC header node", "err", err)
+		}
+	}
 
 	if bytes.Equal(stateId[:], hVMGenesisUpstreamId[:]) {
 		// TBC claims to be in its genesis configuration, check to ensure its best header is the hVM genesis header

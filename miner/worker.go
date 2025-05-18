@@ -154,10 +154,12 @@ func (miner *Miner) generateWork(params *generateParams, witness bool) *newPaylo
 		if err != nil {
 			return &newPayloadResult{err: fmt.Errorf("failed to force-include tx: %s type: %d sender: %s nonce: %d, err: %w", tx.Hash(), tx.Type(), from, tx.Nonce(), err)}
 		}
+
+		log.Info(fmt.Sprintf("Force-included transaction %s", tx.Hash().String()))
 	}
 
 	containsBtcAttrDepTx := false
-	if !params.noTxs {
+	if !params.noTxs && len(params.txs) < 2 {
 		// First, check whether a new Bitcoin Attributes Deposited tx should be included.
 		// This is a redundant check since GetBitcoinAttributesForNextBlock will return nil with no error if hVM is not enabled/activated.
 		if miner.backend.BlockChain().IsHvmEnabled() && miner.chainConfig.IsHvm0(params.timestamp) {
@@ -186,9 +188,14 @@ func (miner *Miner) generateWork(params *generateParams, witness bool) *newPaylo
 			interrupt = new(atomic.Int32)
 		}
 
-		err = miner.fillTransactions(interrupt, work)
-		if errors.Is(err, errBlockInterruptedByResolve) {
-			log.Info("Block building got interrupted by payload resolution")
+		if !containsBtcAttrDepTx {
+			log.Info("Not including BTC Attributes Deposited transaction, so adding mempool transactions")
+			err = miner.fillTransactions(interrupt, work)
+			if errors.Is(err, errBlockInterruptedByResolve) {
+				log.Info("Block building got interrupted by payload resolution")
+			}
+		} else {
+			log.Info("Block contains BTC Attributes Deposited transaction, not adding mempool transactions")
 		}
 	}
 
