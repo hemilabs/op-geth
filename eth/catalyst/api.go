@@ -317,7 +317,15 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	api.forkchoiceLock.Lock()
 	defer api.forkchoiceLock.Unlock()
 
-	log.Info(fmt.Sprintf("Forkchoice update contains %d transactions", len(payloadAttributes.Transactions)))
+	if payloadAttributes != nil {
+		if payloadAttributes.Transactions != nil {
+			log.Info(fmt.Sprintf("Forkchoice update contains %d transactions", len(payloadAttributes.Transactions)))
+		} else {
+			log.Info("Forkchoice update does not contain any transactions")
+		}
+	} else {
+		log.Info("Forkchoice update does not contain any transactions")
+	}
 
 	log.Trace("Engine API request received", "method", "ForkchoiceUpdated", "head", update.HeadBlockHash, "finalized", update.FinalizedBlockHash, "safe", update.SafeBlockHash)
 	log.Trace(fmt.Sprintf("forkchoiceUpdated, payloadAttributes=%v", payloadAttributes))
