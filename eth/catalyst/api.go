@@ -19,6 +19,7 @@ package catalyst
 
 import (
 	"bytes"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
@@ -316,6 +317,8 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	api.forkchoiceLock.Lock()
 	defer api.forkchoiceLock.Unlock()
 
+	log.Info(fmt.Sprintf("Forkchoice update contains %d transactions", len(payloadAttributes.Transactions)))
+
 	log.Trace("Engine API request received", "method", "ForkchoiceUpdated", "head", update.HeadBlockHash, "finalized", update.FinalizedBlockHash, "safe", update.SafeBlockHash)
 	log.Trace(fmt.Sprintf("forkchoiceUpdated, payloadAttributes=%v", payloadAttributes))
 	log.Info(fmt.Sprintf("Engine API forkchoice updated, head=%s, finalized=%s, safe=%s", update.HeadBlockHash.String(), update.FinalizedBlockHash.String(), update.SafeBlockHash.String()))
@@ -462,6 +465,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 				return engine.STATUS_INVALID, fmt.Errorf("transaction %d is not valid: %v", i, err)
 			}
 			transactions = append(transactions, &tx)
+			log.Info(fmt.Sprintf("Forcibly including transaction %s from source %s with type %d to address %s with data %s", tx.Hash().String(), tx.SourceHash().String(), tx.Type(), tx.To().String(), hex.EncodeToString(tx.Data())))
 		}
 		args := &miner.BuildPayloadArgs{
 			Parent:        update.HeadBlockHash,
