@@ -578,13 +578,19 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 	// Special case for testnet
 	if bytes.Equal(stateId[:], tnFix[:]) {
 		correctPrevStateId, _ := hex.DecodeString("4d1bafde31ffe9d02b81131333340c762a639865361b9429cdf21181e78d8bff")
-		badBTCBlock, _ := hex.DecodeString("000000000001bdeacca48fd53488d5a8ecf8af7370eb1703623e30e16655f4ae")
+		badBTCBlock, _ := hex.DecodeString("aef45566e1303e620317eb7073aff8eca8d58834d58fa4cceabd010000000000")
 
 		var badBlock chainhash.Hash
 		_ = badBlock.SetBytes(badBTCBlock[:])
 		badBlockHeader, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), badBlock)
 		if err != nil {
-			log.Crit("Unable to get bad BTC block", "block", badBTCBlock, "err", err)
+			log.Error("Unable to get bad BTC block", "block", badBTCBlock, "err", err)
+			// Backup: get tip which will be same bad BTC block
+			_, badBlockHeader, err = bc.tbcHeaderNode.BlockHeaderBest(context.Background())
+			if err != nil {
+				log.Crit("Unable to get tip")
+			}
+
 		}
 
 		headersToRemove := make([]*wire.BlockHeader, 1)
@@ -594,13 +600,18 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 			Headers: headersToRemove,
 		}
 
-		correctHead, _ := hex.DecodeString("0000000000a811c5b42e4a63b9adbaf18686ecbaff8044260bce43a7bdee70d8")
+		correctHead, _ := hex.DecodeString("d870eebda743ce0b264480ffbaec8686f1baadb9634a2eb4c511a80000000000")
 
 		var ch chainhash.Hash
 		_ = ch.SetBytes(correctHead[:])
 		prevHeader, _, err := bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), ch)
 		if err != nil {
-			log.Crit("Unable to get correct previous block", "block", badBTCBlock, "err", err)
+			log.Error("Unable to get correct previous block", "block", badBTCBlock, "err", err)
+			// Backup: get previous block
+			prevHeader, _, err = bc.tbcHeaderNode.BlockHeaderByHash(context.Background(), badBlockHeader.PrevBlock)
+			if err != nil {
+				log.Crit("Unable to get previous block")
+			}
 		}
 
 		// Remove partial hVM state transition and set state back to hVM state at 4d1bafde31ffe9d02b81131333340c762a639865361b9429cdf21181e78d8bff
