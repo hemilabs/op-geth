@@ -1326,7 +1326,7 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 		log.Crit("No TBC indexer available, cannot perform hVM precompile call!")
 	}
 
-	utxos, err := TBCFullNode.UtxosByAddress(MainCtx, false, addr, uint64(pg), uint64(pgSize))
+	utxos, err := TBCFullNode.UtxosByAddress(MainCtx, addr, uint64(pg), uint64(pgSize))
 
 	if err != nil {
 		log.Warn("Unable to lookup UTXOs for address!", "addr", addr)
