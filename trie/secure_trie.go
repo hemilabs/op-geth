@@ -64,10 +64,11 @@ func NewSecure(stateRoot common.Hash, owner common.Hash, root common.Hash, db da
 //
 // StateTrie is not safe for concurrent use.
 type StateTrie struct {
-	trie        Trie
-	db          database.NodeDatabase
-	preimages   preimageStore
-	secKeyCache map[common.Hash][]byte
+	trie             Trie
+	db               database.NodeDatabase
+	preimages        preimageStore
+	secKeyCache      map[common.Hash][]byte
+	secKeyCacheOwner *StateTrie // Pointer to self, replace the key cache on mismatch
 }
 
 // NewStateTrie creates a trie with an existing root node from a backing database.
@@ -103,6 +104,19 @@ func NewStateTrie(id *ID, db database.NodeDatabase) (*StateTrie, error) {
 // print out an error message.
 func (t *StateTrie) MustGet(key []byte) []byte {
 	return t.trie.MustGet(crypto.Keccak256(key))
+}
+
+// GetStorage attempts to retrieve a storage slot with provided account address
+// and slot key. The value bytes must not be modified by the caller.
+// If the specified storage slot is not in the trie, nil will be returned.
+// If a trie node is not found in the database, a MissingNodeError is returned.
+func (t *StateTrie) GetStorage(_ common.Address, key []byte) ([]byte, error) {
+	enc, err := t.trie.Get(crypto.Keccak256(key))
+	if err != nil || len(enc) == 0 {
+		return nil, err
+	}
+	_, content, _, err := rlp.Split(enc)
+	return content, err
 }
 
 // GetAccount attempts to retrieve an account with provided account address.
@@ -184,9 +198,7 @@ func (t *StateTrie) GetNode(path []byte) ([]byte, int, error) {
 func (t *StateTrie) MustUpdate(key, value []byte) {
 	hk := crypto.Keccak256(key)
 	t.trie.MustUpdate(hk, value)
-	if t.preimages != nil {
-		t.secKeyCache[common.Hash(hk)] = common.CopyBytes(key)
-	}
+	t.getSecKeyCache()[common.Hash(hk)] = common.CopyBytes(key)
 }
 
 // UpdateStorage associates key with value in the trie. Subsequent calls to
@@ -204,9 +216,7 @@ func (t *StateTrie) UpdateStorage(_ common.Address, key, value []byte) error {
 	if err != nil {
 		return err
 	}
-	if t.preimages != nil {
-		t.secKeyCache[common.Hash(hk)] = common.CopyBytes(key)
-	}
+	t.getSecKeyCache()[common.Hash(hk)] = common.CopyBytes(key)
 	return nil
 }
 
@@ -220,9 +230,7 @@ func (t *StateTrie) UpdateAccount(address common.Address, acc *types.StateAccoun
 	if err := t.trie.Update(hk, data); err != nil {
 		return err
 	}
-	if t.preimages != nil {
-		t.secKeyCache[common.Hash(hk)] = address.Bytes()
-	}
+	t.getSecKeyCache()[common.Hash(hk)] = address.Bytes()
 	return nil
 }
 
@@ -234,9 +242,7 @@ func (t *StateTrie) UpdateContractCode(_ common.Address, _ common.Hash, _ []byte
 // will omit any encountered error but just print out an error message.
 func (t *StateTrie) MustDelete(key []byte) {
 	hk := crypto.Keccak256(key)
-	if t.preimages != nil {
-		delete(t.secKeyCache, common.Hash(hk))
-	}
+	delete(t.getSecKeyCache(), common.Hash(hk))
 	t.trie.MustDelete(hk)
 }
 
@@ -245,24 +251,23 @@ func (t *StateTrie) MustDelete(key []byte) {
 // If a node is not found in the database, a MissingNodeError is returned.
 func (t *StateTrie) DeleteStorage(_ common.Address, key []byte) error {
 	hk := crypto.Keccak256(key)
-	if t.preimages != nil {
-		delete(t.secKeyCache, common.Hash(hk))
-	}
+	delete(t.getSecKeyCache(), common.Hash(hk))
 	return t.trie.Delete(hk)
 }
 
 // DeleteAccount abstracts an account deletion from the trie.
 func (t *StateTrie) DeleteAccount(address common.Address) error {
 	hk := crypto.Keccak256(address.Bytes())
-	if t.preimages != nil {
-		delete(t.secKeyCache, common.Hash(hk))
-	}
+	delete(t.getSecKeyCache(), common.Hash(hk))
 	return t.trie.Delete(hk)
 }
 
 // GetKey returns the sha3 preimage of a hashed key that was
 // previously used to store a value.
 func (t *StateTrie) GetKey(shaKey []byte) []byte {
+	if key, ok := t.getSecKeyCache()[common.BytesToHash(shaKey)]; ok {
+		return key
+	}
 	if t.preimages == nil {
 		return nil
 	}
@@ -290,7 +295,7 @@ func (t *StateTrie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet) {
 		if t.preimages != nil {
 			t.preimages.InsertPreimage(t.secKeyCache)
 		}
-		clear(t.secKeyCache)
+		t.secKeyCache = make(map[common.Hash][]byte)
 	}
 	// Commit the trie and return its modified nodeset.
 	return t.trie.Commit(collectLeaf)
@@ -322,6 +327,17 @@ func (t *StateTrie) NodeIterator(start []byte) (NodeIterator, error) {
 // error but just print out an error message.
 func (t *StateTrie) MustNodeIterator(start []byte) NodeIterator {
 	return t.trie.MustNodeIterator(start)
+}
+
+// getSecKeyCache returns the current secure key cache, creating a new one if
+// ownership changed (i.e. the current secure trie is a copy of another owning
+// the actual cache).
+func (t *StateTrie) getSecKeyCache() map[common.Hash][]byte {
+	if t != t.secKeyCacheOwner {
+		t.secKeyCacheOwner = t
+		t.secKeyCache = make(map[common.Hash][]byte)
+	}
+	return t.secKeyCache
 }
 
 func (t *StateTrie) IsVerkle() bool {
