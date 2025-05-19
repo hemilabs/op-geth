@@ -473,7 +473,6 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 				return engine.STATUS_INVALID, fmt.Errorf("transaction %d is not valid: %v", i, err)
 			}
 			transactions = append(transactions, &tx)
-			log.Info(fmt.Sprintf("Forcibly including transaction %s from source %s with type %d to address %s with data %s", tx.Hash().String(), tx.SourceHash().String(), tx.Type(), tx.To().String(), hex.EncodeToString(tx.Data())))
 		}
 		args := &miner.BuildPayloadArgs{
 			Parent:        update.HeadBlockHash,
