@@ -19,7 +19,6 @@ package catalyst
 
 import (
 	"bytes"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"strconv"
