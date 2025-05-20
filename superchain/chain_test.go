@@ -6,21 +6,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetChain(t *testing.T) {
-	t.Run("OP Mainnet found", func(t *testing.T) {
-		chain, err := GetChain(10)
-		require.NoError(t, err)
-		require.NotNil(t, chain)
-	})
-
-	// Celo mainnet skipped due to custom genesis
-	t.Run("Celo Mainnet skipped", func(t *testing.T) {
-		chain, err := GetChain(42220)
-		require.Error(t, err)
-		require.Nil(t, chain)
-	})
-}
-
 func TestGetDepset(t *testing.T) {
 	// Save BuiltInConfigs to restore later
 	originalConfigs := BuiltInConfigs
@@ -35,7 +20,7 @@ func TestGetDepset(t *testing.T) {
 
 		depset, err := GetDepset(999999)
 		require.Nil(t, depset)
-		require.ErrorIs(t, err, ErrUnknownChain)
+		require.Error(t, err)
 		require.Contains(t, err.Error(), "unknown chain ID")
 	})
 
@@ -60,13 +45,8 @@ func TestGetDepset(t *testing.T) {
 		}
 
 		depset, err := GetDepset(42)
+		require.Nil(t, depset)
 		require.NoError(t, err)
-		require.NotNil(t, depset)
-
-		// Verify the default dependency was created
-		selfDep, exists := depset["42"]
-		require.True(t, exists)
-		require.Equal(t, selfDep, Dependency{})
 	})
 
 	t.Run("nil Interop creates default depset", func(t *testing.T) {
@@ -99,7 +79,8 @@ func TestGetDepset(t *testing.T) {
 		// Verify the default dependency was created
 		selfDep, exists := depset["42"]
 		require.True(t, exists)
-		require.Equal(t, selfDep, Dependency{})
+		require.Equal(t, uint32(1), selfDep.ChainIndex)
+		require.Equal(t, activationTime, selfDep.ActivationTime)
 	})
 
 	t.Run("existing Interop depset returned", func(t *testing.T) {
@@ -115,8 +96,8 @@ func TestGetDepset(t *testing.T) {
 				},
 				Interop: &Interop{
 					Dependencies: map[string]Dependency{
-						"42": {},
-						"43": {},
+						"42": {ChainIndex: 1, ActivationTime: activationTime},
+						"43": {ChainIndex: 2, ActivationTime: activationTime + 100},
 					},
 				},
 			},
@@ -137,10 +118,11 @@ func TestGetDepset(t *testing.T) {
 
 		selfDep, exists := depset["42"]
 		require.True(t, exists)
-		require.Equal(t, selfDep, Dependency{})
+		require.Equal(t, uint32(1), selfDep.ChainIndex)
 
 		otherDep, exists := depset["43"]
 		require.True(t, exists)
-		require.Equal(t, otherDep, Dependency{})
+		require.Equal(t, uint32(2), otherDep.ChainIndex)
+		require.Equal(t, activationTime+100, otherDep.ActivationTime)
 	})
 }

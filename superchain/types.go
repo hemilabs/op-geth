@@ -34,7 +34,10 @@ type ChainConfig struct {
 	Addresses AddressesConfig `toml:"addresses"`
 }
 
-type Dependency struct{}
+type Dependency struct {
+	ChainIndex     uint32 `json:"chainIndex" toml:"chain_index"`
+	ActivationTime uint64 `json:"activationTime" toml:"activation_time"`
+}
 
 type Interop struct {
 	Dependencies map[string]Dependency `json:"dependencies" toml:"dependencies"`
