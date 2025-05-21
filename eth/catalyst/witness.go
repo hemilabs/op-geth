@@ -152,7 +152,7 @@ func (api *ConsensusAPI) NewPayloadWithWitnessV4(params engine.ExecutableData, v
 	case executionRequests == nil:
 		return invalidStatus, paramsErr("nil executionRequests post-prague")
 	case !api.checkFork(params.Timestamp, forks.Prague):
-		return invalidStatus, unsupportedForkErr("newPayloadV4 must only be called for prague payloads")
+		return invalidStatus, unsupportedForkErr("newPayloadV3 must only be called for cancun payloads")
 	}
 	requests := convertRequests(executionRequests)
 	if err := validateRequests(requests); err != nil {
@@ -228,8 +228,8 @@ func (api *ConsensusAPI) ExecuteStatelessPayloadV4(params engine.ExecutableData,
 		return engine.StatelessPayloadStatusV1{Status: engine.INVALID}, paramsErr("nil beaconRoot post-cancun")
 	case executionRequests == nil:
 		return engine.StatelessPayloadStatusV1{Status: engine.INVALID}, paramsErr("nil executionRequests post-prague")
-	case !api.checkFork(params.Timestamp, forks.Prague, forks.Osaka):
-		return engine.StatelessPayloadStatusV1{Status: engine.INVALID}, unsupportedForkErr("newPayloadV4 must only be called for prague payloads")
+	case !api.checkFork(params.Timestamp, forks.Prague):
+		return engine.StatelessPayloadStatusV1{Status: engine.INVALID}, unsupportedForkErr("newPayloadV3 must only be called for cancun payloads")
 	}
 	requests := convertRequests(executionRequests)
 	if err := validateRequests(requests); err != nil {
@@ -240,7 +240,7 @@ func (api *ConsensusAPI) ExecuteStatelessPayloadV4(params engine.ExecutableData,
 
 func (api *ConsensusAPI) executeStatelessPayload(params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, requests [][]byte, opaqueWitness hexutil.Bytes) (engine.StatelessPayloadStatusV1, error) {
 	log.Trace("Engine API request received", "method", "ExecuteStatelessPayload", "number", params.Number, "hash", params.BlockHash)
-	block, err := engine.ExecutableDataToBlockNoHash(params, versionedHashes, beaconRoot, requests, api.config())
+	block, err := engine.ExecutableDataToBlockNoHash(params, versionedHashes, beaconRoot, requests)
 	if err != nil {
 		bgu := "nil"
 		if params.BlobGasUsed != nil {
@@ -280,7 +280,9 @@ func (api *ConsensusAPI) executeStatelessPayload(params engine.ExecutableData, v
 		return engine.StatelessPayloadStatusV1{Status: engine.INVALID, ValidationError: &errorMsg}, nil
 	}
 	// Stash away the last update to warn the user if the beacon client goes offline
-	api.lastNewPayloadUpdate.Store(time.Now().Unix())
+	api.lastNewPayloadLock.Lock()
+	api.lastNewPayloadUpdate = time.Now()
+	api.lastNewPayloadLock.Unlock()
 
 	log.Trace("Executing block statelessly", "number", block.Number(), "hash", params.BlockHash)
 	stateRoot, receiptRoot, err := core.ExecuteStateless(api.config(), vm.Config{}, block, witness)
