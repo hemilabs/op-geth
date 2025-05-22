@@ -64,9 +64,6 @@ type ValidationOptions struct {
 	MaxSize      uint64   // Maximum size of a transaction that the caller can meaningfully handle
 	MaxBlobCount int      // Maximum number of blobs allowed per transaction
 	MinTip       *big.Int // Minimum gas tip needed to allow a transaction into the caller pool
-
-	EffectiveGasCeil uint64 // if non-zero, a gas ceiling to enforce independent of the header's gaslimit value
-	MaxTxGasLimit    uint64 // Maximum gas limit allowed per individual transaction
 }
 
 // ValidationFunction is an method type which the pools use to perform the tx-validations which do not
