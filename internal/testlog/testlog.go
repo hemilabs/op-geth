@@ -38,6 +38,7 @@ const (
 type T interface {
 	Logf(format string, args ...any)
 	Helper()
+	FailNow()
 }
 
 // logger implements log.Logger such that all output goes to the unit test log via
