@@ -481,13 +481,6 @@ func makeExtraData(extra []byte) []byte {
 func (s *Ethereum) APIs() []rpc.API {
 	apis := ethapi.GetAPIs(s.APIBackend)
 
-	// Append any Sequencer APIs as enabled
-	if s.config.RollupSequencerTxConditionalEnabled {
-		log.Info("Enabling eth_sendRawTransactionConditional endpoint support")
-		costRateLimit := rate.Limit(s.config.RollupSequencerTxConditionalCostRateLimit)
-		apis = append(apis, sequencerapi.GetSendRawTxConditionalAPI(s.APIBackend, s.seqRPCService, costRateLimit))
-	}
-
 	// Append all the local APIs and return
 	return append(apis, []rpc.API{
 		{
