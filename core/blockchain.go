@@ -5111,9 +5111,9 @@ func (bc *BlockChain) l2BlockNumberToKeystone(l2BlockNumber uint32) (*hemi.L2Key
 		return nil, fmt.Errorf("incorrect transaction type found: %d", l2Block.Transactions()[0].Type())
 	}
 
-	l1BlockNumber, err := bc.deriveL1BlockNumberFromData(l2Block.Time(), l2Block.Transactions()[0].Data())
+	l1BlockNumber, err := bc.deriveL1BlockNumberFromData(l2Block.Time(), l2Block.Transactions()[0].Data(), l2Block.NumberU64())
 	if err != nil {
-		return nil, fmt.Errorf("could not derive l2 block number from data: %s", err)
+		return nil, fmt.Errorf("could not derive l1 block number from data for l2 block %d: %s", l2BlockNumber, err)
 	}
 
 	l2Keystone := hemi.L2Keystone{
@@ -5314,8 +5314,9 @@ func unmarshalBinaryBedrock(data []byte) (uint64, error) {
 	return binary.BigEndian.Uint64(data[offset : offset+size]), nil
 }
 
-func (bc *BlockChain) deriveL1BlockNumberFromData(l2BlockTime uint64, data []byte) (uint64, error) {
-	if bc.chainConfig.IsEcotone(l2BlockTime) {
+func (bc *BlockChain) deriveL1BlockNumberFromData(l2BlockTime uint64, data []byte, l2BlockNumber uint64) (uint64, error) {
+	// Clayton: will genesis always be bedrock?
+	if bc.chainConfig.IsEcotone(l2BlockTime) && l2BlockNumber != 0 {
 		return unmarshalBinaryEcotone(data)
 	}
 	return unmarshalBinaryBedrock(data)

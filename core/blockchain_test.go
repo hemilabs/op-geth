@@ -4660,7 +4660,7 @@ func TestL2Keystones(t *testing.T) {
 			var l1BlockNumber uint64
 
 			if len(l2Block.Transactions()) > 0 {
-				l1BlockNumber, err = blockchain.deriveL1BlockNumberFromData(l2Block.Time(), l2Block.Transactions()[0].Data())
+				l1BlockNumber, err = blockchain.deriveL1BlockNumberFromData(l2Block.Time(), l2Block.Transactions()[0].Data(), l2Block.NumberU64())
 				if err != nil {
 					t.Fatalf("error determining l1 block info for l2 block %d: %s", l2Block.NumberU64(), err)
 				}
