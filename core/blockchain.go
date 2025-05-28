@@ -5054,6 +5054,10 @@ func (bc *BlockChain) InsertL2Keystone(l2Keystone hemi.L2Keystone) error {
 	bc.keystoneMtx.Lock()
 	defer bc.keystoneMtx.Unlock()
 
+	l2KeystoneAbrevHash := hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
+
+	log.Info("inserting l2 keystone", "l2KeystoneAbrevHash", hex.EncodeToString(l2KeystoneAbrevHash.CloneBytes()))
+
 	if err := rawdb.WriteL2Keystone(bc.db, l2Keystone); err != nil {
 		return err
 	}
