@@ -5331,12 +5331,12 @@ func unmarshalBinaryIsthmus(data []byte) (uint64, error) {
 }
 
 func (bc *BlockChain) deriveL1BlockNumberFromData(l2BlockTime uint64, data []byte, l2BlockNumber uint64) (uint64, error) {
-	if bc.chainConfig.IsEcotone(l2BlockTime) {
-		return unmarshalBinaryEcotone(data)
-	}
-
 	if bc.chainConfig.IsIsthmus(l2BlockTime) {
 		return unmarshalBinaryIsthmus(data)
+	}
+
+	if bc.chainConfig.IsEcotone(l2BlockTime) {
+		return unmarshalBinaryEcotone(data)
 	}
 
 	return unmarshalBinaryBedrock(data)
