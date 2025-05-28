@@ -5259,6 +5259,7 @@ const (
 	l1InfoArguments            = 8
 	l1InfoBedrockLen           = 4 + 32*l1InfoArguments
 	l1InfoEcotoneLen           = 4 + 32*5 // after Ecotone upgrade, args are packed into 5 32-byte slots
+	l1InfoIsthmusLen           = 4 + 32*5 + 4 + 8
 )
 
 var (
@@ -5314,10 +5315,29 @@ func unmarshalBinaryBedrock(data []byte) (uint64, error) {
 	return binary.BigEndian.Uint64(data[offset : offset+size]), nil
 }
 
+func unmarshalBinaryIsthmus(data []byte) (uint64, error) {
+	if len(data) != l1InfoIsthmusLen {
+		return 0, fmt.Errorf("data is unexpected length for bedrock: %d", len(data))
+	}
+
+	offset := 4 + // signature
+		4 + // base fee scalar
+		4 + // blob base fee scalar
+		8 + // sequence number
+		8 // time
+	size := 8
+
+	return binary.BigEndian.Uint64(data[offset : offset+size]), nil
+}
+
 func (bc *BlockChain) deriveL1BlockNumberFromData(l2BlockTime uint64, data []byte, l2BlockNumber uint64) (uint64, error) {
-	// Clayton: will genesis always be bedrock?
-	if bc.chainConfig.IsEcotone(l2BlockTime) && l2BlockNumber != 0 {
+	if bc.chainConfig.IsEcotone(l2BlockTime) {
 		return unmarshalBinaryEcotone(data)
 	}
+
+	if bc.chainConfig.IsthmusTime(l2BlockTime) {
+		return unmarshalBinaryIsthmus(data)
+	}
+
 	return unmarshalBinaryBedrock(data)
 }
