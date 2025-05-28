@@ -5335,7 +5335,7 @@ func (bc *BlockChain) deriveL1BlockNumberFromData(l2BlockTime uint64, data []byt
 		return unmarshalBinaryEcotone(data)
 	}
 
-	if bc.chainConfig.IsthmusTime(l2BlockTime) {
+	if bc.chainConfig.IsIsthmus(l2BlockTime) {
 		return unmarshalBinaryIsthmus(data)
 	}
 
