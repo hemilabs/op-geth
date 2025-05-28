@@ -512,7 +512,7 @@ func (db *Database) Enable(root common.Hash) error {
 
 	// Re-construct a new disk layer backed by persistent state
 	// and schedule the state snapshot generation if it's permitted.
-	db.tree.reset(generateSnapshot(db, root, db.isVerkle || db.config.SnapshotNoBuild))
+	db.tree.init(generateSnapshot(db, root, db.isVerkle || db.config.SnapshotNoBuild))
 	log.Info("Rebuilt trie database", "root", root)
 	return nil
 }
