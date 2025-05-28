@@ -19,14 +19,20 @@ package catalyst
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/txscript"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/hemilabs/heminetwork/ethereum"
 	"github.com/hemilabs/heminetwork/hemi"
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
@@ -84,6 +90,9 @@ const (
 	// beaconUpdateWarnFrequency is the frequency at which to warn the user that
 	// the beacon client is offline.
 	beaconUpdateWarnFrequency = 5 * time.Minute
+
+	// depth of blocks to check for when retrieving pop payouts from tbc
+	defaultPayoutBTCBlockDepth = 3
 )
 
 // All methods provided over the engine endpoint.
@@ -334,6 +343,54 @@ func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) (engine.KeystoneS
 	}()
 
 	return engine.KeystoneStatus{Status: engine.VALID}, nil
+}
+
+type PopPayout struct {
+	MinerAddress common.Address `json:"miner_address"`
+	Amount       *big.Int       `json:"amount"`
+}
+
+func (api *ConsensusAPI) PopPayoutsByL2Keystone(abrevHash chainhash.Hash) ([]PopPayout, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	payouts, err := vm.TBCFullNode.KeystoneTxsByL2KeystoneAbrevHash(ctx, abrevHash, defaultPayoutBTCBlockDepth)
+	if err != nil {
+		return nil, err
+	}
+
+	popPayouts := make([]PopPayout, 0, len(payouts))
+	amount := big.NewInt(hemi.HEMIBase)
+
+	for _, ksTx := range payouts {
+		script, err := txscript.ParsePkScript(ksTx.RawTx)
+		if err != nil {
+			return nil, err
+		}
+
+		var chain *chaincfg.Params
+		switch vm.TBCFullNodeConfig.Network {
+		case "mainnet":
+			chain = &chaincfg.MainNetParams
+		case "testnet3":
+			chain = &chaincfg.TestNet3Params
+		default:
+			return nil, fmt.Errorf("unknown network: %s", vm.TBCFullNodeConfig.Network)
+		}
+
+		addr, err := script.Address(chain)
+		if err != nil {
+			return nil, err
+		}
+
+		popPayouts = append(popPayouts, PopPayout{
+			// as of now, this is static at 10^18 atomic units == 1 HEMI
+			Amount:       amount,
+			MinerAddress: ethereum.PublicKeyToAddress(addr.ScriptAddress()),
+		})
+	}
+
+	return popPayouts, nil
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
