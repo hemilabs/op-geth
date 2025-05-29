@@ -267,8 +267,8 @@ github.com/hashicorp/go-hclog v1.2.0 h1:La19f8d7WIlm4ogzNHB0JGqs5AUDAZ2UfCY4sJXc
 github.com/hashicorp/go-hclog v1.2.0/go.mod h1:whpDNt7SSdeAju8AWKIWsul05p54N/39EeqMAyrmvFQ=
 github.com/hashicorp/go-retryablehttp v0.7.4 h1:ZQgVdpTdAL7WpMIwLzCfbalOcSUdkDZnpUv3/+BxzFA=
 github.com/hashicorp/go-retryablehttp v0.7.4/go.mod h1:Jy/gPYAdjqffZ/yFGCFV2doI5wjtH1ewM9u8iYVjtX8=
-github.com/hemilabs/heminetwork v1.1.1-0.20250528115641-6941c7f47b6d h1:sgXWvsHrbaJ4spg0+z+HdKGNvYgN11k5VNpZ+GsJeHw=
-github.com/hemilabs/heminetwork v1.1.1-0.20250528115641-6941c7f47b6d/go.mod h1:g8LW8Gw876w6NraLqO0EsXSKL/HY26esPy4y+dYnTvM=
+github.com/hemilabs/heminetwork v1.1.1-0.20250529134410-e7f144847b07 h1:rJs7rPV/aF6v2DQv3Ruc+qQGsHAarMVsBR9n1I5Zp64=
+github.com/hemilabs/heminetwork v1.1.1-0.20250529134410-e7f144847b07/go.mod h1:g8LW8Gw876w6NraLqO0EsXSKL/HY26esPy4y+dYnTvM=
 github.com/holiman/billy v0.0.0-20250108194907-5352da567d3e h1:pq/4Hzx6uYXfemif4EzNT4JxR1KAr7+xmDMWdeZSAmw=
 github.com/holiman/billy v0.0.0-20250108194907-5352da567d3e/go.mod h1:SCQdl3Vv9DgXmpsGuOn3kjhGgqFoWwB+Y2ITbC52dyc=
 github.com/holiman/bloomfilter/v2 v2.0.3 h1:73e0e/V0tCydx14a0SCYS/EWCxgwLZ18CZcZKVu0fao=

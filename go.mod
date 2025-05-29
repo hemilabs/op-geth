@@ -41,7 +41,7 @@ require (
 	github.com/gorilla/websocket v1.5.0
 	github.com/graph-gophers/graphql-go v1.3.0
 	github.com/hashicorp/go-bexpr v0.1.10
-	github.com/hemilabs/heminetwork v1.1.1-0.20250528115641-6941c7f47b6d
+	github.com/hemilabs/heminetwork v1.1.1-0.20250529134410-e7f144847b07
 	github.com/holiman/billy v0.0.0-20250108194907-5352da567d3e
 	github.com/holiman/bloomfilter/v2 v2.0.3
 	github.com/holiman/uint256 v1.3.2

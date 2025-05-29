@@ -32,6 +32,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/hemilabs/heminetwork/api/tbcapi"
 	"github.com/hemilabs/heminetwork/ethereum"
 	"github.com/hemilabs/heminetwork/hemi"
 
@@ -351,15 +352,19 @@ type PopPayout struct {
 }
 
 func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash chainhash.Hash) ([]PopPayout, error) {
-	payouts, err := vm.TBCFullNode.KeystoneTxsByL2KeystoneAbrevHash(ctx, abrevHash, defaultPayoutBTCBlockDepth)
+	req := tbcapi.KeystoneTxsByL2KeystoneAbrevHashRequest{
+		Depth:               3,
+		L2KeystoneAbrevHash: abrevHash,
+	}
+	resp, err := vm.TBCFullNode.KeystoneTxs(ctx, &req)
 	if err != nil {
 		return nil, err
 	}
 
-	popPayouts := make([]PopPayout, 0, len(payouts))
+	popPayouts := make([]PopPayout, 0, len(resp.KeystoneTxs))
 	amount := big.NewInt(hemi.HEMIBase)
 
-	for _, ksTx := range payouts {
+	for _, ksTx := range resp.KeystoneTxs {
 		script, err := txscript.ParsePkScript(ksTx.RawTx)
 		if err != nil {
 			return nil, err
