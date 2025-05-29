@@ -33,6 +33,7 @@ import (
 	"github.com/btcsuite/btcd/txscript"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/hemilabs/heminetwork/api/tbcapi"
+	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/ethereum"
 	"github.com/hemilabs/heminetwork/hemi"
 
@@ -363,6 +364,9 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 
 	resp, err := vm.TBCFullNode.KeystoneTxs(ctx, &req)
 	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			return []PopPayout{}, nil
+		}
 		return nil, err
 	}
 
