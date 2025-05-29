@@ -356,6 +356,11 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 		Depth:               3,
 		L2KeystoneAbrevHash: abrevHash,
 	}
+
+	if vm.TBCFullNodeConfig.Network == "localnet" {
+		req.Depth = 1000
+	}
+
 	resp, err := vm.TBCFullNode.KeystoneTxs(ctx, &req)
 	if err != nil {
 		return nil, err
@@ -376,6 +381,8 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 			chain = &chaincfg.MainNetParams
 		case "testnet3":
 			chain = &chaincfg.TestNet3Params
+		case "localnet":
+			chain = &chaincfg.RegressionNetParams
 		default:
 			return nil, fmt.Errorf("unknown network: %s", vm.TBCFullNodeConfig.Network)
 		}
