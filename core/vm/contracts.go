@@ -104,6 +104,8 @@ func RestartTBCFullNode(ctx context.Context) error {
 
 // SetupTBCFullNode Sets up the TBC full node that will be available for hVM precompiles
 func SetupTBCFullNode(ctx context.Context, cfg *tbc.Config) error {
+	cfg.HemiIndex = true
+
 	MainCtx = ctx
 
 	tbcFullNodeContext, cancel := context.WithCancel(ctx)
