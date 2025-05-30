@@ -28,14 +28,14 @@ import (
 	"sync"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
-	"github.com/btcsuite/btcd/txscript"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/hemilabs/heminetwork/api/tbcapi"
 	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/ethereum"
 	"github.com/hemilabs/heminetwork/hemi"
+	"github.com/hemilabs/heminetwork/hemi/pop"
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
@@ -374,24 +374,14 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 	amount := big.NewInt(hemi.HEMIBase)
 
 	for _, ksTx := range resp.KeystoneTxs {
-		script, err := txscript.ParsePkScript(ksTx.RawTx)
-		if err != nil {
+		reader := bytes.NewReader(ksTx.RawTx)
+
+		msgTx := wire.MsgTx{}
+		if err := msgTx.Deserialize(reader); err != nil {
 			return nil, err
 		}
 
-		var chain *chaincfg.Params
-		switch vm.TBCFullNodeConfig.Network {
-		case "mainnet":
-			chain = &chaincfg.MainNetParams
-		case "testnet3":
-			chain = &chaincfg.TestNet3Params
-		case "localnet":
-			chain = &chaincfg.RegressionNetParams
-		default:
-			return nil, fmt.Errorf("unknown network: %s", vm.TBCFullNodeConfig.Network)
-		}
-
-		addr, err := script.Address(chain)
+		publicKeyUncompressed, err := pop.ParsePublicKeyFromSignatureScript(msgTx.TxIn[0].SignatureScript)
 		if err != nil {
 			return nil, err
 		}
@@ -399,7 +389,7 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 		popPayouts = append(popPayouts, PopPayout{
 			// as of now, this is static at 10^18 atomic units == 1 HEMI
 			Amount:       amount,
-			MinerAddress: ethereum.PublicKeyToAddress(addr.ScriptAddress()),
+			MinerAddress: ethereum.PublicKeyToAddress(publicKeyUncompressed),
 		})
 	}
 
