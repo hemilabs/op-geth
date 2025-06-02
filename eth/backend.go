@@ -28,10 +28,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
 	"github.com/holiman/uint256"
-	"golang.org/x/time/rate"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -317,7 +314,19 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	}
 	eth.blobTxPool = blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
 
-	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, []txpool.SubPool{legacyPool, eth.blobTxPool})
+	txPools := []txpool.SubPool{legacyPool}
+	if !eth.BlockChain().Config().IsOptimism() {
+		blobPool := blobpool.New(config.BlobPool, eth.blockchain, legacyPool.HasPendingAuth)
+		txPools = append(txPools, blobPool)
+	}
+	// if interop is enabled, establish an Interop Filter connected to this Ethereum instance's
+	// simulated logs and message safety check functions
+	poolFilters := []txpool.IngressFilter{}
+	if config.InteropMessageRPC != "" && config.InteropMempoolFiltering {
+		chainID := uint256.MustFromBig(chainConfig.ChainID)
+		poolFilters = append(poolFilters, txpool.NewInteropFilter(eth, *chainID))
+	}
+	eth.txPool, err = txpool.New(config.TxPool.PriceLimit, eth.blockchain, txPools, poolFilters)
 	if err != nil {
 		return nil, err
 	}

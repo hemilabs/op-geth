@@ -60,7 +60,6 @@ func (f *interopAccessFilter) FilterTx(ctx context.Context, tx *types.Transactio
 		return false
 	}
 	exDesc := interoptypes.ExecutingDescriptor{Timestamp: t, Timeout: f.timeout, ChainID: f.chainID}
-
-	// perform the interop check and update internal failsafe bool if needed
+	// perform the interop check
 	return f.api.CheckAccessList(ctx, hashes, interoptypes.CrossUnsafe, exDesc) == nil
 }
