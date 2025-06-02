@@ -362,7 +362,7 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 		req.Depth = 1000
 	}
 
-	resp, err := vm.TBCFullNode.KeystoneTxs(ctx, &req)
+	resp, err := vm.TBCFullNode.KeystoneTxsByHash(ctx, &req)
 	if err != nil {
 		if errors.Is(err, database.ErrNotFound) {
 			return []PopPayout{}, nil
