@@ -65,6 +65,19 @@ func (s *Ethereum) inferBlockTime(current *types.Header) (uint64, error) {
 	return current.Time - penultimate.Time, nil
 }
 
+func (s *Ethereum) inferBlockTime(current *types.Header) (uint64, error) {
+	if current.Number.Uint64() == 0 {
+		return 0, errors.New("current head is at genesis: penultimate header is nil")
+	}
+	penultimate := s.BlockChain().GetHeaderByHash(current.ParentHash)
+	if penultimate == nil {
+		// We could use a for loop and retry, but this function is used
+		// in the ingress filters, which should fail fast to maintain uptime.
+		return 0, errors.New("penultimate header is nil")
+	}
+	return current.Time - penultimate.Time, nil
+}
+
 // CurrentInteropBlockTime returns the current block time,
 // or an error if Interop is not enabled.
 func (s *Ethereum) CurrentInteropBlockTime() (uint64, error) {
