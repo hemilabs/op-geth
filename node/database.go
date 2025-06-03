@@ -26,16 +26,25 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 )
 
-// openOptions contains the options to apply when opening a database.
-// OBS: If AncientsDirectory is empty, it indicates that no freezer is to be used.
-type openOptions struct {
-	Type              string // "leveldb" | "pebble"
-	Directory         string // the datadir
-	AncientsDirectory string // the ancients-dir
-	Namespace         string // the namespace for database relevant metrics
-	Cache             int    // the capacity(in megabytes) of the data caching
-	Handles           int    // number of files to be open simultaneously
-	ReadOnly          bool
+// DatabaseOptions contains the options to apply when opening a database.
+type DatabaseOptions struct {
+	// Directory for storing chain history ("freezer").
+	AncientsDirectory string
+
+	// The optional Era folder, which can be either a subfolder under
+	// ancient/chain or a directory specified via an absolute path.
+	EraDirectory string
+
+	MetricsNamespace string // the namespace for database relevant metrics
+	Cache            int    // the capacity(in megabytes) of the data caching
+	Handles          int    // number of files to be open simultaneously
+	ReadOnly         bool   // if true, no writes can be performed
+}
+
+type internalOpenOptions struct {
+	directory string
+	dbEngine  string // "leveldb" | "pebble"
+	DatabaseOptions
 }
 
 // openDatabase opens both a disk-based key-value database such as leveldb or pebble, but also
@@ -81,7 +90,7 @@ func openKeyValueDatabase(o internalOpenOptions) (ethdb.KeyValueStore, error) {
 	}
 	if o.dbEngine == rawdb.DBPebble || existingDb == rawdb.DBPebble {
 		log.Info("Using pebble as the backing database")
-		return newPebbleDBDatabase(o.Directory, o.Cache, o.Handles, o.Namespace, o.ReadOnly)
+		return newPebbleDBDatabase(o.directory, o.Cache, o.Handles, o.MetricsNamespace, o.ReadOnly)
 	}
 	if o.dbEngine == rawdb.DBLeveldb || existingDb == rawdb.DBLeveldb {
 		log.Info("Using leveldb as the backing database")
@@ -89,7 +98,7 @@ func openKeyValueDatabase(o internalOpenOptions) (ethdb.KeyValueStore, error) {
 	}
 	// No pre-existing database, no user-requested one either. Default to Pebble.
 	log.Info("Defaulting to pebble as the backing database")
-	return newPebbleDBDatabase(o.Directory, o.Cache, o.Handles, o.Namespace, o.ReadOnly)
+	return newPebbleDBDatabase(o.directory, o.Cache, o.Handles, o.MetricsNamespace, o.ReadOnly)
 }
 
 // newLevelDBDatabase creates a persistent key-value database without a freezer
@@ -105,7 +114,7 @@ func newLevelDBDatabase(file string, cache int, handles int, namespace string, r
 
 // newPebbleDBDatabase creates a persistent key-value database without a freezer
 // moving immutable chain segments into cold storage.
-func newPebbleDBDatabase(file string, cache int, handles int, namespace string, readonly bool) (ethdb.Database, error) {
+func newPebbleDBDatabase(file string, cache int, handles int, namespace string, readonly bool) (ethdb.KeyValueStore, error) {
 	db, err := pebble.New(file, cache, handles, namespace, readonly)
 	if err != nil {
 		return nil, err

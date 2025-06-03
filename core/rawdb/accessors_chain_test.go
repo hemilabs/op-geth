@@ -483,7 +483,7 @@ func TestAncientStorage(t *testing.T) {
 }
 
 func TestWriteAncientHeaderChain(t *testing.T) {
-	db, err := NewDatabaseWithFreezer(NewMemoryDatabase(), t.TempDir(), "", false)
+	db, err := Open(NewMemoryDatabase(), OpenOptions{Ancient: t.TempDir()})
 	if err != nil {
 		t.Fatalf("failed to create database with ancient backend")
 	}
