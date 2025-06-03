@@ -113,10 +113,6 @@ func GetDepset(chainID uint64) (map[string]Dependency, error) {
 		return nil, err
 	}
 
-	if cfg.Hardforks.InteropTime == nil {
-		return nil, nil
-	}
-
 	// depset of 1 (self) is the default when no dependencies are specified but interop_time is set
 	if cfg.Interop == nil {
 		cfg.Interop = &Interop{
