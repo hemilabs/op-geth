@@ -60,6 +60,11 @@ func (it sourceIter) NodeSource() string {
 	return it.name
 }
 
+type iteratorItem struct {
+	n      *Node
+	source string
+}
+
 // ReadNodes reads at most n nodes from the given iterator. The return value contains no
 // duplicates and no nil values. To prevent looping indefinitely for small repeating node
 // sequences, this function calls Next at most n times.
@@ -308,9 +313,9 @@ func (b *bufferIter) Close() {
 // It's safe to call AddSource and Close concurrently with Next.
 type FairMix struct {
 	wg      sync.WaitGroup
-	fromAny chan mixItem
+	fromAny chan iteratorItem
 	timeout time.Duration
-	cur     mixItem
+	cur     iteratorItem
 
 	mu      sync.Mutex
 	closed  chan struct{}
@@ -320,13 +325,8 @@ type FairMix struct {
 
 type mixSource struct {
 	it      SourceIterator
-	next    chan mixItem
+	next    chan iteratorItem
 	timeout time.Duration
-}
-
-type mixItem struct {
-	n      *Node
-	source string
 }
 
 // NewFairMix creates a mixer.
@@ -337,7 +337,7 @@ type mixItem struct {
 // timeout makes the mixer completely fair.
 func NewFairMix(timeout time.Duration) *FairMix {
 	m := &FairMix{
-		fromAny: make(chan mixItem),
+		fromAny: make(chan iteratorItem),
 		closed:  make(chan struct{}),
 		timeout: timeout,
 	}
@@ -355,7 +355,7 @@ func (m *FairMix) AddSource(it Iterator) {
 	m.wg.Add(1)
 	source := &mixSource{
 		it:      ensureSourceIter(it),
-		next:    make(chan mixItem),
+		next:    make(chan iteratorItem),
 		timeout: m.timeout,
 	}
 	m.sources = append(m.sources, source)
@@ -383,7 +383,7 @@ func (m *FairMix) Close() {
 
 // Next returns a node from a random source.
 func (m *FairMix) Next() bool {
-	m.cur = mixItem{}
+	m.cur = iteratorItem{}
 
 	for {
 		source := m.pickSource()
@@ -471,7 +471,7 @@ func (m *FairMix) runSource(closed chan struct{}, s *mixSource) {
 	defer m.wg.Done()
 	defer close(s.next)
 	for s.it.Next() {
-		item := mixItem{s.it.Node(), s.it.NodeSource()}
+		item := iteratorItem{s.it.Node(), s.it.NodeSource()}
 		select {
 		case s.next <- item:
 		case m.fromAny <- item:

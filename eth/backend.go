@@ -217,7 +217,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		networkID:       networkID,
 		gasPrice:        config.Miner.GasPrice,
 		p2pServer:       stack.Server(),
-		discmix:         enode.NewFairMix(0),
+		discmix:         enode.NewFairMix(discmixTimeout),
 		shutdownTracker: shutdowncheck.NewShutdownTracker(chainDb),
 	}
 	bcVersion := rawdb.ReadDatabaseVersion(chainDb)
