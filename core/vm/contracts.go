@@ -604,7 +604,7 @@ var PrecompiledContractsByzantium = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x2}): &sha256hash{},
 	common.BytesToAddress([]byte{0x3}): &ripemd160hash{},
 	common.BytesToAddress([]byte{0x4}): &dataCopy{},
-	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: false, eip7823: false},
+	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: false, eip7823: false, eip7883: false},
 	common.BytesToAddress([]byte{0x6}): &bn256AddByzantium{},
 	common.BytesToAddress([]byte{0x7}): &bn256ScalarMulByzantium{},
 	common.BytesToAddress([]byte{0x8}): &bn256PairingByzantium{},
@@ -617,7 +617,7 @@ var PrecompiledContractsIstanbul = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x2}): &sha256hash{},
 	common.BytesToAddress([]byte{0x3}): &ripemd160hash{},
 	common.BytesToAddress([]byte{0x4}): &dataCopy{},
-	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: false, eip7823: false},
+	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: false, eip7823: false, eip7883: false},
 	common.BytesToAddress([]byte{0x6}): &bn256AddIstanbul{},
 	common.BytesToAddress([]byte{0x7}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{0x8}): &bn256PairingIstanbul{},
@@ -631,7 +631,7 @@ var PrecompiledContractsBerlin = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x2}): &sha256hash{},
 	common.BytesToAddress([]byte{0x3}): &ripemd160hash{},
 	common.BytesToAddress([]byte{0x4}): &dataCopy{},
-	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: true, eip7823: false},
+	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: true, eip7823: false, eip7883: false},
 	common.BytesToAddress([]byte{0x6}): &bn256AddIstanbul{},
 	common.BytesToAddress([]byte{0x7}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{0x8}): &bn256PairingIstanbul{},
@@ -645,7 +645,7 @@ var PrecompiledContractsCancun = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x2}): &sha256hash{},
 	common.BytesToAddress([]byte{0x3}): &ripemd160hash{},
 	common.BytesToAddress([]byte{0x4}): &dataCopy{},
-	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: true, eip7823: false},
+	common.BytesToAddress([]byte{0x5}): &bigModExp{eip2565: true, eip7823: false, eip7883: false},
 	common.BytesToAddress([]byte{0x6}): &bn256AddIstanbul{},
 	common.BytesToAddress([]byte{0x7}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{0x8}): &bn256PairingIstanbul{},
@@ -660,7 +660,7 @@ var PrecompiledContractsPrague = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x02}): &sha256hash{},
 	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
 	common.BytesToAddress([]byte{0x04}): &dataCopy{},
-	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true, eip7823: false},
+	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true, eip7823: false, eip7883: false},
 	common.BytesToAddress([]byte{0x06}): &bn256AddIstanbul{},
 	common.BytesToAddress([]byte{0x07}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
@@ -686,7 +686,7 @@ var PrecompiledContractsOsaka = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x02}): &sha256hash{},
 	common.BytesToAddress([]byte{0x03}): &ripemd160hash{},
 	common.BytesToAddress([]byte{0x04}): &dataCopy{},
-	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true, eip7823: true},
+	common.BytesToAddress([]byte{0x05}): &bigModExp{eip2565: true, eip7823: true, eip7883: true},
 	common.BytesToAddress([]byte{0x06}): &bn256AddIstanbul{},
 	common.BytesToAddress([]byte{0x07}): &bn256ScalarMulIstanbul{},
 	common.BytesToAddress([]byte{0x08}): &bn256PairingIstanbul{},
@@ -702,10 +702,6 @@ var PrecompiledContractsOsaka = PrecompiledContracts{
 }
 
 var (
-	PrecompiledAddressesJovian    []common.Address
-	PrecompiledAddressesIsthmus   []common.Address
-	PrecompiledAddressesGranite   []common.Address
-	PrecompiledAddressesFjord     []common.Address
 	PrecompiledAddressesOsaka     []common.Address
 	PrecompiledAddressesPrague    []common.Address
 	PrecompiledAddressesCancun    []common.Address
@@ -734,6 +730,9 @@ func init() {
 	}
 	for k := range PrecompiledContractsHvm0 {
 		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
+	}
+	for k := range PrecompiledContractsOsaka {
+		PrecompiledAddressesOsaka = append(PrecompiledAddressesOsaka, k)
 	}
 }
 
@@ -785,14 +784,6 @@ func ActivePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 // ActivePrecompiles returns the precompiles enabled with the current configuration.
 func activePrecompiles(rules params.Rules) []common.Address {
 	switch {
-	case rules.IsOptimismJovian:
-		return PrecompiledAddressesJovian
-	case rules.IsOptimismIsthmus:
-		return PrecompiledAddressesIsthmus
-	case rules.IsOptimismGranite:
-		return PrecompiledAddressesGranite
-	case rules.IsOptimismFjord:
-		return PrecompiledAddressesFjord
 	case rules.IsOsaka:
 		return PrecompiledAddressesOsaka
 	case rules.IsPrague:
@@ -2033,6 +2024,7 @@ func (c *dataCopy) Name() string {
 type bigModExp struct {
 	eip2565 bool
 	eip7823 bool
+	eip7883 bool
 }
 
 var (
@@ -2143,8 +2135,6 @@ func (c *bigModExp) RequiredGas(input []byte) uint64 {
 			minPrice = 500
 			if maxLenOver32 {
 				gas.Add(gas, gas)
-			} else {
-				gas = big.NewInt(16)
 			}
 		}
 
