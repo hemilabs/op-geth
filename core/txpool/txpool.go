@@ -310,30 +310,6 @@ func (p *TxPool) GetMetadata(hash common.Hash) *TxMetadata {
 	return nil
 }
 
-// GetBlobs returns a number of blobs are proofs for the given versioned hashes.
-// This is a utility method for the engine API, enabling consensus clients to
-// retrieve blobs from the pools directly instead of the network.
-func (p *TxPool) GetBlobs(vhashes []common.Hash) ([]*kzg4844.Blob, []*kzg4844.Proof) {
-	for _, subpool := range p.subpools {
-		encoded := subpool.GetRLP(hash)
-		if len(encoded) != 0 {
-			return encoded
-		}
-	}
-	return nil
-}
-
-// GetMetadata returns the transaction type and transaction size with the given
-// hash.
-func (p *TxPool) GetMetadata(hash common.Hash) *TxMetadata {
-	for _, subpool := range p.subpools {
-		if meta := subpool.GetMetadata(hash); meta != nil {
-			return meta
-		}
-	}
-	return nil
-}
-
 // Add enqueues a batch of transactions into the pool if they are valid. Due
 // to the large transaction churn, add may postpone fully integrating the tx
 // to a later point to batch multiple ones together.

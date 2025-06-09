@@ -18,9 +18,7 @@
 package catalyst
 
 import (
-	"bytes"
-	"context"
-	"encoding/hex"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"math/big"
@@ -45,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/internal/version"
@@ -98,16 +97,48 @@ const (
 	defaultPayoutBTCBlockDepth = 3
 )
 
+// All methods provided over the engine endpoint.
+var caps = []string{
+	"engine_forkchoiceUpdatedV1",
+	"engine_forkchoiceUpdatedV2",
+	"engine_forkchoiceUpdatedV3",
+	"engine_forkchoiceUpdatedWithWitnessV1",
+	"engine_forkchoiceUpdatedWithWitnessV2",
+	"engine_forkchoiceUpdatedWithWitnessV3",
+	"engine_exchangeTransitionConfigurationV1",
+	"engine_getPayloadV1",
+	"engine_getPayloadV2",
+	"engine_getPayloadV3",
+	"engine_getPayloadV4",
+	"engine_getPayloadV5",
+	"engine_getBlobsV1",
+	"engine_getBlobsV2",
+	"engine_newPayloadV1",
+	"engine_newPayloadV2",
+	"engine_newPayloadV3",
+	"engine_newPayloadV4",
+	"engine_newPayloadWithWitnessV1",
+	"engine_newPayloadWithWitnessV2",
+	"engine_newPayloadWithWitnessV3",
+	"engine_newPayloadWithWitnessV4",
+	"engine_executeStatelessPayloadV1",
+	"engine_executeStatelessPayloadV2",
+	"engine_executeStatelessPayloadV3",
+	"engine_executeStatelessPayloadV4",
+	"engine_getPayloadBodiesByHashV1",
+	"engine_getPayloadBodiesByHashV2",
+	"engine_getPayloadBodiesByRangeV1",
+	"engine_getPayloadBodiesByRangeV2",
+	"engine_getClientVersionV1",
+}
+
 var (
 	// Number of blobs requested via getBlobsV2
 	getBlobsRequestedCounter = metrics.NewRegisteredCounter("engine/getblobs/requested", nil)
-
 	// Number of blobs requested via getBlobsV2 that are present in the blobpool
 	getBlobsAvailableCounter = metrics.NewRegisteredCounter("engine/getblobs/available", nil)
-
 	// Number of times getBlobsV2 responded with “hit”
 	getBlobsV2RequestHit = metrics.NewRegisteredCounter("engine/getblobs/hit", nil)
-
 	// Number of times getBlobsV2 responded with “miss”
 	getBlobsV2RequestMiss = metrics.NewRegisteredCounter("engine/getblobs/miss", nil)
 )
@@ -229,7 +260,7 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV3(update engine.ForkchoiceStateV1, pa
 			return engine.STATUS_INVALID, attributesErr("missing withdrawals")
 		case params.BeaconRoot == nil:
 			return engine.STATUS_INVALID, attributesErr("missing beacon root")
-		case !api.checkFork(params.Timestamp, forks.Cancun, forks.Prague):
+		case !api.checkFork(params.Timestamp, forks.Cancun, forks.Prague, forks.Osaka):
 			return engine.STATUS_INVALID, unsupportedForkErr("fcuV3 must only be called for cancun or prague payloads")
 		}
 	}
@@ -523,15 +554,88 @@ func (api *ConsensusAPI) GetBlobsV1(hashes []common.Hash) ([]*engine.BlobAndProo
 	if len(hashes) > 128 {
 		return nil, engine.TooLargeRequest.With(fmt.Errorf("requested blob count too large: %v", len(hashes)))
 	}
-	blobs, _, proofs, err := api.eth.BlobTxPool().GetBlobs(hashes, types.BlobSidecarVersion0)
-	if err != nil {
-		return nil, engine.InvalidParams.With(err)
+	var (
+		res      = make([]*engine.BlobAndProofV1, len(hashes))
+		hasher   = sha256.New()
+		index    = make(map[common.Hash]int)
+		sidecars = api.eth.BlobTxPool().GetBlobs(hashes)
+	)
+
+	for i, hash := range hashes {
+		index[hash] = i
 	}
-	res := make([]*engine.BlobAndProofV1, len(hashes))
-	for i := 0; i < len(blobs); i++ {
-		res[i] = &engine.BlobAndProofV1{
-			Blob:  blobs[i][:],
-			Proof: proofs[i][0][:],
+	for i, sidecar := range sidecars {
+		if res[i] != nil || sidecar == nil {
+			// already filled
+			continue
+		}
+		for cIdx, commitment := range sidecar.Commitments {
+			computed := kzg4844.CalcBlobHashV1(hasher, &commitment)
+			if idx, ok := index[computed]; ok {
+				res[idx] = &engine.BlobAndProofV1{
+					Blob:  sidecar.Blobs[cIdx][:],
+					Proof: sidecar.Proofs[cIdx][:],
+				}
+			}
+		}
+	}
+	return res, nil
+}
+
+// GetBlobsV2 returns a blob from the transaction pool.
+func (api *ConsensusAPI) GetBlobsV2(hashes []common.Hash) ([]*engine.BlobAndProofV2, error) {
+	if len(hashes) > 128 {
+		return nil, engine.TooLargeRequest.With(fmt.Errorf("requested blob count too large: %v", len(hashes)))
+	}
+
+	available := api.eth.BlobTxPool().AvailableBlobs(hashes)
+	getBlobsRequestedCounter.Inc(int64(len(hashes)))
+	getBlobsAvailableCounter.Inc(int64(available))
+	// Optimization: check first if all blobs are available, if not, return empty response
+	if available != len(hashes) {
+		getBlobsV2RequestMiss.Inc(1)
+		return nil, nil
+	}
+	getBlobsV2RequestHit.Inc(1)
+
+	// pull up the blob hashes
+	var (
+		res      = make([]*engine.BlobAndProofV2, len(hashes))
+		index    = make(map[common.Hash][]int)
+		sidecars = api.eth.BlobTxPool().GetBlobs(hashes)
+	)
+
+	for i, hash := range hashes {
+		index[hash] = append(index[hash], i)
+	}
+	for i, sidecar := range sidecars {
+		if res[i] != nil {
+			// already filled
+			continue
+		}
+		if sidecar == nil {
+			// not found, return empty response
+			return nil, nil
+		}
+		if sidecar.Version != 1 {
+			log.Info("GetBlobs queried V0 transaction: index %v, blobhashes %v", index, sidecar.BlobHashes())
+			return nil, nil
+		}
+		blobHashes := sidecar.BlobHashes()
+		for bIdx, hash := range blobHashes {
+			if idxes, ok := index[hash]; ok {
+				proofs := sidecar.CellProofsAt(bIdx)
+				var cellProofs []hexutil.Bytes
+				for _, proof := range proofs {
+					cellProofs = append(cellProofs, proof[:])
+				}
+				for _, idx := range idxes {
+					res[idx] = &engine.BlobAndProofV2{
+						Blob:       sidecar.Blobs[bIdx][:],
+						CellProofs: cellProofs,
+					}
+				}
+			}
 		}
 	}
 	return res, nil
@@ -604,7 +708,7 @@ func (api *ConsensusAPI) NewPayloadV4(params engine.ExecutableData, versionedHas
 		return invalidStatus, paramsErr("nil beaconRoot post-cancun")
 	case executionRequests == nil:
 		return invalidStatus, paramsErr("nil executionRequests post-prague")
-	case !api.checkFork(params.Timestamp, forks.Prague):
+	case !api.checkFork(params.Timestamp, forks.Prague, forks.Osaka):
 		return invalidStatus, unsupportedForkErr("newPayloadV3 must only be called for cancun payloads")
 	}
 

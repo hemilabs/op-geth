@@ -427,6 +427,23 @@ func verifyBlobRetrievals(t *testing.T, pool *BlobPool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	sidecars := pool.GetBlobs(hashes)
+	var blobs []*kzg4844.Blob
+	var proofs []*kzg4844.Proof
+	for idx, sidecar := range sidecars {
+		if sidecar == nil {
+			blobs = append(blobs, nil)
+			proofs = append(proofs, nil)
+			continue
+		}
+		blobHashes := sidecar.BlobHashes()
+		for i, hash := range blobHashes {
+			if hash == hashes[idx] {
+				blobs = append(blobs, &sidecar.Blobs[i])
+				proofs = append(proofs, &sidecar.Proofs[i])
+			}
+		}
+	}
 	// Cross validate what we received vs what we wanted
 	if len(blobs1) != len(hashes) || len(proofs1) != len(hashes) {
 		t.Errorf("retrieved blobs/proofs size mismatch: have %d/%d, want %d", len(blobs1), len(proofs1), len(hashes))

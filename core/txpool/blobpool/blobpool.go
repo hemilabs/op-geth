@@ -36,7 +36,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -1318,14 +1317,21 @@ func (p *BlobPool) GetMetadata(hash common.Hash) *txpool.TxMetadata {
 	}
 }
 
-// GetBlobs returns a number of blobs are proofs for the given versioned hashes.
+// GetBlobs returns a number of blobs and proofs for the given versioned hashes.
 // This is a utility method for the engine API, enabling consensus clients to
 // retrieve blobs from the pools directly instead of the network.
-func (p *BlobPool) GetBlobs(vhashes []common.Hash, version byte) ([]*kzg4844.Blob, []kzg4844.Commitment, [][]kzg4844.Proof, error) {
-	var (
-		blobs       = make([]*kzg4844.Blob, len(vhashes))
-		commitments = make([]kzg4844.Commitment, len(vhashes))
-		proofs      = make([][]kzg4844.Proof, len(vhashes))
+func (p *BlobPool) GetBlobs(vhashes []common.Hash) []*types.BlobTxSidecar {
+	sidecars := make([]*types.BlobTxSidecar, len(vhashes))
+	for idx, vhash := range vhashes {
+		// Retrieve the datastore item (in a short lock)
+		p.lock.RLock()
+		id, exists := p.lookup.storeidOfBlob(vhash)
+		if !exists {
+			p.lock.RUnlock()
+			continue
+		}
+		data, err := p.store.Get(id)
+		p.lock.RUnlock()
 
 		indices = make(map[common.Hash][]int)
 		filled  = make(map[common.Hash]struct{})
@@ -1432,15 +1438,30 @@ func (p *BlobPool) convertSidecar(txs []*types.Transaction) ([]*types.Transactio
 			errs = append(errs, errors.New("missing sidecar in blob transaction"))
 			continue
 		}
-		if sidecar.Version == types.BlobSidecarVersion0 {
-			if err := sidecar.ToV1(); err != nil {
-				errs = append(errs, err)
-				continue
-			}
+		item := new(types.Transaction)
+		if err = rlp.DecodeBytes(data, item); err != nil {
+			log.Error("Blobs corrupted for traced transaction", "id", id, "err", err)
+			continue
+		}
+		sidecars[idx] = item.BlobTxSidecar()
+	}
+	return sidecars
+}
+
+// AvailableBlobs returns the number of blobs that are available in the subpool.
+func (p *BlobPool) AvailableBlobs(vhashes []common.Hash) int {
+	available := 0
+	for _, vhash := range vhashes {
+		// Retrieve the datastore item (in a short lock)
+		p.lock.RLock()
+		_, exists := p.lookup.storeidOfBlob(vhash)
+		p.lock.RUnlock()
+		if exists {
+			available++
 		}
 		errs = append(errs, nil)
 	}
-	return txs, errs
+	return available
 }
 
 // Add inserts a set of blob transactions into the pool if they pass validation (both

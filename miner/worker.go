@@ -35,7 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/interoptypes"
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
@@ -664,20 +664,23 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			continue
 		}
 
-		// Ensure transaction isn't a Bitcoin Attributes Deposited or PoP Payout tx, since they should never come from mempool
-		if tx.IsBtcAttributesDepositedTx() {
-			log.Error("Rejected a Bitcoin Attributes Deposited transaction that was in the mempool.")
-			txs.Pop()
+		// Make sure all transactions after osaka have cell proofs
+		if miner.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
+			if sidecar := tx.BlobTxSidecar(); sidecar != nil {
+				if sidecar.Version == 0 {
+					log.Info("Including blob tx with v0 sidecar, recomputing proofs", "hash", ltx.Hash)
+					sidecar.Proofs = make([]kzg4844.Proof, 0, len(sidecar.Blobs)*kzg4844.CellProofsPerBlob)
+					for _, blob := range sidecar.Blobs {
+						cellProofs, err := kzg4844.ComputeCellProofs(&blob)
+						if err != nil {
+							panic(err)
+						}
+						sidecar.Proofs = append(sidecar.Proofs, cellProofs...)
+					}
+				}
+			}
 		}
-		if tx.IsPopPayoutTx() {
-			log.Error("Rejected a PoP Payout transaction that was in the mempool.")
-			txs.Pop()
-		}
-		// if inclusion of the transaction would put the block size over the
-		// maximum we allow, don't add any more txs to the payload.
-		if !env.txFitsSize(tx) {
-			break
-		}
+
 		// Error may be ignored here. The error has already been checked
 		// during transaction acceptance in the transaction pool.
 		from, _ := types.Sender(env.signer, tx)
