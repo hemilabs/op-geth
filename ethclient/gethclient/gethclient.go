@@ -209,18 +209,7 @@ func (ec *Client) SubscribePendingTransactions(ctx context.Context, ch chan<- co
 // and returns them as a JSON object.
 func (ec *Client) TraceTransaction(ctx context.Context, hash common.Hash, config *tracers.TraceConfig) (any, error) {
 	var result any
-	err := ec.c.CallContext(ctx, &result, "debug_traceTransaction", hash, config)
-	if err != nil {
-		return nil, err
-	}
-	return result, nil
-}
-
-// TraceBlock returns the structured logs created during the execution of EVM
-// and returns them as a JSON object.
-func (ec *Client) TraceBlock(ctx context.Context, hash common.Hash, config *tracers.TraceConfig) (any, error) {
-	var result any
-	err := ec.c.CallContext(ctx, &result, "debug_traceBlockByHash", hash, config)
+	err := ec.c.CallContext(ctx, &result, "debug_traceTransaction", hash.Hex(), config)
 	if err != nil {
 		return nil, err
 	}
