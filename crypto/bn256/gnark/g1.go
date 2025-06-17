@@ -44,7 +44,7 @@ func (g *G1) Unmarshal(buf []byte) (int, error) {
 		return 0, errors.New("invalid G1 point size")
 	}
 
-	if !bitutil.TestBytes(buf[:64]) {
+	if allZeroes(buf[:64]) {
 		// point at infinity
 		g.inner.X.SetZero()
 		g.inner.Y.SetZero()
@@ -82,4 +82,13 @@ func (p *G1) Marshal() []byte {
 	copy(output[32:64], yBytes[:])
 
 	return output
+}
+
+func allZeroes(buf []byte) bool {
+	for i := range buf {
+		if buf[i] != 0 {
+			return false
+		}
+	}
+	return true
 }
