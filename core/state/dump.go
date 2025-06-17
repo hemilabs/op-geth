@@ -191,7 +191,7 @@ func (s *StateDB) DumpToCollector(c DumpCollector, conf *DumpConfig) (nextKey []
 					log.Error("Failed to decode the value returned by iterator", "error", err)
 					continue
 				}
-				key := storageTr.GetKey(storageIt.Key)
+				key := s.trie.GetKey(storageIt.Key)
 				if key == nil {
 					continue
 				}
