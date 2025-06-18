@@ -219,9 +219,8 @@ func (r *flatReader) Storage(addr common.Address, key common.Hash) (common.Hash,
 //
 // trieReader is safe for concurrent read.
 type trieReader struct {
-	root common.Hash        // State root which uniquely represent a state
-	db   *triedb.Database   // Database for loading trie
-	buff crypto.KeccakState // Buffer for keccak256 hashing
+	root common.Hash      // State root which uniquely represent a state
+	db   *triedb.Database // Database for loading trie
 
 	// Main trie, resolved in constructor. Note either the Merkle-Patricia-tree
 	// or Verkle-tree is not safe for concurrent read.
