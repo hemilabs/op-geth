@@ -330,9 +330,8 @@ type BlockChain struct {
 	txLookupLock  sync.RWMutex
 	txLookupCache *lru.Cache[common.Hash, txLookup]
 
-	quit          chan struct{} // shutdown signal, closed in Stop.
-	stopping      atomic.Bool   // false if chain is running, true when stopped
-	procInterrupt atomic.Bool   // interrupt signaler for block processing
+	stopping      atomic.Bool // false if chain is running, true when stopped
+	procInterrupt atomic.Bool // interrupt signaler for block processing
 
 	engine     consensus.Engine
 	validator  Validator // Block and state validator interface
@@ -3097,7 +3096,7 @@ func (bc *BlockChain) stopWithoutSaving() {
 	bc.scope.Close()
 
 	// Signal shutdown to all goroutines.
-	bc.InterruptInsert(true)
+	bc.StopInsert()
 
 	// Now wait for all chain modifications to end and persistent goroutines to exit.
 	//
