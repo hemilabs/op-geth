@@ -602,16 +602,16 @@ type testBackend struct {
 }
 
 func newTestBackend(t *testing.T, n int, gspec *core.Genesis, engine consensus.Engine, generator func(i int, b *core.BlockGen)) *testBackend {
-	// options := core.DefaultConfig().WithArchive(true)
-	txLookupLimit := uint64(0) // index all txs
+	options := core.DefaultConfig().WithArchive(true)
+	options.TxLookupLimit = 0 // index all txs
 
 	accman, acc := newTestAccountManager(t)
 	gspec.Alloc[acc.Address] = types.Account{Balance: big.NewInt(params.Ether)}
 
 	// Generate blocks for testing
-	db, blocks, receipts := core.GenerateChainWithGenesis(gspec, engine, n+1, generator)
+	db, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, n, generator)
 
-	chain, err := core.NewBlockChain(db, gspec, nil, engine, nil, nil, &txLookupLimit, nil)
+	chain, err := core.NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}

@@ -1792,10 +1792,10 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	)
 	defer engine.Close()
 	if snapshots && scheme == rawdb.HashScheme {
-		config.SnapshotLimit = 256
-		config.SnapshotWait = true
+		option.SnapshotLimit = 256
+		option.SnapshotWait = true
 	}
-	chain, err := NewBlockChain(db, gspec, nil, engine, option, nil, nil, t.Context())
+	chain, err := NewBlockChain(db, gspec, engine, option)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
@@ -1860,7 +1860,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	}
 	defer db.Close()
 
-	newChain, err := NewBlockChain(db, gspec, nil, engine, option, nil, nil, t.Context())
+	newChain, err := NewBlockChain(db, gspec, engine, option)
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
@@ -1934,7 +1934,7 @@ func testIssue23496(t *testing.T, scheme string) {
 		engine  = ethash.NewFullFaker()
 		options = DefaultConfig().WithStateScheme(scheme)
 	)
-	chain, err := NewBlockChain(db, gspec, nil, engine, options, nil, nil, t.Context())
+	chain, err := NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
@@ -1986,7 +1986,7 @@ func testIssue23496(t *testing.T, scheme string) {
 	}
 	defer db.Close()
 
-	chain, err = NewBlockChain(db, gspec, nil, engine, DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
+	chain, err = NewBlockChain(db, gspec, engine, DefaultConfig().WithStateScheme(scheme))
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}

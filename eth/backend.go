@@ -241,19 +241,22 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		vmConfig = vm.Config{
 			EnablePreimageRecording: config.EnablePreimageRecording,
 		}
-		cacheConfig = &core.CacheConfig{
-			TrieCleanLimit:      config.TrieCleanCache,
-			TrieCleanNoPrefetch: config.NoPrefetch,
-			TrieDirtyLimit:      config.TrieDirtyCache,
-			TrieDirtyDisabled:   config.NoPruning,
-			TrieTimeLimit:       config.TrieTimeout,
-			SnapshotLimit:       config.SnapshotCache,
-			Preimages:           config.Preimages,
-			StateHistory:        config.StateHistory,
-			StateScheme:         scheme,
-			ChainHistoryMode:    config.HistoryMode,
+		options = &core.BlockChainConfig{
+			TrieCleanLimit:   config.TrieCleanCache,
+			NoPrefetch:       config.NoPrefetch,
+			TrieDirtyLimit:   config.TrieDirtyCache,
+			ArchiveMode:      config.NoPruning,
+			TrieTimeLimit:    config.TrieTimeout,
+			SnapshotLimit:    config.SnapshotCache,
+			Preimages:        config.Preimages,
+			StateHistory:     config.StateHistory,
+			StateScheme:      scheme,
+			ChainHistoryMode: config.HistoryMode,
+			TxLookupLimit:    int64(min(config.TransactionHistory, math.MaxInt64)),
+			VmConfig:         vmConfig,
 		}
 	)
+
 	if config.VMTrace != "" {
 		traceConfig := json.RawMessage("{}")
 		if config.VMTraceJsonConfig != "" {
@@ -273,80 +276,9 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	if config.OverrideVerkle != nil {
 		overrides.OverrideVerkle = config.OverrideVerkle
 	}
-	if config.OverrideOptimismCanyon != nil {
-		overrides.OverrideOptimismCanyon = config.OverrideOptimismCanyon
-	}
-	if config.OverrideOptimismEcotone != nil {
-		overrides.OverrideOptimismEcotone = config.OverrideOptimismEcotone
-	}
-	if config.OverrideOptimismFjord != nil {
-		overrides.OverrideOptimismFjord = config.OverrideOptimismFjord
-	}
-	if config.OverrideOptimismGranite != nil {
-		overrides.OverrideOptimismGranite = config.OverrideOptimismGranite
-	}
-	if config.OverrideOptimismHolocene != nil {
-		overrides.OverrideOptimismHolocene = config.OverrideOptimismHolocene
-	}
-	if config.OverrideOptimismIsthmus != nil {
-		overrides.OverrideOptimismIsthmus = config.OverrideOptimismIsthmus
-	} else {
-		log.Info("OverrideOptimismIsthmus == nil")
-	}
-	if config.OverrideOptimismJovian != nil {
-		overrides.OverrideOptimismJovian = config.OverrideOptimismJovian
-	}
-	if config.OverrideOptimismInterop != nil {
-		overrides.OverrideOptimismInterop = config.OverrideOptimismInterop
-	}
-	if config.OverrideHemiHvm0 != nil {
-		overrides.OverrideHemiHvm0 = config.OverrideHemiHvm0
-		log.Info("Creating new blockchain with hVM0 override set to: %d", *overrides.OverrideHemiHvm0)
-	} else {
-		log.Info("Creating new blockchain, hVM0 override not set.")
-	}
-
-	overrides.ApplySuperchainUpgrades = config.ApplySuperchainUpgrades
 	options.Overrides = &overrides
-	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, &overrides, eth.engine, options, nil, &config.TransactionHistory, ctx)
 
-	if config.HvmEnabled {
-		tbcCfg := tbc.NewDefaultConfig()
-
-		genesisHeader, err := bdf.Hex2Header(config.HvmGenesisHeader)
-		if err != nil {
-			log.Crit("Unable to deserialize hVM Genesis Header", "header", config.HvmGenesisHeader, "err", err)
-		}
-
-		tbcCfg.ExternalHeaderMode = true
-		tbcCfg.EffectiveGenesisBlock = genesisHeader
-		tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
-		tbcCfg.LevelDBHome = config.HvmHeaderDataDir
-		tbcCfg.BlockheaderCacheSize = "0"
-		tbcCfg.BlockCacheSize = "0"
-		tbcCfg.AutoIndex = false
-		tbcCfg.BlockSanity = true
-		tbcCfg.MaxCachedTxs = 0
-		tbcCfg.MempoolEnabled = false
-
-		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
-		tbcCfg.Network = "testnet3"
-
-		log.Info(fmt.Sprintf("Setting up hVM Header node with effectiveGenesisBlock=%s, genesisHeightOffset=%d, levelDBHome=%s, network=%s",
-			tbcCfg.EffectiveGenesisBlock.BlockHash().String(), tbcCfg.GenesisHeightOffset, tbcCfg.LevelDBHome, tbcCfg.Network))
-
-		eth.blockchain.SetupHvmHeaderNode(tbcCfg)
-
-		/// XXX setting up Deucalion here means it will not be available after TBC syncs,
-		/// once the Eth services are registered. While trying to ask for health will still
-		/// obviously fail, the error code will not be 503, as one would expect.
-		if config.DeucalionAddress != "" {
-			if err = eth.blockchain.SetupDeucalion(ctx, config.DeucalionAddress); err != nil {
-				log.Crit("error setting up deucalion", "err", err)
-			}
-		}
-
-	}
+	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, eth.engine, options)
 	if err != nil {
 		return nil, err
 	}

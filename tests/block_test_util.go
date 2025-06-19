@@ -163,11 +163,11 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, tracer *t
 			StatelessSelfValidation: witness,
 		},
 	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	chain, err := core.NewBlockChain(db, gspec, nil, engine, options, nil, nil, ctx)
+	if snapshotter {
+		options.SnapshotLimit = 1
+		options.SnapshotWait = true
+	}
+	chain, err := core.NewBlockChain(db, gspec, engine, options)
 	if err != nil {
 		return err
 	}

@@ -220,11 +220,9 @@ const (
 // BlockChainConfig contains the configuration of the BlockChain object.
 type BlockChainConfig struct {
 	// Trie database related options
-	TrieCleanLimit       int           // Memory allowance (MB) to use for caching trie nodes in memory
-	TrieDirtyLimit       int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
-	TrieTimeLimit        time.Duration // Time limit after which to flush the current in-memory trie to disk
-	TrieNoAsyncFlush     bool          // Whether the asynchronous buffer flushing is disallowed
-	TrieJournalDirectory string        // Directory path to the journal used for persisting trie data across node restarts
+	TrieCleanLimit int           // Memory allowance (MB) to use for caching trie nodes in memory
+	TrieDirtyLimit int           // Memory limit (MB) at which to start flushing dirty trie nodes to disk
+	TrieTimeLimit  time.Duration // Time limit after which to flush the current in-memory trie to disk
 
 	Preimages    bool   // Whether to store preimage of trie key to the disk
 	StateHistory uint64 // Number of blocks from head whose state histories are reserved.
@@ -239,6 +237,47 @@ type BlockChainConfig struct {
 	// This defines the cutoff block for history expiry.
 	// Blocks before this number may be unavailable in the chain database.
 	ChainHistoryMode history.HistoryMode
+
+	// Misc options
+	NoPrefetch bool            // Whether to disable heuristic state prefetching when processing blocks
+	Overrides  *ChainOverrides // Optional chain config overrides
+	VmConfig   vm.Config       // Config options for the EVM Interpreter
+
+	// TxLookupLimit specifies the maximum number of blocks from head for which
+	// transaction hashes will be indexed.
+	//
+	// If the value is zero, all transactions of the entire chain will be indexed.
+	// If the value is -1, indexing is disabled.
+	TxLookupLimit int64
+}
+
+// DefaultConfig returns the default config.
+// Note the returned object is safe to modify!
+func DefaultConfig() *BlockChainConfig {
+	return &BlockChainConfig{
+		TrieCleanLimit:   256,
+		TrieDirtyLimit:   256,
+		TrieTimeLimit:    5 * time.Minute,
+		StateScheme:      rawdb.HashScheme,
+		SnapshotLimit:    256,
+		SnapshotWait:     true,
+		ChainHistoryMode: history.KeepAll,
+		// Transaction indexing is disabled by default.
+		// This is appropriate for most unit tests.
+		TxLookupLimit: -1,
+	}
+}
+
+// WithArchive enabled/disables archive mode on the config.
+func (cfg BlockChainConfig) WithArchive(on bool) *BlockChainConfig {
+	cfg.ArchiveMode = on
+	return &cfg
+}
+
+// WithStateScheme sets the state storage scheme on the config.
+func (cfg BlockChainConfig) WithStateScheme(scheme string) *BlockChainConfig {
+	cfg.StateScheme = scheme
+	return &cfg
 }
 
 // triedbConfig derives the configures for trie database.
@@ -254,14 +293,14 @@ func (cfg *BlockChainConfig) triedbConfig(isVerkle bool) *triedb.Config {
 	}
 	if cfg.StateScheme == rawdb.PathScheme {
 		config.PathDB = &pathdb.Config{
-			StateHistory:   c.StateHistory,
-			TrieCleanSize:  c.TrieCleanLimit * 1024 * 1024,
-			StateCleanSize: c.SnapshotLimit * 1024 * 1024,
+			StateHistory:   cfg.StateHistory,
+			TrieCleanSize:  cfg.TrieCleanLimit * 1024 * 1024,
+			StateCleanSize: cfg.SnapshotLimit * 1024 * 1024,
 
 			// TODO(rjl493456442): The write buffer represents the memory limit used
 			// for flushing both trie data and state data to disk. The config name
 			// should be updated to eliminate the confusion.
-			WriteBufferSize: c.TrieDirtyLimit * 1024 * 1024,
+			WriteBufferSize: cfg.TrieDirtyLimit * 1024 * 1024,
 		}
 	}
 	return config
@@ -337,7 +376,6 @@ type BlockChain struct {
 	validator  Validator // Block and state validator interface
 	prefetcher Prefetcher
 	processor  Processor // Block transaction processor interface
-	vmConfig   vm.Config
 	logger     *tracing.Hooks
 
 	lastForkReadyAlert time.Time // Last time there was a fork readiness print out
@@ -346,7 +384,7 @@ type BlockChain struct {
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
-func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverrides, engine consensus.Engine, cfg *BlockChainConfig, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64, ctx context.Context) (*BlockChain, error) {
+func NewBlockChain(db ethdb.Database, genesis *Genesis, engine consensus.Engine, cfg *BlockChainConfig) (*BlockChain, error) {
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
@@ -396,7 +434,6 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 		tempBlocks:    make(map[string]*types.Block),
 		tempHeaders:   make(map[string]*types.Header),
 		engine:        engine,
-		ctx:           ctx,
 		logger:        cfg.VmConfig.Tracer,
 	}
 	bc.hc, err = NewHeaderChain(db, chainConfig, engine, bc.insertStopped)
@@ -452,7 +489,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 			// Note it's unnecessary in path mode which always keep trie data and
 			// state data consistent.
 			var diskRoot common.Hash
-			if bc.cacheConfig.SnapshotLimit > 0 && bc.cacheConfig.StateScheme == rawdb.HashScheme {
+			if bc.cfg.SnapshotLimit > 0 && bc.cfg.StateScheme == rawdb.HashScheme {
 				diskRoot = rawdb.ReadSnapshotRoot(bc.db)
 			}
 			if diskRoot != (common.Hash{}) {
@@ -535,8 +572,8 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 	}
 
 	// Start tx indexer if it's enabled.
-	if txLookupLimit != nil {
-		bc.txIndexer = newTxIndexer(*txLookupLimit, bc)
+	if bc.cfg.TxLookupLimit >= 0 {
+		bc.txIndexer = newTxIndexer(uint64(bc.cfg.TxLookupLimit), bc)
 	}
 	return bc, nil
 }
@@ -544,11 +581,11 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 func (bc *BlockChain) setupSnapshot() {
 	// Short circuit if the chain is established with path scheme, as the
 	// state snapshot has been integrated into path database natively.
-	if bc.cacheConfig.StateScheme == rawdb.PathScheme {
+	if bc.cfg.StateScheme == rawdb.PathScheme {
 		return
 	}
 	// Load any existing snapshot, regenerating it if loading failed
-	if bc.cacheConfig.SnapshotLimit > 0 {
+	if bc.cfg.SnapshotLimit > 0 {
 		// If the chain was rewound past the snapshot persistent layer (causing
 		// a recovery block number to be persisted to disk), check if we're still
 		// in recovery mode and in that case, don't invalidate the snapshot on a
@@ -560,10 +597,10 @@ func (bc *BlockChain) setupSnapshot() {
 			recover = true
 		}
 		snapconfig := snapshot.Config{
-			CacheSize:  bc.cacheConfig.SnapshotLimit,
+			CacheSize:  bc.cfg.SnapshotLimit,
 			Recovery:   recover,
-			NoBuild:    bc.cacheConfig.SnapshotNoBuild,
-			AsyncBuild: !bc.cacheConfig.SnapshotWait,
+			NoBuild:    bc.cfg.SnapshotNoBuild,
+			AsyncBuild: !bc.cfg.SnapshotWait,
 		}
 		bc.snaps, _ = snapshot.New(snapconfig, bc.db, bc.triedb, head.Root)
 
@@ -718,7 +755,7 @@ func (bc *BlockChain) loadLastState() error {
 func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 	freezerTail, _ := bc.db.Tail()
 
-	switch bc.cacheConfig.ChainHistoryMode {
+	switch bc.cfg.ChainHistoryMode {
 	case history.KeepAll:
 		if freezerTail == 0 {
 			return nil
@@ -739,7 +776,7 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 			// postmerge directly on an existing DB. We could just trigger the pruning
 			// here, but it'd be a bit dangerous since they may not have intended this
 			// action to happen. So just tell them how to do it.
-			log.Error(fmt.Sprintf("Chain history mode is configured as %q, but database is not pruned.", bc.cacheConfig.ChainHistoryMode.String()))
+			log.Error(fmt.Sprintf("Chain history mode is configured as %q, but database is not pruned.", bc.cfg.ChainHistoryMode.String()))
 			log.Error(fmt.Sprintf("Run 'geth prune-history' to prune pre-merge history."))
 			return fmt.Errorf("history pruning requested via configuration")
 		}
@@ -755,7 +792,7 @@ func (bc *BlockChain) initializeHistoryPruning(latest uint64) error {
 		return nil
 
 	default:
-		return fmt.Errorf("invalid history mode: %d", bc.cacheConfig.ChainHistoryMode)
+		return fmt.Errorf("invalid history mode: %d", bc.cfg.ChainHistoryMode)
 	}
 }
 
@@ -3863,7 +3900,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	)
 	defer interrupt.Store(true) // terminate the prefetch at the end
 
-	if bc.cacheConfig.TrieCleanNoPrefetch {
+	if bc.cfg.NoPrefetch {
 		statedb, err = state.New(parentRoot, bc.statedb)
 		if err != nil {
 			return nil, err
@@ -3888,7 +3925,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 		}
 		go func(start time.Time, throwaway *state.StateDB, block *types.Block) {
 			// Disable tracing for prefetcher executions.
-			vmCfg := bc.vmConfig
+			vmCfg := bc.cfg.VmConfig
 			vmCfg.Tracer = nil
 			bc.prefetcher.Prefetch(block, throwaway, vmCfg, &interrupt)
 
@@ -3907,7 +3944,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 		// Generate witnesses either if we're self-testing, or if it's the
 		// only block being inserted. A bit crude, but witnesses are huge,
 		// so we refuse to make an entire chain of them.
-		if bc.vmConfig.StatelessSelfValidation || makeWitness {
+		if bc.cfg.VmConfig.StatelessSelfValidation || makeWitness {
 			witness, err = stateless.NewWitness(block.Header(), bc)
 			if err != nil {
 				return nil, err
@@ -3932,166 +3969,6 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 
 	// Process block using the parent state as reference point
 	pstart := time.Now()
-	// Before processing a block:
-	//   1. Check whether header-only TBC node's state is at this block's parent; if it's not move it
-	//      here temporarily and store the former state to restore to once we're finished processing
-	//   2. Apply this block's Bitcoin Attributes Deposited transaction to header-only TBC node's state
-	//      (If this results in an error, report/invalidate the block same as an invalid EVM state transition)
-	//   3. Update the full TBC node's indexed tip to be 2 blocks behind the header-only TBC node's tip
-	//      (If this results in an error, report/invalidate the block same as an invalid EVM state transition)
-	//
-	// Then after processing a block:
-	//   1. If block processing fails or setHead is false, walk header-only TBC node's state to former restore state
-	//      Otherwise, leave header-only TBC in progressed state with this block as tip
-	//   2. If we walk header-only TBC node's state back, then walk back TBC full node's indexed tip to be 2 blocks
-	//      behind the header-only TBC node's tip after the restore
-
-	var tbcHeader *types.Header // Original EVM tip that lightweight TBC knowledge represents to revert to when necessary
-	isHvmActivated := false
-	isFirstHvmBlock := false
-	log.Info(fmt.Sprintf("Processing block %s @ %d", block.Hash().String(), block.NumberU64()))
-	// If we are awaiting an hVM snap sync, that will be handled separately in response to a hVM light state P2P msg later
-	if bc.hvmEnabled && !bc.awaitingHvmSnapSync {
-		var parent *types.Header
-
-		if bc.chainConfig.IsHvm0(block.Time()) {
-			log.Debug(fmt.Sprintf("For block %s @ %d, hVM is activated",
-				block.Hash().String(), block.NumberU64()))
-			isHvmActivated = true
-			if block.NumberU64() != 0 {
-				log.Debug(fmt.Sprintf("Block != 0, getting parent by hash %s", block.ParentHash()))
-				parent = bc.GetHeaderByHash(block.ParentHash())
-				if !bc.chainConfig.IsHvm0(parent.Time) {
-					// Parent is not hVM0, meaning this block is first activation
-					log.Debug(fmt.Sprintf("Block %s @ %d is the hVM activation block",
-						block.Hash().String(), block.NumberU64()))
-					isFirstHvmBlock = true
-				}
-			} else {
-				// Genesis is first hVM block
-				isFirstHvmBlock = true
-				log.Info(fmt.Sprintf("Genesis block %s @ %d is the hVM activation block",
-					block.Hash().String(), block.NumberU64()))
-			}
-		}
-
-		if isHvmActivated {
-			if !isFirstHvmBlock {
-				// Store current state of lightweight TBC to restore to later if necessary
-				tbcHeader, err = bc.getHeaderModeTBCEVMHeader()
-				if err != nil {
-					log.Crit("Error encountered getting EVM block lightweight TBC's state represents", "err", err)
-				}
-			} // else: tbcHeader will remain nil, check later to know to revert to TBC genesis state rather than state based on EVM block
-		}
-
-		if tbcHeader != nil {
-			log.Info(fmt.Sprintf("Processing block %s @ %d at timestamp %d, TBC state header is %s @ %d",
-				block.Hash().String(), block.Number().Uint64(), block.Time(), tbcHeader.Hash().String(),
-				tbcHeader.Number.Uint64()))
-		} else if isHvmActivated {
-			log.Info(fmt.Sprintf("Processing block %s @ %d at timestamp %d, this is the first hVM state "+
-				"transition block", block.Hash().String(), block.Number().Uint64(), block.Time()))
-		}
-
-		// First, move lightweight TBC state to parent if this block is not the hVM Phase 0 activation block.
-		// The full TBC node *doesn't* need any intermediate hop to parent consensus, since it's only to provide
-		// linear indexed state based on a particular Bitcoin tip which is dictated by the lightweight TBC node.
-		// The lightweight TBC node *does* need to be adjusted to a specific pre-state based on this block's
-		// parent to ensure that this block communicates data which is correct in the context of it's parent,
-		// otherwise different nodes could disagree on the validity of this block's Bitcoin Attributes Deposited tx
-		// for lightweight consensus update based on different lightweight Bitcoin views.
-		// The updateHvmHeaderConsensus() method does handle underlying reorganizations of TBC's EVM state
-		// including reversing down a fork and up a new branch to the EVM header we specify, but moving the
-		// geometry here gives us more control here to know why an error occurred and in the future use various
-		// recovery mechanisms depending on the issue.
-		if isHvmActivated && !isFirstHvmBlock {
-			if tbcHeader.Hash().Cmp(parent.Hash()) != 0 {
-				log.Info(fmt.Sprintf("Lightweight TBC at block %s @ %d, moving to parent %s @ %d",
-					tbcHeader.Hash().String(), tbcHeader.Number.Uint64(),
-					parent.Hash().String(), parent.Number.Uint64()))
-				err := bc.updateHvmHeaderConsensus(parent, false)
-				if err != nil {
-					if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
-						bc.performFullHvmHeaderStateRestore()
-					} else {
-						// This is critical as we should always be able to walk to parent.
-						// In future we could attempt a complex TBC recovery here.
-						log.Crit(fmt.Sprintf("Unable to move lightweight TBC node to parent %s @ %d",
-							parent.Hash().String(), parent.Number.Uint64()), "err", err)
-					}
-				}
-			} else {
-				log.Info(fmt.Sprintf("Lightweight TBC is already at parent %s @ %d",
-					parent.Hash().String(), parent.Number.Uint64()))
-			}
-		}
-
-		// Do an extra sanity check that lightweight TBC node is in the correct state, after above logic which
-		// should have moved it to the correct state based on the parent of the block we're processing.
-		// Incorrect state represents either data corruption or an issue with the reorg logic.
-		if isHvmActivated && !isFirstHvmBlock {
-			log.Info(fmt.Sprintf("Verifying before applying block %s @ %d, lightweight TBC's state is "+
-				"correctly set to direct parent %s @ %d", block.Hash().String(), block.NumberU64(),
-				parent.Hash().String(), parent.Number.Uint64()))
-			representedBlock, err := bc.getHeaderModeTBCEVMHeader()
-			if err != nil {
-				// Critical error as this should correctly represent parent after previous code
-				log.Crit(fmt.Sprintf("Error, unable to fetch the EVM tip which lightweight TBC state "+
-					"currently represents!"), "err", err)
-			}
-			if representedBlock.Hash().Cmp(parent.Hash()) != 0 {
-				stateId, err := bc.tbcHeaderNode.UpstreamStateId(bc.ctx)
-				if err != nil {
-					// Should never happen since UpstreamStateId is called by getHeaderModeTBCEVMHeader() too
-					log.Crit(fmt.Sprintf("Error, lightweight TBC state represents unexpected EVM tip "+
-						"%s @ %d, and we encountered an error fetching the upstream state id!",
-						representedBlock.Hash().String(), representedBlock.Number.Uint64()), "err", err)
-				}
-				log.Crit(fmt.Sprintf("Error, lightweight TBC state represents unexpected EVM tip %s @ %d"+
-					" with upstream state id %x instead", representedBlock.Hash().String(),
-					representedBlock.Number.Uint64(), stateId[:]))
-			}
-		}
-
-		if isHvmActivated {
-			// Process this block's hVM lightweight update first
-			err := bc.updateHvmHeaderConsensus(block.Header(), false)
-			if err != nil {
-				// Ensure block is reported, although generally this would have been done be hVM header consensus update
-				bc.reportBlock(block, nil, err)
-				return nil, err
-			}
-
-			// If lightweight update was successful, do full node update
-			err = bc.updateFullTBCToLightweight()
-			if err != nil {
-				// On error update lightweight TBC node to its previous state
-				revertErr := bc.updateHvmHeaderConsensus(tbcHeader, false)
-				if revertErr != nil {
-					// Critical error if we cannot restore lightweight TBC state correctly
-					log.Crit(fmt.Sprintf("unable to restore lightweight TBC node to previous state when "+
-						"inserting block %s @ %d", block.Hash().String(), block.NumberU64()))
-				}
-
-				if errors.Is(err, consensus.ErrFullTBCMissingFullBTCBlock) || errors.Is(err, consensus.ErrFullTBCMissingBTCHeader) {
-					// This might recover, add this block as future block for later processing
-					bc.futureBlocks.Add(block.Hash(), block)
-					return nil, err
-				} else {
-					// Another unexpected error on full TBC node update, crit for now
-					log.Crit(fmt.Sprintf("Unexpected error updating Full TBC Node to represent block %s @ %d",
-						block.Hash().String(), block.NumberU64()), "err", err)
-				}
-			}
-
-			si := vm.TBCFullNode.Synced(bc.ctx)
-			log.Info(fmt.Sprintf("Lightweight TBC is at canonical BTC block %s @ %d "+
-				"(UTXOs: %s @ %d, TXs: %s @ %d)", si.BlockHeader.Hash.String(), si.BlockHeader.Height,
-				si.Utxo.Hash.String(), si.Utxo.Height, si.Tx.Hash.String(), si.Tx.Height))
-		}
-	}
-
 	res, err := bc.processor.Process(block, statedb, bc.cfg.VmConfig)
 	if err != nil {
 		bc.reportBlock(block, res, err)
@@ -4167,6 +4044,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	// a tight integration to enable running *all* consensus tests through the
 	// witness builder/runner, which would otherwise be impossible due to the
 	// various invalid chain states/behaviors being contained in those tests.
+	xvstart := time.Now()
 	if witness := statedb.Witness(); witness != nil && bc.cfg.VmConfig.StatelessSelfValidation {
 		log.Warn("Running stateless self-validation", "block", block.Number(), "hash", block.Hash())
 
