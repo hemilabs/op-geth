@@ -552,7 +552,7 @@ func (r *replayer) DeleteRange(start, end []byte) {
 	if rangeDeleter, ok := r.writer.(ethdb.KeyValueRangeDeleter); ok {
 		r.failure = rangeDeleter.DeleteRange(start, end)
 	} else {
-		r.failure = errors.New("ethdb.KeyValueWriter does not implement DeleteRange")
+		r.failure = fmt.Errorf("ethdb.KeyValueWriter does not implement DeleteRange")
 	}
 }
 
