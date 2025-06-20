@@ -736,8 +736,10 @@ running:
 func (srv *Server) postHandshakeChecks(peers map[enode.ID]*Peer, inboundCount int, c *conn) error {
 	switch {
 	case !c.is(trustedConn) && len(peers) >= srv.MaxPeers:
+		log.Trace(DiscTooManyPeers.String(), "!c.is(trustedConn)", !c.is(trustedConn), "len(peers)", len(peers), "srv.MaxPeers", srv.MaxPeers)
 		return DiscTooManyPeers
 	case !c.is(trustedConn) && c.is(inboundConn) && inboundCount >= srv.maxInboundConns():
+		log.Trace(DiscTooManyPeers.String(), "!c.is(trustedConn)", !c.is(trustedConn), "c.is(inboundConn)", c.is(inboundConn), "inboundCount", inboundCount, "srv.maxInboundConns()", srv.maxInboundConns())
 		return DiscTooManyPeers
 	case peers[c.node.ID()] != nil:
 		return DiscAlreadyConnected
