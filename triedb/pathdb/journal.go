@@ -177,7 +177,7 @@ func (db *Database) loadLayers() layer {
 		log.Info("Failed to load journal, discard it", "err", err)
 	}
 	// Return single layer with persistent state.
-	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, nil, nil, newBuffer(db.config.WriteBufferSize, nil, nil, 0))
+	return newDiskLayer(root, rawdb.ReadPersistentStateID(db.diskdb), db, nil, nil, newBuffer(db.config.WriteBufferSize, nil, nil, 0), nil)
 }
 
 // loadDiskLayer reads the binary blob from the layer journal, reconstructing
@@ -209,7 +209,7 @@ func (db *Database) loadDiskLayer(r *rlp.Stream) (layer, error) {
 	if err := states.decode(r); err != nil {
 		return nil, err
 	}
-	return newDiskLayer(root, id, db, nil, nil, newBuffer(db.config.WriteBufferSize, &nodes, &states, id-stored)), nil
+	return newDiskLayer(root, id, db, nil, nil, newBuffer(db.config.WriteBufferSize, &nodes, &states, id-stored), nil), nil
 }
 
 // loadDiffLayer reads the next sections of a layer journal, reconstructing a new
@@ -323,9 +323,10 @@ func (db *Database) Journal(root common.Hash) error {
 	if err := disk.terminate(); err != nil {
 		return err
 	}
-	// Terminate the background state generation if it's active
-	if disk.generator != nil {
-		disk.generator.stop()
+	// Block until the background flushing is finished and terminate
+	// the potential active state generator.
+	if err := disk.terminate(); err != nil {
+		return err
 	}
 	start := time.Now()
 

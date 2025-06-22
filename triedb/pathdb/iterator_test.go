@@ -257,7 +257,6 @@ func TestAccountIteratorTraversal(t *testing.T) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// Stack three diff layers on top with various overlaps
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 0, trienode.NewMergedNodeSet(),
@@ -301,7 +300,6 @@ func TestStorageIteratorTraversal(t *testing.T) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// Stack three diff layers on top with various overlaps
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 0, trienode.NewMergedNodeSet(),
@@ -318,7 +316,7 @@ func TestStorageIteratorTraversal(t *testing.T) {
 
 	// singleLayer: 0x1, 0x2, 0x3
 	diffIter := newDiffStorageIterator(common.HexToHash("0xaa"), common.Hash{}, head.(*diffLayer).states.stateSet.storageList(common.HexToHash("0xaa")), nil)
-	verifyIterator(t, 3, diffIter, verifyNothing)
+	verifyIterator(t, 2, diffIter, verifyNothing)
 
 	// binaryIterator: 0x1, 0x2, 0x3, 0x4, 0x5, 0x6
 	verifyIterator(t, 6, head.(*diffLayer).newBinaryStorageIterator(common.HexToHash("0xaa"), common.Hash{}), verifyStorage)
@@ -345,7 +343,6 @@ func TestAccountIteratorTraversalValues(t *testing.T) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// Create a batch of account sets to seed subsequent layers with
 	var (
@@ -461,7 +458,6 @@ func TestStorageIteratorTraversalValues(t *testing.T) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	wrapStorage := func(storage map[common.Hash][]byte) map[common.Hash]map[common.Hash][]byte {
 		return map[common.Hash]map[common.Hash][]byte{
@@ -594,7 +590,6 @@ func TestAccountIteratorLargeTraversal(t *testing.T) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	for i := 1; i < 128; i++ {
 		parent := types.EmptyRootHash
@@ -634,7 +629,6 @@ func TestAccountIteratorFlattening(t *testing.T) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// Create a stack of diffs on top
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
@@ -681,7 +675,6 @@ func testAccountIteratorSeek(t *testing.T, newIterator func(db *Database, root, 
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
 		NewStateSetWithOrigin(randomAccountSet("0xaa", "0xee", "0xff", "0xf0"), nil, nil, nil, false))
@@ -753,7 +746,6 @@ func testStorageIteratorSeek(t *testing.T, newIterator func(db *Database, root, 
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// Stack three diff layers on top with various overlaps
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
@@ -825,7 +817,6 @@ func testAccountIteratorDeletions(t *testing.T, newIterator func(db *Database, r
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// Stack three diff layers on top with various overlaps
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
@@ -877,20 +868,7 @@ func TestStorageIteratorDeletions(t *testing.T) {
 	config := &Config{
 		NoAsyncGeneration: true,
 	}
-	memoryDB := rawdb.NewMemoryDatabase()
-	db := New(memoryDB, config, false)
-
-	restart := func(head common.Hash) {
-		if err := db.Journal(head); err != nil {
-			t.Fatalf("Failed to journal the database, %v", err)
-		}
-		if err := db.Close(); err != nil {
-			t.Fatalf("Failed to close the database, %v", err)
-		}
-		db = New(memoryDB, config, false)
-	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// Stack three diff layers on top with various overlaps
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
@@ -993,7 +971,6 @@ func testStaleIterator(t *testing.T, newIter func(db *Database, hash common.Hash
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	// [02 (disk), 03]
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
@@ -1048,7 +1025,6 @@ func BenchmarkAccountIteratorTraversal(b *testing.B) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	for i := 1; i <= 100; i++ {
 		parent := types.EmptyRootHash
@@ -1143,7 +1119,6 @@ func BenchmarkAccountIteratorLargeBaselayer(b *testing.B) {
 		NoAsyncGeneration: true,
 	}
 	db := New(rawdb.NewMemoryDatabase(), config, false)
-	db.waitGeneration()
 
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(), NewStateSetWithOrigin(makeAccounts(2000), nil, nil, nil, false))
 	for i := 2; i <= 100; i++ {
