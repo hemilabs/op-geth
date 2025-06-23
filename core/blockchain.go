@@ -3141,7 +3141,7 @@ func (bc *BlockChain) stopWithoutSaving() {
 	bc.scope.Close()
 
 	// Signal shutdown to all goroutines.
-	bc.StopInsert()
+	bc.InterruptInsert(true)
 
 	// Now wait for all chain modifications to end and persistent goroutines to exit.
 	//

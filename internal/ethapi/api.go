@@ -2186,10 +2186,6 @@ func (api *DebugAPI) SetHead(number hexutil.Uint64) error {
 	return nil
 }
 
-func (api *DebugAPI) ChainConfig() *params.ChainConfig {
-	return api.b.ChainConfig()
-}
-
 // NetAPI offers network related RPC methods
 type NetAPI struct {
 	net            *p2p.Server
