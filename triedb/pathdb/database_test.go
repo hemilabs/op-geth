@@ -125,15 +125,16 @@ type tester struct {
 	snapStorages map[common.Hash]map[common.Hash]map[common.Hash][]byte // Keyed by the hash of account address and the hash of storage key
 }
 
-func newTester(t *testing.T, historyLimit uint64, isVerkle bool, layers int, enableIndex bool, journalDir string) *tester {
+func newTester(t *testing.T, historyLimit uint64, isVerkle bool, layers int, enableIndex bool) *tester {
 	var (
 		disk, _ = rawdb.Open(rawdb.NewMemoryDatabase(), rawdb.OpenOptions{Ancient: t.TempDir()})
 		db      = New(disk, &Config{
-			StateHistory:    historyLimit,
-			TrieCleanSize:   256 * 1024,
-			StateCleanSize:  256 * 1024,
-			WriteBufferSize: 256 * 1024,
-			NoAsyncFlush:    true,
+			StateHistory:        historyLimit,
+			EnableStateIndexing: enableIndex,
+			TrieCleanSize:       256 * 1024,
+			StateCleanSize:      256 * 1024,
+			WriteBufferSize:     256 * 1024,
+			NoAsyncFlush:        true,
 		}, isVerkle)
 
 		obj = &tester{
@@ -469,7 +470,7 @@ func TestDatabaseRollback(t *testing.T) {
 	}()
 
 	// Verify state histories
-	tester := newTester(t, 0, false, 32, false, "")
+	tester := newTester(t, 0, false, 32, false)
 	defer tester.release()
 
 	if err := tester.verifyHistory(); err != nil {
@@ -503,7 +504,7 @@ func TestDatabaseRecoverable(t *testing.T) {
 	}()
 
 	var (
-		tester = newTester(t, 0, false, 12, false, "")
+		tester = newTester(t, 0, false, 12, false)
 		index  = tester.bottomIndex()
 	)
 	defer tester.release()
@@ -547,7 +548,7 @@ func TestDisable(t *testing.T) {
 		maxDiffLayers = 128
 	}()
 
-	tester := newTester(t, 0, false, 32, false, "")
+	tester := newTester(t, 0, false, 32, false)
 	defer tester.release()
 
 	stored := crypto.Keccak256Hash(rawdb.ReadAccountTrieNode(tester.db.diskdb, nil))
@@ -589,7 +590,7 @@ func TestCommit(t *testing.T) {
 		maxDiffLayers = 128
 	}()
 
-	tester := newTester(t, 0, false, 12, false, "")
+	tester := newTester(t, 0, false, 12, false)
 	defer tester.release()
 
 	if err := tester.db.Commit(tester.lastHash(), false); err != nil {
@@ -624,7 +625,7 @@ func testJournal(t *testing.T, journalDir string) {
 		maxDiffLayers = 128
 	}()
 
-	tester := newTester(t, 0, false, 12, false, journalDir)
+	tester := newTester(t, 0, false, 12, false)
 	defer tester.release()
 
 	if err := tester.db.Journal(tester.lastHash()); err != nil {
@@ -671,7 +672,7 @@ func testCorruptedJournal(t *testing.T, journalDir string, modifyFn func(databas
 		maxDiffLayers = 128
 	}()
 
-	tester := newTester(t, 0, false, 12, false, journalDir)
+	tester := newTester(t, 0, false, 12, false)
 	defer tester.release()
 
 	if err := tester.db.Journal(tester.lastHash()); err != nil {
@@ -716,7 +717,7 @@ func TestTailTruncateHistory(t *testing.T) {
 		maxDiffLayers = 128
 	}()
 
-	tester := newTester(t, 10, false, 12, false, "")
+	tester := newTester(t, 10, false, 12, false)
 	defer tester.release()
 
 	tester.db.Close()

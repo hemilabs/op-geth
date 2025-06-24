@@ -122,14 +122,19 @@ type indexReaderWithLimitTag struct {
 }
 
 // newIndexReaderWithLimitTag constructs a index reader with indexing position.
-func newIndexReaderWithLimitTag(db ethdb.KeyValueReader, state stateIdent, limit uint64) (*indexReaderWithLimitTag, error) {
+func newIndexReaderWithLimitTag(db ethdb.KeyValueReader, state stateIdent) (*indexReaderWithLimitTag, error) {
+	// Read the last indexed ID before the index reader construction
+	metadata := loadIndexMetadata(db)
+	if metadata == nil {
+		return nil, errors.New("state history hasn't been indexed yet")
+	}
 	r, err := newIndexReader(db, state)
 	if err != nil {
 		return nil, err
 	}
 	return &indexReaderWithLimitTag{
 		reader: r,
-		limit:  limit,
+		limit:  metadata.Last,
 		db:     db,
 	}, nil
 }
@@ -210,7 +215,7 @@ func (r *historyReader) readAccountMetadata(address common.Address, historyID ui
 	n := len(blob) / accountIndexSize
 
 	pos := sort.Search(n, func(i int) bool {
-		h := blob[accountIndexSize*i : accountIndexSize*i+common.AddressLength]
+		h := blob[accountIndexSize*i : accountIndexSize*i+common.HashLength]
 		return bytes.Compare(h, address.Bytes()) >= 0
 	})
 	if pos == n {
@@ -320,12 +325,11 @@ func (r *historyReader) read(state stateIdentQuery, stateID uint64, lastID uint6
 	tail, err := r.freezer.Tail()
 	if err != nil {
 		return nil, err
-	} // firstID = tail+1
-
-	// stateID+1 == firstID is allowed, as all the subsequent state histories
-	// are present with no gap inside.
+	}
+	// stateID == tail is allowed, as the first history object preserved
+	// is tail+1
 	if stateID < tail {
-		return nil, fmt.Errorf("historical state has been pruned, first: %d, state: %d", tail+1, stateID)
+		return nil, errors.New("historical state has been pruned")
 	}
 
 	// To serve the request, all state histories from stateID+1 to lastID
@@ -344,7 +348,7 @@ func (r *historyReader) read(state stateIdentQuery, stateID uint64, lastID uint6
 	// state retrieval
 	ir, ok := r.readers[state.String()]
 	if !ok {
-		ir, err = newIndexReaderWithLimitTag(r.disk, state.stateIdent, metadata.Last)
+		ir, err = newIndexReaderWithLimitTag(r.disk, state.stateIdent)
 		if err != nil {
 			return nil, err
 		}

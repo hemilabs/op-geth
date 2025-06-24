@@ -115,11 +115,12 @@ type layer interface {
 
 // Config contains the settings for database.
 type Config struct {
-	StateHistory    uint64 // Number of recent blocks to maintain state history for
-	TrieCleanSize   int    // Maximum memory allowance (in bytes) for caching clean trie nodes
-	StateCleanSize  int    // Maximum memory allowance (in bytes) for caching clean state data
-	WriteBufferSize int    // Maximum memory allowance (in bytes) for write buffer
-	ReadOnly        bool   // Flag whether the database is opened in read only mode
+	StateHistory        uint64 // Number of recent blocks to maintain state history for
+	EnableStateIndexing bool   // Whether to enable state history indexing for external state access
+	TrieCleanSize       int    // Maximum memory allowance (in bytes) for caching clean trie nodes
+	StateCleanSize      int    // Maximum memory allowance (in bytes) for caching clean state data
+	WriteBufferSize     int    // Maximum memory allowance (in bytes) for write buffer
+	ReadOnly            bool   // Flag whether the database is opened in read only mode
 
 	// Testing configurations
 	SnapshotNoBuild   bool // Flag Whether the state generation is allowed
@@ -155,9 +156,6 @@ func (c *Config) fields() []interface{} {
 		list = append(list, "history", "entire chain")
 	} else {
 		list = append(list, "history", fmt.Sprintf("last %d blocks", c.StateHistory))
-	}
-	if c.JournalDirectory != "" {
-		list = append(list, "journal-dir", c.JournalDirectory)
 	}
 	return list
 }
@@ -217,14 +215,12 @@ type Database struct {
 	isVerkle bool       // Flag if database is used for verkle tree
 	hasher   nodeHasher // Trie node hasher
 
-	config *Config        // Configuration for database
-	diskdb ethdb.Database // Persistent storage for matured trie nodes
-	tree   *layerTree     // The group for all known layers
-
-	stateFreezer ethdb.ResettableAncientStore // Freezer for storing state histories, nil possible in tests
-	stateIndexer *historyIndexer              // History indexer historical state data, nil possible
-
-	lock sync.RWMutex // Lock to prevent mutations from happening at the same time
+	config  *Config                      // Configuration for database
+	diskdb  ethdb.Database               // Persistent storage for matured trie nodes
+	tree    *layerTree                   // The group for all known layers
+	freezer ethdb.ResettableAncientStore // Freezer for storing trie histories, nil possible in tests
+	lock    sync.RWMutex                 // Lock to prevent mutations from happening at the same time
+	indexer *historyIndexer              // History indexer
 }
 
 // New attempts to load an already existing layer from a persistent key-value
@@ -274,6 +270,11 @@ func New(diskdb ethdb.Database, config *Config, isVerkle bool) *Database {
 	if err := db.setStateGenerator(); err != nil {
 		log.Crit("Failed to setup the generator", "err", err)
 	}
+	// TODO (rjl493456442) disable the background indexing in read-only mode
+	if db.freezer != nil && db.config.EnableStateIndexing {
+		db.indexer = newHistoryIndexer(db.diskdb, db.freezer, db.tree.bottom().stateID())
+		log.Info("Enabled state history indexing")
+	}
 	fields := config.fields()
 	if db.isVerkle {
 		fields = append(fields, "verkle", true)
@@ -311,14 +312,13 @@ func (db *Database) repairHistory() error {
 			log.Crit("Failed to retrieve head of state history", "err", err)
 		}
 		if frozen != 0 {
+			// TODO(rjl493456442) would be better to group them into a batch.
+			//
 			// Purge all state history indexing data first
-			batch := db.diskdb.NewBatch()
-			rawdb.DeleteStateHistoryIndexMetadata(batch)
-			rawdb.DeleteStateHistoryIndex(batch)
-			if err := batch.Write(); err != nil {
-				log.Crit("Failed to purge state history index", "err", err)
-			}
-			if err := db.stateFreezer.Reset(); err != nil {
+			rawdb.DeleteStateHistoryIndexMetadata(db.diskdb)
+			rawdb.DeleteStateHistoryIndex(db.diskdb)
+			err := db.freezer.Reset()
+			if err != nil {
 				log.Crit("Failed to reset state histories", "err", err)
 			}
 			log.Info("Truncated extraneous state history")
@@ -504,15 +504,13 @@ func (db *Database) Enable(root common.Hash) error {
 	// all root->id mappings should be removed as well. Since
 	// mappings can be huge and might take a while to clear
 	// them, just leave them in disk and wait for overwriting.
-	if db.stateFreezer != nil {
+	if db.freezer != nil {
+		// TODO(rjl493456442) would be better to group them into a batch.
+		//
 		// Purge all state history indexing data first
-		batch.Reset()
-		rawdb.DeleteStateHistoryIndexMetadata(batch)
-		rawdb.DeleteStateHistoryIndex(batch)
-		if err := batch.Write(); err != nil {
-			return err
-		}
-		if err := db.stateFreezer.Reset(); err != nil {
+		rawdb.DeleteStateHistoryIndexMetadata(db.diskdb)
+		rawdb.DeleteStateHistoryIndex(db.diskdb)
+		if err := db.freezer.Reset(); err != nil {
 			return err
 		}
 	}
@@ -637,8 +635,8 @@ func (db *Database) Close() error {
 	dl.resetCache() // release the memory held by clean cache
 
 	// Terminate the background state history indexer
-	if db.stateIndexer != nil {
-		db.stateIndexer.close()
+	if db.indexer != nil {
+		db.indexer.close()
 	}
 	// Close the attached state history freezer.
 	if db.stateFreezer == nil {
