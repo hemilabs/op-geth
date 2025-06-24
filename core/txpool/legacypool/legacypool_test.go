@@ -230,6 +230,16 @@ func (r *reserver) Has(address common.Address) bool {
 	return false // reserver only supports a single pool
 }
 
+// dummyFilter is a simple ingress filter used in tests to toggle whether
+// transactions should be accepted or rejected.
+type dummyFilter struct {
+	allow atomic.Bool
+}
+
+func (f *dummyFilter) FilterTx(ctx context.Context, tx *types.Transaction) bool {
+	return f.allow.Load()
+}
+
 func setupPoolWithConfig(config *params.ChainConfig) (*LegacyPool, *ecdsa.PrivateKey) {
 	return setupPoolWithTxPoolConfig(config, testTxPoolConfig)
 }

@@ -157,7 +157,6 @@ type Config struct {
 	Lifetime time.Duration // Maximum amount of time non-executable transaction are queued
 
 	EffectiveGasCeil uint64 // OP-Stack: if non-zero, a gas ceiling to enforce independent of the header's gaslimit value
-	MaxTxGasLimit    uint64 // Maximum gas limit allowed per individual transaction
 
 	// FilterInterval defines how often already-added transactions are rechecked
 	// against ingress filters.
@@ -176,8 +175,6 @@ var DefaultConfig = Config{
 	GlobalSlots:  4096 + 1024, // urgent + floating queue capacity with 4:1 ratio
 	AccountQueue: 64,
 	GlobalQueue:  1024,
-
-	MaxTxGasLimit: 0, // 0 means no limit (default behavior)
 
 	Lifetime:       3 * time.Hour,
 	FilterInterval: 12 * time.Second,
