@@ -176,16 +176,6 @@ func New(root common.Hash, db Database) (*StateDB, error) {
 // NewWithReader creates a new state for the specified state root. Unlike New,
 // this function accepts an additional Reader which is bound to the given root.
 func NewWithReader(root common.Hash, db Database, reader Reader) (*StateDB, error) {
-	tr, err := db.OpenTrie(root)
-	if err != nil {
-		return nil, err
-	}
-	return NewWithReader(root, db, reader)
-}
-
-// NewWithReader creates a new state for the specified state root. Unlike New,
-// this function accepts an additional Reader which is bound to the given root.
-func NewWithReader(root common.Hash, db Database, reader Reader) (*StateDB, error) {
 	sdb := &StateDB{
 		db:                   db,
 		originalRoot:         root,
@@ -724,7 +714,6 @@ func (s *StateDB) Copy() *StateDB {
 	// Copy all the basic fields, initialize the memory ones
 	state := &StateDB{
 		db:                   s.db,
-		trie:                 mustCopyTrie(s.trie),
 		reader:               s.reader,
 		originalRoot:         s.originalRoot,
 		stateObjects:         make(map[common.Address]*stateObject, len(s.stateObjects)),
