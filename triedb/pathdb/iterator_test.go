@@ -816,7 +816,8 @@ func testAccountIteratorDeletions(t *testing.T, newIterator func(db *Database, r
 	config := &Config{
 		NoAsyncGeneration: true,
 	}
-	db := New(rawdb.NewMemoryDatabase(), config, false)
+	memoryDB := rawdb.NewMemoryDatabase()
+	db := New(memoryDB, config, false)
 
 	// Stack three diff layers on top with various overlaps
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
@@ -868,7 +869,18 @@ func TestStorageIteratorDeletions(t *testing.T) {
 	config := &Config{
 		NoAsyncGeneration: true,
 	}
-	db := New(rawdb.NewMemoryDatabase(), config, false)
+	memoryDB := rawdb.NewMemoryDatabase()
+	db := New(memoryDB, config, false)
+
+	restart := func(head common.Hash) {
+		if err := db.Journal(head); err != nil {
+			t.Fatalf("Failed to journal the database, %v", err)
+		}
+		if err := db.Close(); err != nil {
+			t.Fatalf("Failed to close the database, %v", err)
+		}
+		db = New(memoryDB, config, false)
+	}
 
 	// Stack three diff layers on top with various overlaps
 	db.Update(common.HexToHash("0x02"), types.EmptyRootHash, 1, trienode.NewMergedNodeSet(),
