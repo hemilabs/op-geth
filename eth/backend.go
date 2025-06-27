@@ -238,9 +238,6 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		}
 	}
 	var (
-		vmConfig = vm.Config{
-			EnablePreimageRecording: config.EnablePreimageRecording,
-		}
 		options = &core.BlockChainConfig{
 			TrieCleanLimit:   config.TrieCleanCache,
 			NoPrefetch:       config.NoPrefetch,
@@ -253,7 +250,9 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 			StateScheme:      scheme,
 			ChainHistoryMode: config.HistoryMode,
 			TxLookupLimit:    int64(min(config.TransactionHistory, math.MaxInt64)),
-			VmConfig:         vmConfig,
+			VmConfig: vm.Config{
+				EnablePreimageRecording: config.EnablePreimageRecording,
+			},
 		}
 	)
 
