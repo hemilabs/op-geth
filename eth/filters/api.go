@@ -350,7 +350,6 @@ func (api *FilterAPI) GetLogs(ctx context.Context, crit FilterCriteria) ([]*type
 	if len(crit.Addresses) > maxAddresses {
 		return nil, errExceedMaxAddresses
 	}
-
 	var filter *Filter
 	if crit.BlockHash != nil {
 		if crit.FromBlock != nil || crit.ToBlock != nil {
