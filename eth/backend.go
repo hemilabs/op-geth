@@ -295,7 +295,11 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	if fb := eth.blockchain.CurrentFinalBlock(); fb != nil {
 		finalBlock = fb.Number.Uint64()
 	}
-	eth.filterMaps = filtermaps.NewFilterMaps(chainDb, chainView, historyCutoff, finalBlock, filtermaps.DefaultParams, fmConfig)
+	filterMaps, err := filtermaps.NewFilterMaps(chainDb, chainView, historyCutoff, finalBlock, filtermaps.DefaultParams, fmConfig)
+	if err != nil {
+		return nil, err
+	}
+	eth.filterMaps = filterMaps
 	eth.closeFilterMaps = make(chan chan struct{})
 
 	// TxPool
