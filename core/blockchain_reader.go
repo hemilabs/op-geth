@@ -324,7 +324,9 @@ func (bc *BlockChain) GetAncestor(hash common.Hash, number, ancestor uint64, max
 // A null will be returned if the transaction is not found. This can be due to
 // the transaction indexer not being finished. The caller must explicitly check
 // the indexer progress.
-func (bc *BlockChain) GetTransactionLookup(hash common.Hash) (*rawdb.LegacyTxLookupEntry, *types.Transaction) {
+//
+// Notably, only the transaction in the canonical chain is visible.
+func (bc *BlockChain) GetCanonicalTransaction(hash common.Hash) (*rawdb.LegacyTxLookupEntry, *types.Transaction) {
 	bc.txLookupLock.RLock()
 	defer bc.txLookupLock.RUnlock()
 

@@ -497,11 +497,7 @@ func (r *Receipt) DeriveFields(signer Signer, context DeriveReceiptContext) {
 	if context.Tx.To() == nil {
 		// Deriving the signer is expensive, only do if it's actually needed
 		from, _ := Sender(signer, context.Tx)
-		nonce := context.Tx.Nonce()
-		if r.DepositNonce != nil {
-			nonce = *r.DepositNonce
-		}
-		r.ContractAddress = crypto.CreateAddress(from, nonce)
+		r.ContractAddress = crypto.CreateAddress(from, context.Tx.Nonce())
 	} else {
 		r.ContractAddress = common.Address{}
 	}
@@ -694,41 +690,6 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, blockHash common.Has
 			TxIndex:      uint(i),
 		})
 		logIndex += uint(len(rs[i].Logs))
-	}
-
-		// block location fields
-		rs[i].BlockHash = hash
-		rs[i].BlockNumber = new(big.Int).SetUint64(number)
-		rs[i].TransactionIndex = uint(i)
-
-		// The contract address can be derived from the transaction itself
-		if txs[i].To() == nil {
-			// Deriving the signer is expensive, only do if it's actually needed
-			from, _ := Sender(signer, txs[i])
-			rs[i].ContractAddress = crypto.CreateAddress(from, txs[i].Nonce())
-		} else {
-			rs[i].ContractAddress = common.Address{}
-		}
-
-		// The used gas can be calculated based on previous r
-		if i == 0 {
-			rs[i].GasUsed = rs[i].CumulativeGasUsed
-		} else {
-			rs[i].GasUsed = rs[i].CumulativeGasUsed - rs[i-1].CumulativeGasUsed
-		}
-
-		// The derived log fields can simply be set from the block and transaction
-		for j := 0; j < len(rs[i].Logs); j++ {
-			rs[i].Logs[j].BlockNumber = number
-			rs[i].Logs[j].BlockHash = hash
-			rs[i].Logs[j].BlockTimestamp = time
-			rs[i].Logs[j].TxHash = rs[i].TxHash
-			rs[i].Logs[j].TxIndex = uint(i)
-			rs[i].Logs[j].Index = logIndex
-			logIndex++
-		}
-		// also derive the Bloom if not derived yet
-		rs[i].Bloom = CreateBloom(rs[i])
 	}
 	return nil
 }

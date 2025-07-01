@@ -370,8 +370,10 @@ func (b *EthAPIBackend) GetPoolTransaction(hash common.Hash) *types.Transaction 
 // A null will be returned if the transaction is not found. The transaction is not
 // existent from the node's perspective. This can be due to the transaction indexer
 // not being finished. The caller must explicitly check the indexer progress.
-func (b *EthAPIBackend) GetTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64) {
-	lookup, tx := b.eth.blockchain.GetTransactionLookup(txHash)
+//
+// Notably, only the transaction in the canonical chain is visible.
+func (b *EthAPIBackend) GetCanonicalTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64) {
+	lookup, tx := b.eth.blockchain.GetCanonicalTransaction(txHash)
 	if lookup == nil || tx == nil {
 		return false, nil, common.Hash{}, 0, 0
 	}
