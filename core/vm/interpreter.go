@@ -190,7 +190,7 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 
 	var (
 		op          OpCode     // current opcode
-		jumpTable   *JumpTable = evm.table
+		jumpTable   *JumpTable = in.table
 		mem                    = NewMemory() // bound memory
 		stack                  = newstack()  // local stack
 		callContext            = &ScopeContext{
