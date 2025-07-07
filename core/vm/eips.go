@@ -295,7 +295,7 @@ func opBlobBaseFee(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 }
 
 // opCLZ implements the CLZ opcode (count leading zero bytes)
-func opCLZ(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+func opCLZ(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
 	x := scope.Stack.peek()
 	x.SetUint64(256 - uint64(x.BitLen()))
 	return nil, nil
@@ -311,11 +311,10 @@ func enable4844(jt *JumpTable) {
 	}
 }
 
-// enable7939 enables EIP-7939 (CLZ opcode)
 func enable7939(jt *JumpTable) {
 	jt[CLZ] = &operation{
 		execute:     opCLZ,
-		constantGas: GasFastStep,
+		constantGas: GasFastestStep,
 		minStack:    minStack(1, 1),
 		maxStack:    maxStack(1, 1),
 	}
