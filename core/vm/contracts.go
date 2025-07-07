@@ -48,7 +48,6 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/bn256"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/crypto/secp256r1"
-	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/crypto/ripemd160"
@@ -699,6 +698,14 @@ var PrecompiledContractsOsaka = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x0f}): &bls12381Pairing{},
 	common.BytesToAddress([]byte{0x10}): &bls12381MapG1{},
 	common.BytesToAddress([]byte{0x11}): &bls12381MapG2{},
+
+	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
+}
+
+// PrecompiledContractsP256Verify contains the precompiled Ethereum
+// contract specified in EIP-7212. This is exported for testing purposes.
+var PrecompiledContractsP256Verify = PrecompiledContracts{
+	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
 }
 
 var (
@@ -3205,20 +3212,6 @@ func kZGToVersionedHash(kzg kzg4844.Commitment) common.Hash {
 }
 
 // P256VERIFY (secp256r1 signature verification)
-// implemented as a native contract.
-//
-// This is used in the OP Stack from Fjord until the implementation of Ethereum's Osaka fork, after
-// which the p256Verify precompile is used instead to maintain Ethereum equivalence.
-type p256VerifyFjord struct {
-	p256Verify
-}
-
-// RequiredGas returns the gas required to execute the precompiled contract
-func (c *p256VerifyFjord) RequiredGas(input []byte) uint64 {
-	return params.P256VerifyGasFjord
-}
-
-// P256VERIFY (secp256r1 signature verification)
 // implemented as a native contract
 type p256Verify struct{}
 
@@ -3228,8 +3221,7 @@ func (c *p256Verify) RequiredGas(input []byte) uint64 {
 }
 
 // Run executes the precompiled contract with given 160 bytes of param, returning the output and the used gas
-func (c *p256Verify) Run(input []byte, blockContext common.Hash) ([]byte, error) {
-	// Required input length is 160 bytes
+func (c *p256Verify) Run(input []byte) ([]byte, error) {
 	const p256VerifyInputLength = 160
 	if len(input) != p256VerifyInputLength {
 		return nil, nil
@@ -3245,8 +3237,4 @@ func (c *p256Verify) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		return true32Byte, nil
 	}
 	return nil, nil
-}
-
-func (c *p256Verify) Name() string {
-	return "P256VERIFY"
 }

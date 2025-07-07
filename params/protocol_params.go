@@ -178,28 +178,7 @@ const (
 	Bls12381MapG1Gas          uint64 = 5500  // Gas price for BLS12-381 mapping field element to G1 operation
 	Bls12381MapG2Gas          uint64 = 23800 // Gas price for BLS12-381 mapping field element to G2 operation
 
-	P256VerifyGasFjord uint64 = 3450 // secp256r1 elliptic curve signature verifier gas price (RIP-7212 value)
-	P256VerifyGas      uint64 = 6900 // secp256r1 elliptic curve signature verifier gas price
-
-	Bls12381G1MulMaxInputSizeIsthmus   uint64 = 513760 // Maximum input size for BLS12-381 G1 multiple-scalar-multiply operation
-	Bls12381G2MulMaxInputSizeIsthmus   uint64 = 488448 // Maximum input size for BLS12-381 G2 multiple-scalar-multiply operation
-	Bls12381PairingMaxInputSizeIsthmus uint64 = 235008 // Maximum input size for BLS12-381 pairing check
-
-	Bn256PairingMaxInputSizeJovian    uint64 = 81984  // bn256Pairing limit (427 pairs)
-	Bls12381G1MulMaxInputSizeJovian   uint64 = 288960 // BLS12-381 G1 MSM limit (1,806 pairs)
-	Bls12381G2MulMaxInputSizeJovian   uint64 = 278784 // BLS12-381 G2 MSM limit (968 pairs)
-	Bls12381PairingMaxInputSizeJovian uint64 = 156672 // BLS12-381 pairing limit (408 pairs)
-
-	BtcAddrBal           uint64 = 50000
-	BtcUtxosAddrList     uint64 = 100000
-	BtcTxByTxid          uint64 = 25000
-	BtcInputByTxid       uint64 = 15000
-	BtcOutputByTxid      uint64 = 15000
-	BtcTxGetInputWitness uint64 = 15000
-	BtcTxConf            uint64 = 5000
-	BtcLastHeader        uint64 = 5000
-	BtcHeaderN           uint64 = 6000
-	BtcAddrToScript      uint64 = 25000
+	P256VerifyGas uint64 = 6900 // secp256r1 elliptic curve signature verifier gas price
 
 	// The Refund Quotient is the cap on how much of the used gas can be refunded. Before EIP-3529,
 	// up to half the consumed gas could be refunded. Redefined as 1/5th in EIP-3529
