@@ -586,9 +586,10 @@ func (bc *BlockChain) SetupDeucalion(pctx context.Context, address string) error
 
 	go func() {
 		defer cancel()
-		if err := d.Run(ctx, nil, func(ctx context.Context) (bool, any, error) {
+		err := d.Run(ctx, nil, func(ctx context.Context) (bool, any, error) {
 			return bc.healthyNode.Load(), bc.CurrentBlock(), nil
-		}); !errors.Is(err, context.Canceled) {
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("deucalion terminated with error", "err", err)
 			return
 		}
