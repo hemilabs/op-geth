@@ -585,10 +585,10 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 		txs := list.Flatten()
 
 		// If the miner requests tip enforcement, cap the lists now
-		if filter.MinTip != nil || filter.GasLimitCap != 0 {
+		if minTipBig != nil || filter.GasLimitCap != 0 {
 			for i, tx := range txs {
-				if filter.MinTip != nil {
-					if tx.EffectiveGasTipIntCmp(filter.MinTip, filter.BaseFee) < 0 {
+				if minTipBig != nil {
+					if tx.EffectiveGasTipIntCmp(minTipBig, baseFeeBig) < 0 {
 						txs = txs[:i]
 						break
 					}
@@ -598,19 +598,6 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 						txs = txs[:i]
 						break
 					}
-				}
-			}
-		}
-
-		// OP-Stack addition: exclude by max-da-size filter
-		if filter.MaxDATxSize != nil {
-			for i, tx := range txs {
-				estimate := tx.RollupCostData().EstimatedDASize()
-				if estimate.Cmp(filter.MaxDATxSize) > 0 {
-					log.Debug("filtering tx that exceeds max da tx size",
-						"hash", tx.Hash(), "txda", estimate, "dalimit", filter.MaxDATxSize)
-					txs = txs[:i]
-					break
 				}
 			}
 		}
