@@ -4,6 +4,8 @@
 
 # GitHub Actions workflow to lint, build and test.
 name: "Tests"
+permissions:
+  contents: read
 on:
   push:
 
