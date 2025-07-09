@@ -19,13 +19,23 @@ package catalyst
 
 import (
 	"bytes"
+	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"math/big"
 	"strconv"
 	"sync"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/hemilabs/heminetwork/api/tbcapi"
+	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/ethereum"
+	"github.com/hemilabs/heminetwork/hemi"
+	"github.com/hemilabs/heminetwork/hemi/pop"
 
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
@@ -82,6 +92,9 @@ const (
 	// beaconUpdateWarnFrequency is the frequency at which to warn the user that
 	// the beacon client is offline.
 	beaconUpdateWarnFrequency = 5 * time.Minute
+
+	// depth of blocks to check for when retrieving pop payouts from tbc
+	defaultPayoutBTCBlockDepth = 3
 )
 
 // All methods provided over the engine endpoint.
@@ -310,6 +323,77 @@ func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV3(update engine.Forkchoice
 	// forkchoiceUpdate into a function that only updates the head and then a
 	// function that kicks off block construction.
 	return api.forkchoiceUpdated(update, params, engine.PayloadV3, true)
+}
+
+func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) (engine.KeystoneStatus, error) {
+	if err := api.eth.BlockChain().InsertL2Keystone(keystone); err != nil {
+		return engine.KeystoneStatus{Status: engine.INVALID, ValidationError: err.Error()}, err
+	}
+	kf := api.eth.KeystoneFeed()
+	if kf == nil {
+		return engine.KeystoneStatus{Status: engine.INVALID, ValidationError: "subscription send during opgeth shutdown"}, nil
+	}
+
+	stringHash := hex.EncodeToString(hemi.L2KeystoneAbbreviate(keystone).Hash().CloneBytes())
+
+	kf.Send(fmt.Sprintf("New Keystone Available: %s", stringHash))
+
+	go func() {
+		if err := api.eth.BlockChain().BackfillKeystones(); err != nil {
+			log.Error("error backfilling keystones", "error", err)
+		}
+	}()
+
+	return engine.KeystoneStatus{Status: engine.VALID}, nil
+}
+
+type PopPayout struct {
+	MinerAddress common.Address `json:"miner_address"`
+	Amount       *big.Int       `json:"amount"`
+}
+
+func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash chainhash.Hash) ([]PopPayout, error) {
+	req := tbcapi.KeystoneTxsByL2KeystoneAbrevHashRequest{
+		Depth:               3,
+		L2KeystoneAbrevHash: abrevHash,
+	}
+
+	if vm.TBCFullNodeConfig.Network == "localnet" {
+		req.Depth = 1000
+	}
+
+	resp, err := vm.TBCFullNode.KeystoneTxsByHash(ctx, &req)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			return []PopPayout{}, nil
+		}
+		return nil, err
+	}
+
+	popPayouts := make([]PopPayout, 0, len(resp.KeystoneTxs))
+	amount := big.NewInt(hemi.HEMIBase)
+
+	for _, ksTx := range resp.KeystoneTxs {
+		reader := bytes.NewReader(ksTx.RawTx)
+
+		msgTx := wire.MsgTx{}
+		if err := msgTx.Deserialize(reader); err != nil {
+			return nil, err
+		}
+
+		publicKeyUncompressed, err := pop.ParsePublicKeyFromSignatureScript(msgTx.TxIn[0].SignatureScript)
+		if err != nil {
+			return nil, err
+		}
+
+		popPayouts = append(popPayouts, PopPayout{
+			// as of now, this is static at 10^18 atomic units == 1 HEMI
+			Amount:       amount,
+			MinerAddress: ethereum.PublicKeyToAddress(publicKeyUncompressed),
+		})
+	}
+
+	return popPayouts, nil
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {

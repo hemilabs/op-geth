@@ -43,6 +43,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hemilabs/heminetwork/hemi"
 )
 
 // EthAPIBackend implements ethapi.Backend and tracers.Backend for full nodes
@@ -462,4 +463,16 @@ func (b *EthAPIBackend) HistoricalRPCService() *rpc.Client {
 
 func (b *EthAPIBackend) Genesis() *types.Block {
 	return b.eth.blockchain.Genesis()
+}
+
+func (b *EthAPIBackend) KeystoneFeed() *event.Feed {
+	return b.eth.KeystoneFeed()
+}
+
+func (b *EthAPIBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	return b.eth.blockchain.GetMostRecentKeystones(count)
+}
+
+func (b *EthAPIBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return b.eth.blockchain.GetKeystoneAndDescendants(hash, count)
 }

@@ -105,6 +105,8 @@ type Ethereum struct {
 	miner    *miner.Miner
 	gasPrice *big.Int
 
+	kssFeed event.Feed
+
 	networkID     uint64
 	netRPCService *ethapi.NetAPI
 
@@ -460,6 +462,9 @@ func (s *Ethereum) APIs() []rpc.API {
 		}, {
 			Namespace: "net",
 			Service:   s.netRPCService,
+		}, {
+			Namespace: "kss",
+			Service:   NewHemiAPI(s),
 		},
 	}...)
 }
@@ -469,6 +474,8 @@ func (s *Ethereum) ResetWithGenesisBlock(gb *types.Block) {
 }
 
 func (s *Ethereum) Miner() *miner.Miner { return s.miner }
+
+func (s *Ethereum) KeystoneFeed() *event.Feed { return &s.kssFeed }
 
 func (s *Ethereum) AccountManager() *accounts.Manager  { return s.accountManager }
 func (s *Ethereum) BlockChain() *core.BlockChain       { return s.blockchain }

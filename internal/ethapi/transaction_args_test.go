@@ -38,6 +38,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hemilabs/heminetwork/hemi"
 )
 
 // TestSetFeeDefaults tests the logic for filling in default fee values works as expected.
@@ -232,7 +233,7 @@ func TestSetFeeDefaults(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for i, test := range tests {
 		if err := b.setFork(test.fork); err != nil {
 			t.Fatalf("failed to set fork: %v", err)
@@ -293,6 +294,18 @@ func newBackendMock() *backendMock {
 		},
 		config: config,
 	}
+}
+
+func (b *backendMock) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *backendMock) KeystoneFeed() *event.Feed {
+	return nil
+}
+
+func (b *backendMock) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
 }
 
 func (b *backendMock) setFork(fork string) error {

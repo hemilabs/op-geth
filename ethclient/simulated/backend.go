@@ -17,6 +17,7 @@
 package simulated
 
 import (
+	"context"
 	"errors"
 	"time"
 
@@ -126,7 +127,7 @@ func NewBackendFromConfig(conf ethconfig.Config) *Backend {
 // newWithNode sets up a simulated backend on an existing node. The provided node
 // must not be started and will be started by this method.
 func newWithNode(stack *node.Node, conf *eth.Config, blockPeriod uint64) (*Backend, error) {
-	backend, err := eth.New(stack, conf)
+	backend, err := eth.New(stack, conf, context.Background())
 	if err != nil {
 		return nil, err
 	}

@@ -19,6 +19,9 @@ package rawdb
 import (
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"slices"
@@ -31,6 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/hemilabs/heminetwork/hemi"
 )
 
 // ReadCanonicalHash retrieves the hash assigned to a canonical block number.
@@ -900,4 +904,199 @@ func ReadHeadBlock(db ethdb.Reader) *types.Block {
 		return nil
 	}
 	return ReadBlock(db, headBlockHash, *headBlockNumber)
+}
+
+const l2KeystonePrefix = "l2keystone"
+
+func l2KeystoneHeightToKey(height uint64) []byte {
+	buf := make([]byte, 8)
+
+	_, err := binary.Encode(buf, binary.BigEndian, uint64(height))
+	if err != nil {
+		panic(err)
+	}
+
+	for i, b := range buf {
+		buf[i] = b ^ 0xFF
+	}
+
+	key := fmt.Sprintf("%s-height-%s", l2KeystonePrefix, hex.EncodeToString(buf))
+	return []byte(key)
+}
+
+func l2KeystoneToHeightKey(l2Keystone hemi.L2Keystone) []byte {
+	buf := make([]byte, 8)
+
+	_, err := binary.Encode(buf, binary.BigEndian, uint64(l2Keystone.L2BlockNumber))
+	if err != nil {
+		panic(err)
+	}
+
+	for i, b := range buf {
+		buf[i] = b ^ 0xFF
+	}
+
+	key := fmt.Sprintf("%s-height-%s", l2KeystonePrefix, hex.EncodeToString(buf))
+	return []byte(key)
+}
+
+func l2KeystoneToHashKey(l2Keystone hemi.L2Keystone) []byte {
+	hash := hemi.L2KeystoneAbbreviate(l2Keystone).Hash()
+	key := fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hash)
+	return []byte(key)
+}
+
+func WriteL2Keystone(db ethdb.KeyValueWriter, l2Keystone hemi.L2Keystone) error {
+	b, err := json.Marshal(&l2Keystone)
+	if err != nil {
+		return err
+	}
+
+	if err := db.Put(l2KeystoneToHashKey(l2Keystone), b); err != nil {
+		return err
+	}
+
+	if err := db.Put(l2KeystoneToHeightKey(l2Keystone), l2KeystoneToHashKey(l2Keystone)); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func GetKeystoneAndDescendants(db ethdb.Database, l2KeystoneAbrevHash []byte, count uint) ([]hemi.L2Keystone, error) {
+	if count > 100 {
+		return nil, errors.New("count too large")
+	}
+
+	// Find original keystone and add to results
+	results := make([]hemi.L2Keystone, 0)
+	curKss, err := ReadL2KeystoneByAbrevHash(db, l2KeystoneAbrevHash)
+	if err != nil {
+		return nil, err
+	}
+	results = append(results, *curKss)
+
+	// Iterate through next block heights until
+	// we get N descendants
+	L2Height := curKss.L2BlockNumber
+	for i := range int(count) {
+		// Next height is the L2 Block Height of the
+		// previous keystone + 25 (KeystoneHeaderPeriod)
+		nextHeight := L2Height + (hemi.KeystoneHeaderPeriod * (uint32(i) + 1))
+		heightKey := l2KeystoneHeightToKey(uint64(nextHeight))
+
+		// If we can't find a reference to a keystone at
+		// the new height, assume we reached the tip and return
+		kssKey, err := db.Get(heightKey)
+		if err != nil {
+			break
+		}
+
+		// If we can't find the keystone pointed to by the height
+		// index we continue but warn system of unexpected DB behavior
+		val, err := db.Get(kssKey)
+		if err != nil {
+			log.Error(err.Error())
+			continue
+		}
+
+		// If we can't unmarshal the stored bytes into a proper
+		// keystone we continue but warn system of unexpected DB state
+		var l2Keystone hemi.L2Keystone
+		if err := json.Unmarshal(val, &l2Keystone); err != nil {
+			log.Error(err.Error())
+			continue
+		}
+
+		results = append(results, l2Keystone)
+	}
+	return results, nil
+}
+
+func ReadMostRecentL2Keystones(db ethdb.Database, count uint) ([]hemi.L2Keystone, error) {
+	if count > 100 {
+		return nil, errors.New("count too large")
+	}
+
+	results := []hemi.L2Keystone{}
+
+	it := db.NewIterator([]byte(fmt.Sprintf("%s-height", l2KeystonePrefix)), nil)
+	defer it.Release()
+	for it.Next() {
+
+		key := it.Value()
+		val, err := db.Get(key)
+		if err != nil {
+			return nil, err
+		}
+
+		var l2Keystone hemi.L2Keystone
+		if err := json.Unmarshal(val, &l2Keystone); err != nil {
+			return nil, err
+		}
+
+		results = append(results, l2Keystone)
+		if len(results) >= int(count) {
+			return results, nil
+		}
+	}
+
+	return results, nil
+}
+
+func DeleteL2KeystonesAboveHeight(db ethdb.Database, height uint64) error {
+	it := db.NewIterator([]byte(fmt.Sprintf("%s-height", l2KeystonePrefix)), nil)
+	defer it.Release()
+	for it.Next() {
+		key := it.Value()
+		val, err := db.Get(key)
+		if err != nil {
+			return err
+		}
+
+		var l2Keystone hemi.L2Keystone
+		if err := json.Unmarshal(val, &l2Keystone); err != nil {
+			return err
+		}
+
+		if uint64(l2Keystone.L2BlockNumber) > height {
+			if err := db.Delete(key); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func ReadL2KeystoneByAbrevHash(db ethdb.Database, l2KeystoneAbrevHash []byte) (*hemi.L2Keystone, error) {
+	l2copy := make([]byte, len(l2KeystoneAbrevHash))
+	copy(l2copy, l2KeystoneAbrevHash)
+	slices.Reverse(l2copy)
+
+	key := []byte(fmt.Sprintf("%s-hash-%s", l2KeystonePrefix, hex.EncodeToString(l2copy[:])))
+	b, err := db.Get(key)
+	if err != nil {
+		return nil, err
+	}
+
+	var l2Keystone hemi.L2Keystone
+	if err := json.Unmarshal(b, &l2Keystone); err != nil {
+		return nil, err
+	}
+
+	// if we can't find the keystone in the height index, then we can
+	// assume that it is not on the canonical chain any longer
+	canonKey, err := db.Get(l2KeystoneToHeightKey(l2Keystone))
+	if err != nil {
+		return nil, err
+	}
+
+	// if the keystone hash pointed to at the height index is not the
+	// same as this keystone, it is considered not canonical
+	if !bytes.Equal(canonKey, key) {
+		return nil, fmt.Errorf("keystone %x not canonical", l2KeystoneAbrevHash)
+	}
+
+	return &l2Keystone, nil
 }

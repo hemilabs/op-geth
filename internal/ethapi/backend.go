@@ -35,6 +35,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hemilabs/heminetwork/hemi"
 )
 
 // Backend interface provides the common API services (that are provided by
@@ -97,6 +98,11 @@ type Backend interface {
 	SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription
 	BloomStatus() (uint64, uint64)
 	ServiceFilter(ctx context.Context, session *bloombits.MatcherSession)
+
+	// Hemi specific functions
+	KeystoneFeed() *event.Feed
+	GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error)
+	GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error)
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {
