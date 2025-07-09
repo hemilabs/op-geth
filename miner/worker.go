@@ -33,7 +33,6 @@ import (
 	"github.com/ethereum/go-ethereum/core/stateless"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/types/interoptypes"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
@@ -534,41 +533,6 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 		env.gasPool.SetGas(gp)
 	}
 	return receipt, err
-}
-
-func (miner *Miner) checkInterop(ctx context.Context, tx *types.Transaction, logTimestamp uint64) error {
-	if tx.Type() == types.DepositTxType {
-		return nil // deposit-txs are always safe
-	}
-	if tx.Rejected() {
-		return errors.New("transaction was previously rejected")
-	}
-	b, ok := miner.backend.(BackendWithInterop)
-	if !ok {
-		return fmt.Errorf("cannot mine interop txs without interop backend, got backend type %T", miner.backend)
-	}
-	if ctx == nil { // check if the miner was set up correctly to interact with an RPC
-		return errors.New("need RPC context to check executing messages")
-	}
-	accessList := interoptypes.TxToInteropAccessList(tx)
-	if len(accessList) == 0 {
-		return nil // avoid an RPC check if there are no executing messages to verify.
-	}
-	execDescr := interoptypes.ExecutingDescriptor{
-		Timestamp: logTimestamp,
-		Timeout:   0,
-		ChainID:   *uint256.MustFromBig(miner.chainConfig.ChainID),
-	}
-	if err := b.CheckAccessList(ctx, accessList, interoptypes.CrossUnsafe, execDescr); err != nil {
-		if ctx.Err() != nil { // don't reject transactions permanently on RPC timeouts etc.
-			log.Debug("CheckAccessList timed out", "err", ctx.Err())
-			return err
-		}
-		txInteropRejectedCounter.Inc(1)
-		tx.SetRejected() // Mark the tx as rejected: it will not be welcome in the tx-pool anymore.
-		return err
-	}
-	return nil
 }
 
 func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *transactionsByPriceAndNonce, interrupt *atomic.Int32) error {
