@@ -382,7 +382,7 @@ func (bc *BlockChain) getHeaderModeTBCEVMHeader() (*types.Header, error) {
 	if header != nil {
 		return header, nil
 	}
-	return nil, fmt.Errorf("Unable to find EVM header corresponding to hash %x", stateBlockHash[:])
+	return nil, fmt.Errorf("unable to find EVM header corresponding to hash %x", stateBlockHash[:])
 }
 
 // getHvmPhase0ActivationBlock descends the blockchain until it

@@ -108,6 +108,10 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 	}
 	feedSub := kf.Subscribe(subCh)
 
+	// TODO: while other op-geth subscriptions services also seem to create
+	// a go routine for every subscription, there might be a way to have a
+	// single go routine that sends a notification to every client, whenever
+	// a new notification is received.
 	go func() {
 		defer func() {
 			feedSub.Unsubscribe()
@@ -117,8 +121,6 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 			case notif := <-subCh:
 				notifier.Notify(rpcSub.ID, notif)
 			case <-rpcSub.Err(): // client send an unsubscribe request
-				return
-			case <-ctx.Done(): // connection dropped, Antonio: double-check this
 				return
 			}
 		}
