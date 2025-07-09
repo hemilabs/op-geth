@@ -20,7 +20,6 @@
 package core
 
 import (
-	"context"
 	"fmt"
 	"math/big"
 	"path/filepath"
@@ -1999,7 +1998,7 @@ func testSetHeadWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme 
 		config.SnapshotLimit = 256
 		config.SnapshotWait = true
 	}
-	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil, context.Background())
+	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}

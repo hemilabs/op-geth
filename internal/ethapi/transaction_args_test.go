@@ -233,7 +233,7 @@ func TestSetFeeDefaults(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	ctx := t.Context()
 	for i, test := range tests {
 		if err := b.setFork(test.fork); err != nil {
 			t.Fatalf("failed to set fork: %v", err)

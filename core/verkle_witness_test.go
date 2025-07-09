@@ -18,7 +18,6 @@ package core
 
 import (
 	"bytes"
-	"context"
 	"encoding/binary"
 	"encoding/hex"
 	"math/big"
@@ -122,7 +121,7 @@ func TestProcessVerkle(t *testing.T) {
 	// genesis := gspec.MustCommit(bcdb, triedb)
 	cacheConfig := DefaultCacheConfigWithScheme(rawdb.PathScheme)
 	cacheConfig.SnapshotLimit = 0
-	blockchain, _ := NewBlockChain(bcdb, cacheConfig, gspec, nil, beacon.New(ethash.NewFaker()), vm.Config{}, nil, nil, context.Background())
+	blockchain, _ := NewBlockChain(bcdb, cacheConfig, gspec, nil, beacon.New(ethash.NewFaker()), vm.Config{}, nil, nil, t.Context())
 	defer blockchain.Stop()
 
 	txCost1 := params.TxGas
