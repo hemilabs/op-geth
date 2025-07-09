@@ -1048,7 +1048,6 @@ func DeleteL2KeystonesAboveHeight(db ethdb.Database, height uint64) error {
 	it := db.NewIterator([]byte(fmt.Sprintf("%s-height", l2KeystonePrefix)), nil)
 	defer it.Release()
 	for it.Next() {
-
 		key := it.Value()
 		val, err := db.Get(key)
 		if err != nil {
