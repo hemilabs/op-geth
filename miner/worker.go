@@ -94,6 +94,11 @@ func (env *environment) txFitsSize(tx *types.Transaction) bool {
 	return env.size+tx.Size() < params.MaxBlockSize-maxBlockSizeBufferZone
 }
 
+// txFits reports whether the transaction fits into the block size limit.
+func (env *environment) txFitsSize(tx *types.Transaction) bool {
+	return env.size+tx.Size() < params.MaxBlockSize-maxBlockSizeBufferZone
+}
+
 const (
 	commitInterruptNone int32 = iota
 	commitInterruptNewHead
@@ -146,6 +151,23 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	if err != nil {
 		return &newPayloadResult{err: err}
 	}
+
+	// Check withdrawals fit max block size.
+	// Due to the cap on withdrawal count, this can actually never happen, but we still need to
+	// check to ensure the CL notices there's a problem if the withdrawal cap is ever lifted.
+	maxBlockSize := params.MaxBlockSize - maxBlockSizeBufferZone
+	if genParam.withdrawals.Size() > maxBlockSize {
+		return &newPayloadResult{err: errors.New("withdrawals exceed max block size")}
+	}
+	// Also add size of withdrawals to work block size.
+	work.size += uint64(genParam.withdrawals.Size())
+
+	if !genParam.noTxs {
+		interrupt := new(atomic.Int32)
+		timer := time.AfterFunc(miner.config.Recommit, func() {
+			interrupt.Store(commitInterruptTimeout)
+		})
+		defer timer.Stop()
 
 	// Check withdrawals fit max block size.
 	// Due to the cap on withdrawal count, this can actually never happen, but we still need to
@@ -225,31 +247,7 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 			log.Info("Block contains BTC Attributes Deposited transaction, not adding mempool transactions")
 		}
 	}
-
-	if !genParam.noTxs && !containsBtcAttrDepTx {
-		// use shared interrupt if present
-		interrupt := genParam.interrupt
-		if interrupt == nil {
-			interrupt = new(atomic.Int32)
-		}
-		timer := time.AfterFunc(max(minRecommitInterruptInterval, miner.config.Recommit), func() {
-			interrupt.Store(commitInterruptTimeout)
-		})
-
-		err := miner.fillTransactions(interrupt, work)
-		timer.Stop() // don't need timeout interruption any more
-		if errors.Is(err, errBlockInterruptedByTimeout) {
-			log.Warn("Block building is interrupted", "allowance", common.PrettyDuration(miner.config.Recommit))
-		} else if errors.Is(err, errBlockInterruptedByResolve) {
-			log.Info("Block building got interrupted by payload resolution")
-		}
-	}
-
 	body := types.Body{Transactions: work.txs, Withdrawals: genParam.withdrawals}
-
-	if intr := genParam.interrupt; intr != nil && genParam.isUpdate && intr.Load() != commitInterruptNone {
-		return &newPayloadResult{err: errInterruptedUpdate}
-	}
 
 	allLogs := make([]*types.Log, 0)
 	for _, r := range work.receipts {
@@ -541,6 +539,7 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 
 func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *transactionsByPriceAndNonce, interrupt *atomic.Int32) error {
 	var (
+		isOsaka  = miner.chainConfig.IsOsaka(env.header.Number, env.header.Time)
 		isCancun = miner.chainConfig.IsCancun(env.header.Number, env.header.Time)
 		gasLimit = env.header.GasLimit
 	)
@@ -664,8 +663,14 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			continue
 		}
 
+		// if inclusion of the transaction would put the block size over the
+		// maximum we allow, don't add any more txs to the payload.
+		if !env.txFitsSize(tx) {
+			break
+		}
+
 		// Make sure all transactions after osaka have cell proofs
-		if miner.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
+		if isOsaka {
 			if sidecar := tx.BlobTxSidecar(); sidecar != nil {
 				if sidecar.Version == 0 {
 					log.Info("Including blob tx with v0 sidecar, recomputing proofs", "hash", ltx.Hash)
