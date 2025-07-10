@@ -250,8 +250,8 @@ func setupPoolWithTxPoolConfig(chainConfig *params.ChainConfig, poolConfig Confi
 	blockchain := newTestBlockChain(chainConfig, 10000000, statedb, new(event.Feed))
 
 	key, _ := crypto.GenerateKey()
-	pool := New(testTxPoolConfig, blockchain)
-	if err := pool.Init(testTxPoolConfig.PriceLimit, blockchain.CurrentBlock(), newReserver()); err != nil {
+	pool := New(poolConfig, blockchain)
+	if err := pool.Init(poolConfig.PriceLimit, blockchain.CurrentBlock(), newReserver()); err != nil {
 		panic(err)
 	}
 	// wait for the pool to initialize
