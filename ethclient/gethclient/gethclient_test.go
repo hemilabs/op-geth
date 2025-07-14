@@ -48,7 +48,6 @@ var (
 	testSlot     = common.HexToHash("0xdeadbeef")
 	testValue    = crypto.Keccak256Hash(testSlot[:])
 	testBalance  = big.NewInt(2e15)
-	testTxHashes []common.Hash
 )
 
 func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
@@ -112,7 +111,7 @@ func generateTestChain() (*core.Genesis, []*types.Block, []common.Hash) {
 		})
 		tx, _ = types.SignTx(tx, types.LatestSignerForChainID(genesis.Config.ChainID), testKey)
 		g.AddTx(tx)
-		testTxHashes = append(testTxHashes, tx.Hash())
+		txHashes = append(txHashes, tx.Hash())
 	}
 	_, blocks, _ := core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 1, generate)
 	blocks = append([]*types.Block{genesis.ToBlock()}, blocks...)
@@ -173,7 +172,7 @@ func TestGethClient(t *testing.T) {
 		},
 		{
 			"TestTraceTransaction",
-			func(t *testing.T) { testTraceTransactions(t, client) },
+			func(t *testing.T) { testTraceTransactions(t, client, txHashes) },
 		},
 		{
 			"TestSetHead",
@@ -481,9 +480,9 @@ func testCallContract(t *testing.T, client *rpc.Client) {
 	}
 }
 
-func testTraceTransactions(t *testing.T, client *rpc.Client) {
+func testTraceTransactions(t *testing.T, client *rpc.Client, txHashes []common.Hash) {
 	ec := New(client)
-	for _, txHash := range testTxHashes {
+	for _, txHash := range txHashes {
 		// Struct logger
 		_, err := ec.TraceTransaction(context.Background(), txHash, nil)
 		if err != nil {
