@@ -495,22 +495,6 @@ type ChainConfig struct {
 	BPO4Time     *uint64 `json:"bpo4Time,omitempty"`     // BPO4 switch time (nil = no fork, 0 = already on bpo4)
 	BPO5Time     *uint64 `json:"bpo5Time,omitempty"`     // BPO5 switch time (nil = no fork, 0 = already on bpo5)
 
-	BedrockBlock *big.Int `json:"bedrockBlock,omitempty"` // Bedrock switch block (nil = no fork, 0 = already on optimism bedrock)
-	RegolithTime *uint64  `json:"regolithTime,omitempty"` // Regolith switch time (nil = no fork, 0 = already on optimism regolith)
-	CanyonTime   *uint64  `json:"canyonTime,omitempty"`   // Canyon switch time (nil = no fork, 0 = already on optimism canyon)
-	// Delta: the Delta upgrade does not affect the execution-layer, and is thus not configurable in the chain config.
-	EcotoneTime  *uint64 `json:"ecotoneTime,omitempty"`  // Ecotone switch time (nil = no fork, 0 = already on optimism ecotone)
-	FjordTime    *uint64 `json:"fjordTime,omitempty"`    // Fjord switch time (nil = no fork, 0 = already on Optimism Fjord)
-	GraniteTime  *uint64 `json:"graniteTime,omitempty"`  // Granite switch time (nil = no fork, 0 = already on Optimism Granite)
-	HoloceneTime *uint64 `json:"holoceneTime,omitempty"` // Holocene switch time (nil = no fork, 0 = already on Optimism Holocene)
-	IsthmusTime  *uint64 `json:"isthmusTime,omitempty"`  // Isthmus switch time (nil = no fork, 0 = already on Optimism Isthmus)
-	JovianTime   *uint64 `json:"jovianTime,omitempty"`   // Jovian switch time (nil = no fork, 0 = already on Optimism Jovian)
-
-	InteropTime *uint64 `json:"interopTime,omitempty"` // Interop switch time (nil = no fork, 0 = already on optimism interop)
-
-	// Hemi-specific activations
-	Hvm0Time *uint64 `json:"hvm0Time,omitempty"` // HVM Phase 0 activation time
-
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
 	TerminalTotalDifficulty *big.Int `json:"terminalTotalDifficulty,omitempty"`
@@ -661,36 +645,6 @@ func (c *ChainConfig) Description() string {
 	}
 	if c.BPO5Time != nil {
 		banner += fmt.Sprintf(" - BPO5:                      @%-10v\n", *c.BPO5Time)
-	}
-	if c.RegolithTime != nil {
-		banner += fmt.Sprintf(" - Regolith:                    @%-10v\n", *c.RegolithTime)
-	}
-	if c.CanyonTime != nil {
-		banner += fmt.Sprintf(" - Canyon:                      @%-10v\n", *c.CanyonTime)
-	}
-	if c.EcotoneTime != nil {
-		banner += fmt.Sprintf(" - Ecotone:                     @%-10v\n", *c.EcotoneTime)
-	}
-	if c.FjordTime != nil {
-		banner += fmt.Sprintf(" - Fjord:                       @%-10v\n", *c.FjordTime)
-	}
-	if c.GraniteTime != nil {
-		banner += fmt.Sprintf(" - Granite:                     @%-10v\n", *c.GraniteTime)
-	}
-	if c.HoloceneTime != nil {
-		banner += fmt.Sprintf(" - Holocene:                    @%-10v\n", *c.HoloceneTime)
-	}
-	if c.IsthmusTime != nil {
-		banner += fmt.Sprintf(" - Isthmus:                     @%-10v\n", *c.IsthmusTime)
-	}
-	if c.JovianTime != nil {
-		banner += fmt.Sprintf(" - Jovian:                      @%-10v\n", *c.JovianTime)
-	}
-	if c.InteropTime != nil {
-		banner += fmt.Sprintf(" - Interop:                     @%-10v\n", *c.InteropTime)
-	}
-	if c.Hvm0Time != nil {
-		banner += fmt.Sprintf(" - HVM Phase 0:                 @%-10v\n", *c.Hvm0Time)
 	}
 	return banner
 }
@@ -1181,50 +1135,20 @@ func (c *ChainConfig) checkCompatible(newcfg *ChainConfig, headNumber *big.Int, 
 	if isForkTimestampIncompatible(c.VerkleTime, newcfg.VerkleTime, headTimestamp, genesisTimestamp) {
 		return newTimestampCompatError("Verkle fork timestamp", c.VerkleTime, newcfg.VerkleTime)
 	}
-	if isForkTimestampIncompatible(c.BPO1Time, newcfg.BPO1Time, headTimestamp, genesisTimestamp) {
+	if isForkTimestampIncompatible(c.BPO1Time, newcfg.BPO1Time, headTimestamp) {
 		return newTimestampCompatError("BPO1 fork timestamp", c.BPO1Time, newcfg.BPO1Time)
 	}
-	if isForkTimestampIncompatible(c.BPO2Time, newcfg.BPO2Time, headTimestamp, genesisTimestamp) {
+	if isForkTimestampIncompatible(c.BPO2Time, newcfg.BPO2Time, headTimestamp) {
 		return newTimestampCompatError("BPO2 fork timestamp", c.BPO2Time, newcfg.BPO2Time)
 	}
-	if isForkTimestampIncompatible(c.BPO3Time, newcfg.BPO3Time, headTimestamp, genesisTimestamp) {
+	if isForkTimestampIncompatible(c.BPO3Time, newcfg.BPO3Time, headTimestamp) {
 		return newTimestampCompatError("BPO3 fork timestamp", c.BPO3Time, newcfg.BPO3Time)
 	}
-	if isForkTimestampIncompatible(c.BPO4Time, newcfg.BPO4Time, headTimestamp, genesisTimestamp) {
+	if isForkTimestampIncompatible(c.BPO4Time, newcfg.BPO4Time, headTimestamp) {
 		return newTimestampCompatError("BPO4 fork timestamp", c.BPO4Time, newcfg.BPO4Time)
 	}
-	if isForkTimestampIncompatible(c.BPO5Time, newcfg.BPO5Time, headTimestamp, genesisTimestamp) {
+	if isForkTimestampIncompatible(c.BPO5Time, newcfg.BPO5Time, headTimestamp) {
 		return newTimestampCompatError("BPO5 fork timestamp", c.BPO5Time, newcfg.BPO5Time)
-	}
-	if isForkBlockIncompatible(c.BedrockBlock, newcfg.BedrockBlock, headNumber) {
-		return newBlockCompatError("Bedrock fork block", c.BedrockBlock, newcfg.BedrockBlock)
-	}
-	if isForkTimestampIncompatible(c.RegolithTime, newcfg.RegolithTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Regolith fork timestamp", c.RegolithTime, newcfg.RegolithTime)
-	}
-	if isForkTimestampIncompatible(c.CanyonTime, newcfg.CanyonTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Canyon fork timestamp", c.CanyonTime, newcfg.CanyonTime)
-	}
-	if isForkTimestampIncompatible(c.EcotoneTime, newcfg.EcotoneTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Ecotone fork timestamp", c.EcotoneTime, newcfg.EcotoneTime)
-	}
-	if isForkTimestampIncompatible(c.FjordTime, newcfg.FjordTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Fjord fork timestamp", c.FjordTime, newcfg.FjordTime)
-	}
-	if isForkTimestampIncompatible(c.GraniteTime, newcfg.GraniteTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Granite fork timestamp", c.GraniteTime, newcfg.GraniteTime)
-	}
-	if isForkTimestampIncompatible(c.HoloceneTime, newcfg.HoloceneTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Holocene fork timestamp", c.HoloceneTime, newcfg.HoloceneTime)
-	}
-	if isForkTimestampIncompatible(c.IsthmusTime, newcfg.IsthmusTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Isthmus fork timestamp", c.IsthmusTime, newcfg.IsthmusTime)
-	}
-	if isForkTimestampIncompatible(c.JovianTime, newcfg.JovianTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Jovian fork timestamp", c.JovianTime, newcfg.JovianTime)
-	}
-	if isForkTimestampIncompatible(c.InteropTime, newcfg.InteropTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("Interop fork timestamp", c.InteropTime, newcfg.InteropTime)
 	}
 	return nil
 }

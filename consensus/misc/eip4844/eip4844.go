@@ -183,21 +183,11 @@ func calcExcessBlobGas(isOsaka bool, bcfg *BlobConfig, parent *types.Header) uin
 
 // CalcBlobFee calculates the blobfee from the header's excess blob gas field.
 func CalcBlobFee(config *params.ChainConfig, header *types.Header) *big.Int {
-	// OP-Stack chains don't support blobs, but still set the excessBlobGas field (always to zero).
-	// So this function is called in many places for OP-Stack chains too. In order to not require
-	// a blob schedule in the chain config, we short circuit here.
-	if config.IsOptimism() {
-		if config.BlobScheduleConfig != nil || header.ExcessBlobGas == nil || *header.ExcessBlobGas != 0 {
-			panic("OP-Stack: CalcBlobFee: unexpected blob schedule or excess blob gas")
-		}
-		return minBlobGasPrice
-	}
-
 	blobConfig := latestBlobConfig(config, header.Time)
 	if blobConfig == nil {
 		panic("calculating blob fee on unsupported fork")
 	}
-	return blobConfig.blobBaseFee(*header.ExcessBlobGas)
+	return fakeExponential(minBlobGasPrice, new(big.Int).SetUint64(*header.ExcessBlobGas), new(big.Int).SetUint64(blobConfig.UpdateFraction))
 }
 
 // MaxBlobsPerBlock returns the max blobs per block for a block at the given timestamp.
@@ -205,6 +195,37 @@ func MaxBlobsPerBlock(cfg *params.ChainConfig, time uint64) int {
 	blobConfig := latestBlobConfig(cfg, time)
 	if blobConfig == nil {
 		return 0
+	}
+	return blobConfig.Max
+}
+
+func latestBlobConfig(cfg *params.ChainConfig, time uint64) *params.BlobConfig {
+	if cfg.BlobScheduleConfig == nil {
+		return nil
+	}
+	var (
+		london = cfg.LondonBlock
+		s      = cfg.BlobScheduleConfig
+	)
+	switch {
+	case cfg.IsBPO5(london, time) && s.BPO5 != nil:
+		return s.BPO5
+	case cfg.IsBPO4(london, time) && s.BPO4 != nil:
+		return s.BPO4
+	case cfg.IsBPO3(london, time) && s.BPO3 != nil:
+		return s.BPO3
+	case cfg.IsBPO2(london, time) && s.BPO2 != nil:
+		return s.BPO2
+	case cfg.IsBPO1(london, time) && s.BPO1 != nil:
+		return s.BPO1
+	case cfg.IsOsaka(london, time) && s.Osaka != nil:
+		return s.Osaka
+	case cfg.IsPrague(london, time) && s.Prague != nil:
+		return s.Prague
+	case cfg.IsCancun(london, time) && s.Cancun != nil:
+		return s.Cancun
+	default:
+		return nil
 	}
 	return blobConfig.Max
 }
@@ -217,11 +238,39 @@ func MaxBlobGasPerBlock(cfg *params.ChainConfig, time uint64) uint64 {
 // LatestMaxBlobsPerBlock returns the latest max blobs per block defined by the
 // configuration, regardless of the currently active fork.
 func LatestMaxBlobsPerBlock(cfg *params.ChainConfig) int {
-	bcfg := latestBlobConfig(cfg, math.MaxUint64)
-	if bcfg == nil {
+	s := cfg.BlobScheduleConfig
+	if s == nil {
 		return 0
 	}
-	return bcfg.Max
+	switch {
+	case s.BPO5 != nil:
+		return s.BPO5.Max
+	case s.BPO4 != nil:
+		return s.BPO4.Max
+	case s.BPO3 != nil:
+		return s.BPO3.Max
+	case s.BPO2 != nil:
+		return s.BPO2.Max
+	case s.BPO1 != nil:
+		return s.BPO1.Max
+	case s.Osaka != nil:
+		return s.Osaka.Max
+	case s.Prague != nil:
+		return s.Prague.Max
+	case s.Cancun != nil:
+		return s.Cancun.Max
+	default:
+		return 0
+	}
+}
+
+// targetBlobsPerBlock returns the target number of blobs in a block at the given timestamp.
+func targetBlobsPerBlock(cfg *params.ChainConfig, time uint64) int {
+	blobConfig := latestBlobConfig(cfg, time)
+	if blobConfig == nil {
+		return 0
+	}
+	return blobConfig.Target
 }
 
 // fakeExponential approximates factor * e ** (numerator / denominator) using
