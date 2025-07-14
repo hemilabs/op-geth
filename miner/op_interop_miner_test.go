@@ -16,6 +16,7 @@ import (
 	"github.com/ethereum/go-ethereum/core/txpool/legacypool"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/interoptypes"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
@@ -53,7 +54,7 @@ func createInteropMiner(t *testing.T, supervisorInFailsafe bool, queryFailsafeCb
 	engine := clique.New(chainConfig.Clique, chainDB)
 
 	// Create Ethereum backend
-	bc, err := core.NewBlockChain(chainDB, genesis, engine, nil)
+	bc, err := core.NewBlockChain(chainDB, nil, genesis, nil, engine, vm.Config{}, nil)
 	if err != nil {
 		t.Fatalf("can't create new chain %v", err)
 	}
