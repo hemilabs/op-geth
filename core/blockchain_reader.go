@@ -91,7 +91,10 @@ func (bc *BlockChain) GetHeaderByNumber(number uint64) *types.Header {
 
 // GetBlockNumber retrieves the block number associated with a block hash.
 func (bc *BlockChain) GetBlockNumber(hash common.Hash) *uint64 {
-	return bc.hc.GetBlockNumber(hash)
+	if num, ok := bc.hc.GetBlockNumber(hash); ok {
+		return &num
+	}
+	return nil
 }
 
 // GetHeadersFrom returns a contiguous segment of headers, in rlp-form, going
@@ -286,11 +289,11 @@ func (bc *BlockChain) GetRawReceipts(hash common.Hash, number uint64) types.Rece
 
 // GetReceiptsRLP retrieves the receipts of a block.
 func (bc *BlockChain) GetReceiptsRLP(hash common.Hash) rlp.RawValue {
-	number := rawdb.ReadHeaderNumber(bc.db, hash)
-	if number == nil {
+	number, ok := rawdb.ReadHeaderNumber(bc.db, hash)
+	if !ok {
 		return nil
 	}
-	return rawdb.ReadReceiptsRLP(bc.db, hash, *number)
+	return rawdb.ReadReceiptsRLP(bc.db, hash, number)
 }
 
 // GetUnclesInChain retrieves all the uncles from a given block backwards until
