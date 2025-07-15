@@ -253,9 +253,13 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 			VmConfig: vm.Config{
 				EnablePreimageRecording: config.EnablePreimageRecording,
 			},
+			// Enables file journaling for the trie database. The journal files will be stored
+			// within the data directory. The corresponding paths will be either:
+			// - DATADIR/triedb/merkle.journal
+			// - DATADIR/triedb/verkle.journal
+			TrieJournalDirectory: stack.ResolvePath("triedb"),
 		}
 	)
-
 	if config.VMTrace != "" {
 		traceConfig := json.RawMessage("{}")
 		if config.VMTraceJsonConfig != "" {

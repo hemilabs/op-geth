@@ -323,11 +323,6 @@ func (db *Database) Journal(root common.Hash) error {
 	if err := disk.terminate(); err != nil {
 		return err
 	}
-	// Block until the background flushing is finished and terminate
-	// the potential active state generator.
-	if err := disk.terminate(); err != nil {
-		return err
-	}
 	start := time.Now()
 
 	// Run the journaling
@@ -338,16 +333,7 @@ func (db *Database) Journal(root common.Hash) error {
 	if db.readOnly {
 		return errDatabaseReadOnly
 	}
-	// Forcibly sync the ancient store before persisting the in-memory layers.
-	// This prevents an edge case where the in-memory layers are persisted
-	// but the ancient store is not properly closed, resulting in recent writes
-	// being lost. After a restart, the ancient store would then be misaligned
-	// with the disk layer, causing data corruption.
-	if db.stateFreezer != nil {
-		if err := db.stateFreezer.SyncAncient(); err != nil {
-			return err
-		}
-	}
+
 	// Store the journal into the database and return
 	var (
 		file        *os.File

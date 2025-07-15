@@ -121,6 +121,7 @@ type Config struct {
 	StateCleanSize      int    // Maximum memory allowance (in bytes) for caching clean state data
 	WriteBufferSize     int    // Maximum memory allowance (in bytes) for write buffer
 	ReadOnly            bool   // Flag whether the database is opened in read only mode
+	JournalDirectory    string // Absolute path of journal directory (null means the journal data is persisted in key-value store)
 
 	// Testing configurations
 	SnapshotNoBuild   bool // Flag Whether the state generation is allowed
@@ -156,6 +157,9 @@ func (c *Config) fields() []interface{} {
 		list = append(list, "history", "entire chain")
 	} else {
 		list = append(list, "history", fmt.Sprintf("last %d blocks", c.StateHistory))
+	}
+	if c.JournalDirectory != "" {
+		list = append(list, "journal-dir", c.JournalDirectory)
 	}
 	return list
 }
@@ -494,7 +498,6 @@ func (db *Database) Enable(root common.Hash) error {
 	// Drop the stale state journal in persistent database and
 	// reset the persistent state id back to zero.
 	batch := db.diskdb.NewBatch()
-	rawdb.DeleteTrieJournal(batch)
 	rawdb.DeleteSnapshotRoot(batch)
 	rawdb.WritePersistentStateID(batch, 0)
 	if err := batch.Write(); err != nil {
@@ -574,8 +577,6 @@ func (db *Database) Recover(root common.Hash) error {
 		// disk layer won't be accessible from outside.
 		db.tree.init(dl)
 	}
-	rawdb.DeleteTrieJournal(db.diskdb)
-
 	// Explicitly sync the key-value store to ensure all recent writes are
 	// flushed to disk. This step is crucial to prevent a scenario where
 	// recent key-value writes are lost due to an application panic, while
