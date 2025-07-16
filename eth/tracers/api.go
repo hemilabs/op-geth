@@ -1003,14 +1003,25 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	defer release()
 
 	h := block.Header()
-	blockContext := core.NewEVMBlockContext(h, api.chainContext(ctx), nil, api.backend.ChainConfig(), statedb)
+	blockContext := core.NewEVMBlockContext(h, api.chainContext(ctx), nil)
+
 	// Apply the customization rules if required.
 	if config != nil {
-		if overrideErr := config.BlockOverrides.Apply(&vmctx); overrideErr != nil {
-			return nil, overrideErr
+		if config.BlockOverrides != nil && config.BlockOverrides.Number.ToInt().Uint64() == h.Number.Uint64()+1 {
+			// Overriding the block number to n+1 is a common way for wallets to
+			// simulate transactions, however without the following fix, a contract
+			// can assert it is being simulated by checking if blockhash(n) == 0x0 and
+			// can behave differently during the simulation. (#32175 for more info)
+			// --
+			// Modify the parent hash and number so that downstream, blockContext's
+			// GetHash function can correctly return n.
+			h.ParentHash = h.Hash()
+			h.Number.Add(h.Number, big.NewInt(1))
 		}
-		rules := api.backend.ChainConfig().Rules(vmctx.BlockNumber, vmctx.Random != nil, vmctx.Time)
-
+		if err := config.BlockOverrides.Apply(&blockContext); err != nil {
+			return nil, err
+		}
+		rules := api.backend.ChainConfig().Rules(blockContext.BlockNumber, blockContext.Random != nil, blockContext.Time)
 		precompiles = vm.ActivePrecompiledContracts(rules)
 		if err := config.StateOverrides.Apply(statedb, precompiles); err != nil {
 			return nil, err
@@ -1037,7 +1048,7 @@ func (api *API) TraceCall(ctx context.Context, args ethapi.TransactionArgs, bloc
 	if config != nil {
 		traceConfig = &config.TraceConfig
 	}
-	return api.traceTx(ctx, tx, msg, new(Context), vmctx, statedb, traceConfig, precompiles)
+	return api.traceTx(ctx, tx, msg, new(Context), blockContext, statedb, traceConfig, precompiles)
 }
 
 // traceTx configures a new tracer according to the provided configuration, and
