@@ -984,14 +984,10 @@ func (s *Suite) TestBlobViolations(t *utesting.T) {
 // data has been modified to produce a different commitment hash.
 func mangleSidecar(tx *types.Transaction) *types.Transaction {
 	sidecar := tx.BlobTxSidecar()
-	copy := types.BlobTxSidecar{
-		Blobs:       append([]kzg4844.Blob{}, sidecar.Blobs...),
-		Commitments: append([]kzg4844.Commitment{}, sidecar.Commitments...),
-		Proofs:      append([]kzg4844.Proof{}, sidecar.Proofs...),
-	}
+	cpy := sidecar.Copy()
 	// zero the first commitment to alter the sidecar hash
-	copy.Commitments[0] = kzg4844.Commitment{}
-	return tx.WithBlobTxSidecar(&copy)
+	cpy.Commitments[0] = kzg4844.Commitment{}
+	return tx.WithBlobTxSidecar(cpy)
 }
 
 func (s *Suite) TestBlobTxWithoutSidecar(t *utesting.T) {

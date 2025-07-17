@@ -2968,7 +2968,7 @@ func testFillBlobTransaction(t *testing.T, osaka bool) {
 			},
 			want: &result{
 				Hashes:  []common.Hash{emptyBlobHash},
-				Sidecar: expectSidecar(),
+				Sidecar: types.NewBlobTxSidecar(types.BlobSidecarVersion0, emptyBlobs, []kzg4844.Commitment{emptyBlobCommit}, []kzg4844.Proof{emptyBlobProof}),
 			},
 		},
 		{
@@ -2984,7 +2984,7 @@ func testFillBlobTransaction(t *testing.T, osaka bool) {
 			},
 			want: &result{
 				Hashes:  []common.Hash{emptyBlobHash},
-				Sidecar: expectSidecar(),
+				Sidecar: types.NewBlobTxSidecar(types.BlobSidecarVersion0, emptyBlobs, []kzg4844.Commitment{emptyBlobCommit}, []kzg4844.Proof{emptyBlobProof}),
 			},
 		},
 		{
@@ -3010,7 +3010,7 @@ func testFillBlobTransaction(t *testing.T, osaka bool) {
 			},
 			want: &result{
 				Hashes:  []common.Hash{emptyBlobHash},
-				Sidecar: expectSidecar(),
+				Sidecar: types.NewBlobTxSidecar(types.BlobSidecarVersion0, emptyBlobs, []kzg4844.Commitment{emptyBlobCommit}, []kzg4844.Proof{emptyBlobProof}),
 			},
 		},
 	}

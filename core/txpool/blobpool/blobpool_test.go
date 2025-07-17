@@ -249,7 +249,7 @@ func makeMultiBlobTx(nonce uint64, gasTipCap uint64, gasFeeCap uint64, blobFeeCa
 		BlobFeeCap: uint256.NewInt(blobFeeCap),
 		BlobHashes: blobHashes,
 		Value:      uint256.NewInt(100),
-		Sidecar:    types.NewBlobTxSidecar(version, blobs, commitments, proofs),
+		Sidecar:    types.NewBlobTxSidecar(types.BlobSidecarVersion0, blobs, commitments, proofs),
 	}
 	return types.MustSignNewTx(key, types.LatestSigner(params.MainnetChainConfig), blobtx)
 }
