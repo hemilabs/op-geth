@@ -2267,10 +2267,14 @@ func RegisterFilterAPI(stack *node.Node, backend ethapi.Backend, ethcfg *ethconf
 	return filterSystem
 }
 
-// RegisterFullSyncTester adds the full-sync tester service into node.
-func RegisterFullSyncTester(stack *node.Node, eth *eth.Ethereum, target common.Hash, exitWhenSynced bool) {
-	catalyst.RegisterFullSyncTester(stack, eth, target, exitWhenSynced)
-	log.Info("Registered full-sync tester", "hash", target, "exitWhenSynced", exitWhenSynced)
+// RegisterSyncOverrideService adds the synchronization override service into node.
+func RegisterSyncOverrideService(stack *node.Node, eth *eth.Ethereum, target common.Hash, exitWhenSynced bool) {
+	if target != (common.Hash{}) {
+		log.Info("Registered sync override service", "hash", target, "exitWhenSynced", exitWhenSynced)
+	} else {
+		log.Info("Registered sync override service")
+	}
+	syncer.Register(stack, eth, target, exitWhenSynced)
 }
 
 // SetupMetrics configures the metrics system.

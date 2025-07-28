@@ -575,7 +575,7 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		if len(hex) != common.HashLength {
 			utils.Fatalf("invalid sync target length: have %d, want %d", len(hex), common.HashLength)
 		}
-		utils.RegisterFullSyncTester(stack, eth, common.BytesToHash(hex), ctx.Bool(utils.ExitWhenSyncedFlag.Name))
+		synctarget = common.BytesToHash(hex)
 	}
 	utils.RegisterSyncOverrideService(stack, eth, synctarget, ctx.Bool(utils.ExitWhenSyncedFlag.Name))
 

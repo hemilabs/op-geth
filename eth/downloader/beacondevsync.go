@@ -43,23 +43,6 @@ func (d *Downloader) BeaconDevSync(mode SyncMode, header *types.Header) error {
 	return d.BeaconSync(mode, header, header)
 }
 
-	log.Info("Waiting for peers to retrieve sync target")
-	for {
-		// If the node is going down, unblock
-		select {
-		case <-stop:
-			return errors.New("stop requested")
-		default:
-		}
-		header, err := d.GetHeader(hash)
-		if err != nil {
-			time.Sleep(time.Second)
-			continue
-		}
-		return d.BeaconSync(mode, header, header)
-	}
-}
-
 // GetHeader tries to retrieve the header with a given hash from a random peer.
 func (d *Downloader) GetHeader(hash common.Hash) (*types.Header, error) {
 	// Pick a random peer to sync from and keep retrying if none are yet

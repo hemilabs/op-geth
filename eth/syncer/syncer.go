@@ -89,7 +89,6 @@ func (s *Syncer) run() {
 		target *types.Header
 		ticker = time.NewTicker(time.Second * 5)
 	)
-	defer ticker.Stop()
 	for {
 		select {
 		case req := <-s.request:
@@ -100,7 +99,7 @@ func (s *Syncer) run() {
 			)
 			for {
 				if retries >= 10 {
-					req.errc <- fmt.Errorf("sync target is not available, %x", req.hash)
+					req.errc <- fmt.Errorf("sync target is not avaibale, %x", req.hash)
 					break
 				}
 				select {
