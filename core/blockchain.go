@@ -134,7 +134,8 @@ var (
 	emptyArray = [32]byte{}
 
 	// deucalion interval between progression check
-	progressionInterval = 15 * time.Second
+	progressionInterval = 7 * time.Second
+	maxBlockAge         = 33 * time.Second
 
 	// Special error thrown when blockchain state manipulation functions find that the external header mode TBC
 	// instance is in an impossible state implying data corruption or incrrect application of previous state trnsitions.
@@ -598,19 +599,17 @@ func (bc *BlockChain) SetupDeucalion(pctx context.Context, address string) error
 
 	go func() {
 		defer cancel()
-		oldHeader := bc.CurrentHeader()
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-time.After(progressionInterval):
-				curHeader := bc.CurrentHeader()
-				if curHeader.Number.Cmp(oldHeader.Number) <= 0 {
+				bestTime := time.Unix(int64(bc.CurrentHeader().Time), 0)
+				if time.Since(bestTime) > maxBlockAge {
 					bc.healthyNode.Store(false)
 				} else {
 					bc.healthyNode.Store(true)
 				}
-				oldHeader = curHeader
 			}
 		}
 	}()

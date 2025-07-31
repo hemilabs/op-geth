@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/consensus/beacon"
@@ -4289,6 +4290,9 @@ func TestHealthCheck(t *testing.T) {
 	}
 
 	blocks := makeBlockChain(bc.chainConfig, bc.GetBlockByHash(bc.CurrentBlock().Hash()), 5, ethash.NewFaker(), genDb, forkSeed)
+	maxBlockAge = time.Since(time.Unix(int64(blocks[0].Time()), 0)) + progressionInterval*10
+
+	spew.Dump(maxBlockAge)
 
 	for _, block := range blocks {
 		if _, err := bc.InsertChain([]*types.Block{block}); err != nil {
@@ -4306,6 +4310,8 @@ func TestHealthCheck(t *testing.T) {
 			t.Fatalf("status code %d, expected %d", resp.StatusCode, http.StatusOK)
 		}
 	}
+
+	maxBlockAge = 0 * time.Second
 
 	time.Sleep(progressionInterval)
 
