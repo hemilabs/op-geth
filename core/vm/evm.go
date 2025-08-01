@@ -146,16 +146,6 @@ type EVM struct {
 
 	// jumpDests stores results of JUMPDEST analysis.
 	jumpDests JumpDestCache
-
-	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
-	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
-
-	readOnly   bool   // Whether to throw on stateful modifications
-	returnData []byte // Last CALL's return data for subsequent reuse
-}
-
-func (evm *EVM) SetExecutionContext(headerHash common.Hash) {
-	evm.blockExecutionContext = headerHash
 }
 
 // NewEVM constructs an EVM instance with the supplied block context, state
@@ -170,7 +160,6 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, chainConfig *params.ChainCon
 		chainConfig: chainConfig,
 		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
 		jumpDests:   newMapJumpDests(),
-		hasher:      crypto.NewKeccakState(),
 	}
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
 
