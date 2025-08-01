@@ -189,6 +189,8 @@ const (
 	BlockChainVersion uint64 = 9
 
 	maxFutureBlocks = 256
+
+	hVMUpdateMinGap = 4
 )
 
 // CacheConfig contains the configuration values for the trie database
@@ -1830,6 +1832,19 @@ func (bc *BlockChain) GetBitcoinAttributesForNextBlock(timestamp uint64) (*types
 
 	log.Info(fmt.Sprintf("Generating Bitcoin Attributes Deposited transaction for a new block with timestamp "+
 		"%d on top of prior block %s @ %d", timestamp, lastTip.Hash().String(), lastTip.Number.Uint64()))
+
+	cursor := bc.GetBlockByHash(lastTipHash)
+	for i := 0; i < hVMUpdateMinGap; i++ {
+		data, err := cursor.Transactions().ExtractBtcAttrData()
+		if err != nil {
+			log.Debug(fmt.Sprintf("Unable to extract BtcAttrData from block %s @ %d", cursor.Hash(), cursor.Number()))
+			return nil, err
+		}
+		if data != nil {
+			return nil, nil
+		}
+		cursor = bc.GetBlockByHash(cursor.ParentHash())
+	}
 
 	if bytes.Equal(bc.btcAttributesDepCacheBlockHash[:], lastTipHash[:]) {
 		if bc.btcAttributesDepCacheEntry != nil {
