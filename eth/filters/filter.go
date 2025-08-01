@@ -90,9 +90,6 @@ func (f *Filter) Logs(ctx context.Context) ([]*types.Log, error) {
 		if header.Number.Uint64() < f.sys.backend.HistoryPruningCutoff() {
 			return nil, &history.PrunedHistoryError{}
 		}
-		if header.Number.Uint64() < f.sys.backend.HistoryPruningCutoff() {
-			return nil, &history.PrunedHistoryError{}
-		}
 		return f.blockLogs(ctx, header)
 	}
 
