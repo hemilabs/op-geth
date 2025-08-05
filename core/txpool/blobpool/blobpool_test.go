@@ -26,6 +26,7 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 
@@ -46,12 +47,11 @@ import (
 )
 
 var (
-	testBlobs          []*kzg4844.Blob
-	testBlobCommits    []kzg4844.Commitment
-	testBlobProofs     []kzg4844.Proof
-	testBlobCellProofs [][]kzg4844.Proof
-	testBlobVHashes    [][32]byte
-	testBlobIndices    = make(map[[32]byte]int)
+	testBlobs       []*kzg4844.Blob
+	testBlobCommits []kzg4844.Commitment
+	testBlobProofs  []kzg4844.Proof
+	testBlobVHashes [][32]byte
+	testBlobIndices = make(map[[32]byte]int)
 )
 
 const testMaxBlobsPerBlock = 6
@@ -249,7 +249,7 @@ func makeMultiBlobTx(nonce uint64, gasTipCap uint64, gasFeeCap uint64, blobFeeCa
 		BlobFeeCap: uint256.NewInt(blobFeeCap),
 		BlobHashes: blobHashes,
 		Value:      uint256.NewInt(100),
-		Sidecar:    types.NewBlobTxSidecar(types.BlobSidecarVersion0, blobs, commitments, proofs),
+		Sidecar:    types.NewBlobTxSidecar(version, blobs, commitments, proofs),
 	}
 	return types.MustSignNewTx(key, types.LatestSigner(params.MainnetChainConfig), blobtx)
 }
@@ -419,30 +419,9 @@ func verifyBlobRetrievals(t *testing.T, pool *BlobPool) {
 			hashes = append(hashes, tx.vhashes...)
 		}
 	}
-	blobs1, _, proofs1, err := pool.GetBlobs(hashes, types.BlobSidecarVersion0)
+	blobs, _, proofs, err := pool.GetBlobs(hashes, types.BlobSidecarVersion0)
 	if err != nil {
 		t.Fatal(err)
-	}
-	blobs2, _, proofs2, err := pool.GetBlobs(hashes, types.BlobSidecarVersion1)
-	if err != nil {
-		t.Fatal(err)
-	}
-	sidecars := pool.GetBlobs(hashes)
-	var blobs []*kzg4844.Blob
-	var proofs []*kzg4844.Proof
-	for idx, sidecar := range sidecars {
-		if sidecar == nil {
-			blobs = append(blobs, nil)
-			proofs = append(proofs, nil)
-			continue
-		}
-		blobHashes := sidecar.BlobHashes()
-		for i, hash := range blobHashes {
-			if hash == hashes[idx] {
-				blobs = append(blobs, &sidecar.Blobs[i])
-				proofs = append(proofs, &sidecar.Proofs[i])
-			}
-		}
 	}
 	// Cross validate what we received vs what we wanted
 	if len(blobs1) != len(hashes) || len(proofs1) != len(hashes) {
@@ -455,21 +434,13 @@ func verifyBlobRetrievals(t *testing.T, pool *BlobPool) {
 	}
 	for i, hash := range hashes {
 		// If an item is missing, but shouldn't, error
-		if blobs1[i] == nil || proofs1[i] == nil {
-			t.Errorf("tracked blob retrieval failed: item %d, hash %x", i, hash)
-			continue
-		}
-		if blobs2[i] == nil || proofs2[i] == nil {
+		if blobs[i] == nil || proofs[i] == nil {
 			t.Errorf("tracked blob retrieval failed: item %d, hash %x", i, hash)
 			continue
 		}
 		// Item retrieved, make sure it matches the expectation
 		index := testBlobIndices[hash]
-		if *blobs1[i] != *testBlobs[index] || proofs1[i][0] != testBlobProofs[index] {
-			t.Errorf("retrieved blob or proof mismatch: item %d, hash %x", i, hash)
-			continue
-		}
-		if *blobs2[i] != *testBlobs[index] || !slices.Equal(proofs2[i], testBlobCellProofs[index]) {
+		if *blobs[i] != *testBlobs[index] || proofs[i][0] != testBlobProofs[index] {
 			t.Errorf("retrieved blob or proof mismatch: item %d, hash %x", i, hash)
 			continue
 		}
@@ -1220,8 +1191,8 @@ func TestBlobCountLimit(t *testing.T) {
 
 	// Attempt to add transactions.
 	var (
-		tx1 = makeMultiBlobTx(0, 1, 1000, 100, 6, key1)
-		tx2 = makeMultiBlobTx(0, 1, 800, 70, 7, key2)
+		tx1 = makeMultiBlobTx(0, 1, 1000, 100, 6, 0, key1, types.BlobSidecarVersion0)
+		tx2 = makeMultiBlobTx(0, 1, 800, 70, 7, 0, key2, types.BlobSidecarVersion0)
 	)
 	errs := pool.Add([]*types.Transaction{tx1, tx2}, true)
 
@@ -1702,49 +1673,6 @@ func TestAdd(t *testing.T) {
 		// Close down the test
 		pool.Close()
 	}
-}
-
-// Tests that adding the transactions with legacy sidecar and expect them to
-// be converted to new format correctly.
-func TestAddLegacyBlobTx(t *testing.T) {
-	var (
-		key1, _ = crypto.GenerateKey()
-		key2, _ = crypto.GenerateKey()
-
-		addr1 = crypto.PubkeyToAddress(key1.PublicKey)
-		addr2 = crypto.PubkeyToAddress(key2.PublicKey)
-	)
-
-	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
-	statedb.AddBalance(addr1, uint256.NewInt(1_000_000_000), tracing.BalanceChangeUnspecified)
-	statedb.AddBalance(addr2, uint256.NewInt(1_000_000_000), tracing.BalanceChangeUnspecified)
-	statedb.Commit(0, true, false)
-
-	chain := &testBlockChain{
-		config:  params.MergedTestChainConfig,
-		basefee: uint256.NewInt(1050),
-		blobfee: uint256.NewInt(105),
-		statedb: statedb,
-	}
-	pool := New(Config{Datadir: t.TempDir()}, chain, nil)
-	if err := pool.Init(1, chain.CurrentBlock(), newReserver()); err != nil {
-		t.Fatalf("failed to create blob pool: %v", err)
-	}
-
-	// Attempt to add legacy blob transactions.
-	var (
-		tx1 = makeMultiBlobTx(0, 1, 1000, 100, 6, 0, key1, types.BlobSidecarVersion0)
-		tx2 = makeMultiBlobTx(0, 1, 800, 70, 6, 6, key2, types.BlobSidecarVersion0)
-		tx3 = makeMultiBlobTx(1, 1, 800, 70, 6, 12, key2, types.BlobSidecarVersion1)
-	)
-	errs := pool.Add([]*types.Transaction{tx1, tx2, tx3}, true)
-	for _, err := range errs {
-		if err != nil {
-			t.Fatalf("failed to add tx: %v", err)
-		}
-	}
-	verifyPoolInternals(t, pool)
-	pool.Close()
 }
 
 func TestGetBlobs(t *testing.T) {
