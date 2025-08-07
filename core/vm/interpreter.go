@@ -22,7 +22,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/tracing"
-	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 )
 
@@ -97,72 +96,6 @@ func (ctx *ScopeContext) ContractCode() []byte {
 	return ctx.Contract.Code
 }
 
-// EVMInterpreter represents an EVM interpreter
-type EVMInterpreter struct {
-	evm   *EVM
-	table *JumpTable
-
-	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
-	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
-
-	readOnly   bool   // Whether to throw on stateful modifications
-	returnData []byte // Last CALL's return data for subsequent reuse
-}
-
-// NewEVMInterpreter returns a new instance of the Interpreter.
-func NewEVMInterpreter(evm *EVM) *EVMInterpreter {
-	// If jump table was not initialised we set the default one.
-	var table *JumpTable
-	switch {
-	case evm.chainRules.IsOsaka:
-		table = &osakaInstructionSet
-	case evm.chainRules.IsVerkle:
-		// TODO replace with proper instruction set when fork is specified
-		table = &verkleInstructionSet
-	case evm.chainRules.IsPrague:
-		table = &pragueInstructionSet
-	case evm.chainRules.IsCancun:
-		table = &cancunInstructionSet
-	case evm.chainRules.IsShanghai:
-		table = &shanghaiInstructionSet
-	case evm.chainRules.IsMerge:
-		table = &mergeInstructionSet
-	case evm.chainRules.IsLondon:
-		table = &londonInstructionSet
-	case evm.chainRules.IsBerlin:
-		table = &berlinInstructionSet
-	case evm.chainRules.IsIstanbul:
-		table = &istanbulInstructionSet
-	case evm.chainRules.IsConstantinople:
-		table = &constantinopleInstructionSet
-	case evm.chainRules.IsByzantium:
-		table = &byzantiumInstructionSet
-	case evm.chainRules.IsEIP158:
-		table = &spuriousDragonInstructionSet
-	case evm.chainRules.IsEIP150:
-		table = &tangerineWhistleInstructionSet
-	case evm.chainRules.IsHomestead:
-		table = &homesteadInstructionSet
-	default:
-		table = &frontierInstructionSet
-	}
-	var extraEips []int
-	if len(evm.Config.ExtraEips) > 0 {
-		// Deep-copy jumptable to prevent modification of opcodes in other tables
-		table = copyJumpTable(table)
-	}
-	for _, eip := range evm.Config.ExtraEips {
-		if err := EnableEIP(eip, table); err != nil {
-			// Disable it, so caller can check if it's activated or not
-			log.Error("EIP activation failed", "eip", eip, "error", err)
-		} else {
-			extraEips = append(extraEips, eip)
-		}
-	}
-	evm.Config.ExtraEips = extraEips
-	return &EVMInterpreter{evm: evm, table: table, hasher: crypto.NewKeccakState()}
-}
-
 // Run loops and evaluates the contract's code with the given input data and returns
 // the return byte-slice and an error if one occurred.
 //
@@ -192,7 +125,7 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 
 	var (
 		op          OpCode     // current opcode
-		jumpTable   *JumpTable = in.table
+		jumpTable   *JumpTable = evm.table
 		mem                    = NewMemory() // bound memory
 		stack                  = newstack()  // local stack
 		callContext            = &ScopeContext{
@@ -250,8 +183,8 @@ func (evm *EVM) Run(contract *Contract, input []byte, readOnly bool) (ret []byte
 			// if the PC ends up in a new "chunk" of verkleized code, charge the
 			// associated costs.
 			contractAddr := contract.Address()
-			consumed, wanted := in.evm.TxContext.AccessEvents.CodeChunksRangeGas(contractAddr, pc, 1, uint64(len(contract.Code)), false, contract.Gas)
-			contract.UseGas(consumed, in.evm.Config.Tracer, tracing.GasChangeWitnessCodeChunk)
+			consumed, wanted := evm.TxContext.AccessEvents.CodeChunksRangeGas(contractAddr, pc, 1, uint64(len(contract.Code)), false, contract.Gas)
+			contract.UseGas(consumed, evm.Config.Tracer, tracing.GasChangeWitnessCodeChunk)
 			if consumed < wanted {
 				return nil, ErrOutOfGas
 			}

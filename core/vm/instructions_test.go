@@ -1001,7 +1001,7 @@ func TestOpCLZ(t *testing.T) {
 		}
 
 		stack.push(val)
-		opCLZ(&pc, evm.interpreter, &ScopeContext{Stack: stack})
+		opCLZ(&pc, evm, &ScopeContext{Stack: stack})
 
 		if gotLen := stack.len(); gotLen != 1 {
 			t.Fatalf("stack length = %d; want 1", gotLen)

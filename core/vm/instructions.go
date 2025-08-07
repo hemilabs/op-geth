@@ -233,9 +233,9 @@ func opKeccak256(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	offset, size := scope.Stack.pop(), scope.Stack.peek()
 	data := scope.Memory.GetPtr(offset.Uint64(), size.Uint64())
 
-	interpreter.hasher.Reset()
-	interpreter.hasher.Write(data)
-	interpreter.hasher.Read(interpreter.hasherBuf[:])
+	evm.hasher.Reset()
+	evm.hasher.Write(data)
+	evm.hasher.Read(evm.hasherBuf[:])
 
 	if evm.Config.EnablePreimageRecording {
 		evm.StateDB.AddPreimage(evm.hasherBuf, data)
@@ -966,7 +966,7 @@ func opPush1(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 }
 
 // opPush2 is a specialized version of pushN
-func opPush2(pc *uint64, interpreter *EVMInterpreter, scope *ScopeContext) ([]byte, error) {
+func opPush2(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	var (
 		codeLen = uint64(len(scope.Contract.Code))
 		integer = new(uint256.Int)
@@ -1003,9 +1003,9 @@ func makePush(size uint64, pushByteSize int) executionFunc {
 }
 
 // make dup instruction function
-func makeDup(size int) executionFunc {
+func makeDup(size int64) executionFunc {
 	return func(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
-		scope.Stack.dup(size)
+		scope.Stack.dup(int(size))
 		return nil, nil
 	}
 }

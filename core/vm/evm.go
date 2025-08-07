@@ -146,6 +146,12 @@ type EVM struct {
 
 	// jumpDests stores results of JUMPDEST analysis.
 	jumpDests JumpDestCache
+
+	hasher    crypto.KeccakState // Keccak256 hasher instance shared across opcodes
+	hasherBuf common.Hash        // Keccak256 hasher result array shared across opcodes
+
+	readOnly   bool   // Whether to throw on stateful modifications
+	returnData []byte // Last CALL's return data for subsequent reuse
 }
 
 // NewEVM constructs an EVM instance with the supplied block context, state
@@ -160,6 +166,7 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, chainConfig *params.ChainCon
 		chainConfig: chainConfig,
 		chainRules:  chainConfig.Rules(blockCtx.BlockNumber, blockCtx.Random != nil, blockCtx.Time),
 		jumpDests:   newMapJumpDests(),
+		hasher:      crypto.NewKeccakState(),
 	}
 	evm.precompiles = activePrecompiledContracts(evm.chainRules)
 
@@ -243,14 +250,6 @@ func (evm *EVM) Cancel() {
 // Cancelled returns true if Cancel has been called
 func (evm *EVM) Cancelled() bool {
 	return evm.abort.Load()
-}
-
-// OP-Stack addition
-func (evm *EVM) maybeOverrideCaller(caller common.Address) common.Address {
-	if evm.Config.CallerOverride != nil {
-		return evm.Config.CallerOverride(caller)
-	}
-	return caller
 }
 
 func isSystemCall(caller common.Address) bool {
@@ -644,7 +643,7 @@ func (evm *EVM) Create(caller common.Address, code []byte, gas uint64, value *ui
 // The different between Create2 with Create is Create2 uses keccak256(0xff ++ msg.sender ++ salt ++ keccak256(init_code))[12:]
 // instead of the usual sender-and-nonce-hash as the address where the contract is initialized at.
 func (evm *EVM) Create2(caller common.Address, code []byte, gas uint64, endowment *uint256.Int, salt *uint256.Int) (ret []byte, contractAddr common.Address, leftOverGas uint64, err error) {
-	inithash := crypto.HashData(evm.interpreter.hasher, code)
+	inithash := crypto.HashData(evm.hasher, code)
 	contractAddr = crypto.CreateAddress2(caller, salt.Bytes32(), inithash[:])
 	return evm.create(caller, code, gas, endowment, contractAddr, CREATE2)
 }
