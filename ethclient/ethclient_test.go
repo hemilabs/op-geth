@@ -199,15 +199,10 @@ func newTestBackend(t *testing.T, config *node.Config, enableHistoricalState boo
 	if err != nil {
 		return nil, nil, fmt.Errorf("can't create new ethereum service: %v", err)
 	}
-
 	// Ensure tx pool starts the background operation
 	txPool := ethservice.TxPool()
 	if err = txPool.Sync(); err != nil {
 		return nil, nil, fmt.Errorf("can't sync transaction pool: %v", err)
-	}
-
-	if enableHistoricalState { // swap to the pre-bedrock consensus-engine that we used to generate the historical blocks
-		ethservice.BlockChain().Engine().(*beacon.Beacon).SwapInner(ethash.NewFaker())
 	}
 
 	// Import the test chain.
