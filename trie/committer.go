@@ -29,12 +29,12 @@ import (
 // insertion order.
 type committer struct {
 	nodes       *trienode.NodeSet
-	tracer      *PrevalueTracer
+	tracer      *prevalueTracer
 	collectLeaf bool
 }
 
 // newCommitter creates a new committer or picks one from the pool.
-func newCommitter(nodeset *trienode.NodeSet, tracer *PrevalueTracer, collectLeaf bool) *committer {
+func newCommitter(nodeset *trienode.NodeSet, tracer *prevalueTracer, collectLeaf bool) *committer {
 	return &committer{
 		nodes:       nodeset,
 		tracer:      tracer,
@@ -116,6 +116,7 @@ func (c *committer) commitChildren(path []byte, n *fullNode, parallel bool) {
 				childSet := trienode.NewNodeSet(c.nodes.Owner)
 				childCommitter := newCommitter(childSet, c.tracer, c.collectLeaf)
 				n.Children[index] = childCommitter.commit(p, child, false)
+
 				nodesMu.Lock()
 				c.nodes.MergeDisjoint(childSet)
 				nodesMu.Unlock()
@@ -141,7 +142,7 @@ func (c *committer) store(path []byte, n node) node {
 		// The node is embedded in its parent, in other words, this node
 		// will not be stored in the database independently, mark it as
 		// deleted only if the node was existent in database before.
-		origin := c.tracer.Get(path)
+		origin := c.tracer.get(path)
 		if len(origin) != 0 {
 			c.nodes.AddNode(path, trienode.NewDeletedWithPrev(origin))
 		}
@@ -149,7 +150,7 @@ func (c *committer) store(path []byte, n node) node {
 	}
 	// Collect the dirty node to nodeset for return.
 	nhash := common.BytesToHash(hash)
-	c.nodes.AddNode(path, trienode.NewNodeWithPrev(nhash, nodeToBytes(n), c.tracer.Get(path)))
+	c.nodes.AddNode(path, trienode.NewNodeWithPrev(nhash, nodeToBytes(n), c.tracer.get(path)))
 
 	// Collect the corresponding leaf node if it's required. We don't check
 	// full node since it's impossible to store value in fullNode. The key

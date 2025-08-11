@@ -18,7 +18,7 @@ package trie
 
 import (
 	"maps"
-	"sync"
+	"slices"
 )
 
 // opTracer tracks the changes of trie nodes. During the trie operations,
@@ -94,48 +94,39 @@ func (t *opTracer) deletedList() [][]byte {
 	return paths
 }
 
-// PrevalueTracer tracks the original values of resolved trie nodes. Cached trie
+// prevalueTracer tracks the original values of resolved trie nodes. Cached trie
 // node values are expected to be immutable. A zero-size node value is treated as
 // non-existent and should not occur in practice.
 //
-// Note PrevalueTracer is thread-safe.
-type PrevalueTracer struct {
+// Note prevalueTracer is not thread-safe, callers should be responsible for
+// handling the concurrency issues by themselves.
+type prevalueTracer struct {
 	data map[string][]byte
-	lock sync.RWMutex
 }
 
-// NewPrevalueTracer initializes the tracer for capturing resolved trie nodes.
-func NewPrevalueTracer() *PrevalueTracer {
-	return &PrevalueTracer{
+// newPrevalueTracer initializes the tracer for capturing resolved trie nodes.
+func newPrevalueTracer() *prevalueTracer {
+	return &prevalueTracer{
 		data: make(map[string][]byte),
 	}
 }
 
-// Put tracks the newly loaded trie node and caches its RLP-encoded
+// put tracks the newly loaded trie node and caches its RLP-encoded
 // blob internally. Do not modify the value outside this function,
 // as it is not deep-copied.
-func (t *PrevalueTracer) Put(path []byte, val []byte) {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
+func (t *prevalueTracer) put(path []byte, val []byte) {
 	t.data[string(path)] = val
 }
 
-// Get returns the cached trie node value. If the node is not found, nil will
+// get returns the cached trie node value. If the node is not found, nil will
 // be returned.
-func (t *PrevalueTracer) Get(path []byte) []byte {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
+func (t *prevalueTracer) get(path []byte) []byte {
 	return t.data[string(path)]
 }
 
-// HasList returns a list of flags indicating whether the corresponding trie nodes
+// hasList returns a list of flags indicating whether the corresponding trie nodes
 // specified by the path exist in the trie.
-func (t *PrevalueTracer) HasList(list [][]byte) []bool {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
+func (t *prevalueTracer) hasList(list [][]byte) []bool {
 	exists := make([]bool, 0, len(list))
 	for _, path := range list {
 		_, ok := t.data[string(path)]
@@ -144,29 +135,20 @@ func (t *PrevalueTracer) HasList(list [][]byte) []bool {
 	return exists
 }
 
-// Values returns a list of values of the cached trie nodes.
-func (t *PrevalueTracer) Values() map[string][]byte {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
-	return maps.Clone(t.data)
+// values returns a list of values of the cached trie nodes.
+func (t *prevalueTracer) values() [][]byte {
+	return slices.Collect(maps.Values(t.data))
 }
 
-// Reset resets the cached content in the prevalueTracer.
-func (t *PrevalueTracer) Reset() {
-	t.lock.Lock()
-	defer t.lock.Unlock()
-
+// reset resets the cached content in the prevalueTracer.
+func (t *prevalueTracer) reset() {
 	clear(t.data)
 }
 
-// Copy returns a copied prevalueTracer instance.
-func (t *PrevalueTracer) Copy() *PrevalueTracer {
-	t.lock.RLock()
-	defer t.lock.RUnlock()
-
+// copy returns a copied prevalueTracer instance.
+func (t *prevalueTracer) copy() *prevalueTracer {
 	// Shadow clone is used, as the cached trie node values are immutable
-	return &PrevalueTracer{
+	return &prevalueTracer{
 		data: maps.Clone(t.data),
 	}
 }
