@@ -643,36 +643,6 @@ func copyNode(n node) node {
 	}
 }
 
-// copyNode deep-copies the supplied node along with its children recursively.
-func copyNode(n node) node {
-	switch n := (n).(type) {
-	case nil:
-		return nil
-	case valueNode:
-		return valueNode(common.CopyBytes(n))
-
-	case *shortNode:
-		return &shortNode{
-			flags: n.flags.copy(),
-			Key:   common.CopyBytes(n.Key),
-			Val:   copyNode(n.Val),
-		}
-	case *fullNode:
-		var children [17]node
-		for i, cn := range n.Children {
-			children[i] = copyNode(cn)
-		}
-		return &fullNode{
-			flags:    n.flags.copy(),
-			Children: children,
-		}
-	case hashNode:
-		return n
-	default:
-		panic(fmt.Sprintf("%T: unknown node type", n))
-	}
-}
-
 func (t *Trie) resolve(n node, prefix []byte) (node, error) {
 	if n, ok := n.(hashNode); ok {
 		return t.resolveAndTrack(n, prefix)
