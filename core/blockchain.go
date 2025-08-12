@@ -81,6 +81,7 @@ var (
 	headFastBlockGauge      = metrics.NewRegisteredGauge("chain/head/receipt", nil)
 	headFinalizedBlockGauge = metrics.NewRegisteredGauge("chain/head/finalized", nil)
 	headSafeBlockGauge      = metrics.NewRegisteredGauge("chain/head/safe", nil)
+	headBaseFeeGauge        = metrics.NewRegisteredGauge("chain/head/basefee", nil)
 
 	chainInfoGauge   = metrics.NewRegisteredGaugeInfo("chain/info", nil)
 	chainMgaspsMeter = metrics.NewRegisteredResettingTimer("chain/mgasps", nil)
@@ -3114,16 +3115,7 @@ func (bc *BlockChain) writeHeadBlock(block *types.Block) {
 
 	bc.currentBlock.Store(block.Header())
 	headBlockGauge.Update(int64(block.NumberU64()))
-
-	log.Info(fmt.Sprintf("Updating hVM header consensus to block %s @ %d in writeHeadBlock()",
-		block.Hash().String(), block.Number().Uint64()))
-	err := bc.updateHvmHeaderConsensus(block.Header(), true)
-	if err != nil {
-		log.Crit(fmt.Sprintf("Unable to update hVM header consensus to block %s @ %d in writeHeadBlock()",
-			block.Hash().String(), block.Number().Uint64()), "err", err)
-	}
-	// OPStack addition
-	updateOptimismBlockMetrics(block.Header())
+	headBaseFeeGauge.TryUpdate(block.Header().BaseFee)
 }
 
 // stopWithoutSaving stops the blockchain service. If any imports are currently in progress
@@ -3291,6 +3283,7 @@ func (bc *BlockChain) InsertReceiptChain(blockChain types.Blocks, receiptChain [
 		bc.currentSnapBlock.Store(header)
 		headHeaderGauge.Update(header.Number.Int64())
 		headFastBlockGauge.Update(header.Number.Int64())
+		headBaseFeeGauge.TryUpdate(header.BaseFee)
 		return nil
 	}
 	// writeAncient writes blockchain and corresponding receipt chain into ancient store.
@@ -4763,6 +4756,7 @@ func (bc *BlockChain) InsertHeadersBeforeCutoff(headers []*types.Header) (int, e
 	bc.currentSnapBlock.Store(last)
 	headHeaderGauge.Update(last.Number.Int64())
 	headFastBlockGauge.Update(last.Number.Int64())
+	headBaseFeeGauge.TryUpdate(last.BaseFee)
 	return 0, nil
 }
 

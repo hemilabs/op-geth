@@ -92,9 +92,7 @@ func NewHeaderChain(chainDb ethdb.Database, config *params.ChainConfig, engine c
 	}
 	hc.currentHeaderHash = hc.CurrentHeader().Hash()
 	headHeaderGauge.Update(hc.CurrentHeader().Number.Int64())
-
-	// OPStack addition
-	updateOptimismBlockMetrics(hc.CurrentHeader())
+	headBaseFeeGauge.TryUpdate(hc.CurrentHeader().BaseFee)
 	return hc, nil
 }
 
@@ -185,9 +183,7 @@ func (hc *HeaderChain) Reorg(headers []*types.Header) error {
 	hc.currentHeaderHash = last.Hash()
 	hc.currentHeader.Store(types.CopyHeader(last))
 	headHeaderGauge.Update(last.Number.Int64())
-
-	// OPStack addition
-	updateOptimismBlockMetrics(last)
+	headBaseFeeGauge.TryUpdate(last.BaseFee)
 	return nil
 }
 
@@ -490,9 +486,7 @@ func (hc *HeaderChain) SetCurrentHeader(head *types.Header) {
 	hc.currentHeader.Store(head)
 	hc.currentHeaderHash = head.Hash()
 	headHeaderGauge.Update(head.Number.Int64())
-
-	// OPStack addition
-	updateOptimismBlockMetrics(head)
+	headBaseFeeGauge.TryUpdate(head.BaseFee)
 }
 
 type (
@@ -579,6 +573,7 @@ func (hc *HeaderChain) setHead(headBlock uint64, headTime uint64, updateFn Updat
 		hc.currentHeader.Store(parent)
 		hc.currentHeaderHash = parentHash
 		headHeaderGauge.Update(parent.Number.Int64())
+		headBaseFeeGauge.TryUpdate(parent.BaseFee)
 
 		// OPStack addition
 		updateOptimismBlockMetrics(parent)
