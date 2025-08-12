@@ -433,6 +433,8 @@ func (bc *BlockChain) getHvmPhase0ActivationBlock() (*types.Header, error) {
 // hVM header state transitions in all blocks up to the current configured
 // EVM tip.
 func (bc *BlockChain) performFullHvmHeaderStateRestore() {
+	panic("do not do this")
+
 	if !bc.hvmEnabled {
 		log.Warn("performFullHvmHeaderStateRestore called but hVM is disabled")
 		return
@@ -682,6 +684,14 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 			log.Info(fmt.Sprintf("SetupHvmHeaderNode had determined that the external header mode TBC currently"+
 				" represents block %s @ %d", potentialHeader.Hash().String(), potentialHeader.Number.Uint64()))
 		} else {
+			currentHeader := bc.CurrentHeader()
+			log.Info("will attempt to restore state id to %s", currentHeader.Hash().String())
+
+			bc.tbcHeaderNode.SetUpstreamStateId(bc.ctx, [32]byte(currentHeader.Hash().Bytes()))
+			return
+
+			panic("should not get here")
+
 			// TBC is in an invalid state, attempt to recover it
 			log.Info(fmt.Sprintf("The hVM header-only TBC node has an invaid state on startup; stateId=%x,"+
 				" attempting full restore from hVM activation height", stateId))
