@@ -41,6 +41,7 @@ import (
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
@@ -698,21 +699,28 @@ func (api *ConsensusAPI) NewPayloadV3(params engine.ExecutableData, versionedHas
 
 // NewPayloadV4 creates an Eth1 block, inserts it in the chain, and returns the status of the chain.
 func (api *ConsensusAPI) NewPayloadV4(params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes) (engine.PayloadStatusV1, error) {
-	switch {
-	case params.Withdrawals == nil:
-		return invalidStatus, paramsErr("nil withdrawals post-shanghai")
-	case params.ExcessBlobGas == nil:
-		return invalidStatus, paramsErr("nil excessBlobGas post-cancun")
-	case params.BlobGasUsed == nil:
-		return invalidStatus, paramsErr("nil blobGasUsed post-cancun")
-	case versionedHashes == nil:
-		return invalidStatus, paramsErr("nil versionedHashes post-cancun")
-	case beaconRoot == nil:
-		return invalidStatus, paramsErr("nil beaconRoot post-cancun")
-	case executionRequests == nil:
-		return invalidStatus, paramsErr("nil executionRequests post-prague")
-	case !api.checkFork(params.Timestamp, forks.Prague, forks.Osaka):
-		return invalidStatus, unsupportedForkErr("newPayloadV4 must only be called for prague payloads")
+	if params.Withdrawals == nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil withdrawals post-shanghai"))
+	}
+	if params.ExcessBlobGas == nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil excessBlobGas post-cancun"))
+	}
+	if params.BlobGasUsed == nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil blobGasUsed post-cancun"))
+	}
+
+	if versionedHashes == nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil versionedHashes post-cancun"))
+	}
+	if beaconRoot == nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil beaconRoot post-cancun"))
+	}
+	if executionRequests == nil {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidParams.With(errors.New("nil executionRequests post-prague"))
+	}
+
+	if api.eth.BlockChain().Config().LatestFork(params.Timestamp) != forks.Prague {
+		return engine.PayloadStatusV1{Status: engine.INVALID}, engine.UnsupportedFork.With(errors.New("newPayloadV4 must only be called for prague payloads"))
 	}
 
 	requests := convertRequests(executionRequests)
