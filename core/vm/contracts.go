@@ -2196,10 +2196,6 @@ func (c *bigModExp) Run(input []byte, blockContext common.Hash) ([]byte, error) 
 	if baseLen == 0 && modLen == 0 {
 		return []byte{}, nil
 	}
-	// enforce size cap for inputs
-	if c.eip7823 && max(baseLen, expLen, modLen) > 1024 {
-		return nil, errors.New("one or more of base/exponent/modulus length exceeded 1024 bytes")
-	}
 	// Retrieve the operands and execute the exponentiation
 	var (
 		base = new(big.Int).SetBytes(getData(input, 0, baseLen))
