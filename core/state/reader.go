@@ -242,7 +242,6 @@ func newTrieReader(root common.Hash, db *triedb.Database, cache *utils.PointCach
 	if !db.IsVerkle() {
 		tr, err = trie.NewStateTrie(trie.StateTrieID(root), db)
 	} else {
-		// TODO @gballet determine the trie type (verkle or overlay) by transition state
 		tr, err = trie.NewVerkleTrie(root, db, cache)
 
 		// Based on the transition status, determine if the overlay
@@ -254,7 +253,7 @@ func newTrieReader(root common.Hash, db *triedb.Database, cache *utils.PointCach
 			if err != nil {
 				return nil, err
 			}
-			tr = trie.NewTransitionTrie(mpt, tr.(*trie.VerkleTrie), false)
+			tr = trie.NewTransitionTree(mpt, tr.(*trie.VerkleTrie), false)
 		}
 	}
 	if err != nil {
