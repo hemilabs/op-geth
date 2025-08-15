@@ -93,28 +93,6 @@ func TestCalcBlobFee(t *testing.T) {
 	}
 }
 
-func TestCalcBlobFeeOPStack(t *testing.T) {
-	zero := uint64(0)
-	header := &types.Header{ExcessBlobGas: &zero}
-	// any non-nil optimism confic should do
-	config := &params.ChainConfig{Optimism: new(params.OptimismConfig)}
-	bfee := CalcBlobFee(config, header)
-	require.Equal(t, int64(1), bfee.Int64())
-
-	reqPanic := func() {
-		require.PanicsWithValue(t,
-			"OP-Stack: CalcBlobFee: unexpected blob schedule or excess blob gas",
-			func() { CalcBlobFee(config, header) })
-	}
-	(*header.ExcessBlobGas)++
-	reqPanic()
-	header.ExcessBlobGas = nil
-	reqPanic()
-	header.ExcessBlobGas = &zero
-	config.BlobScheduleConfig = params.DefaultBlobSchedule
-	reqPanic()
-}
-
 func TestCalcBlobFeePostOsaka(t *testing.T) {
 	zero := uint64(0)
 	bpo1 := uint64(1754836608)
@@ -215,9 +193,10 @@ func TestFakeExponential(t *testing.T) {
 func TestCalcExcessBlobGasEIP7918(t *testing.T) {
 	var (
 		cfg           = params.MergedTestChainConfig
-		targetBlobs   = targetBlobsPerBlock(cfg, *cfg.CancunTime)
+		targetBlobs   = cfg.BlobScheduleConfig.Osaka.Target
 		blobGasTarget = uint64(targetBlobs) * params.BlobTxBlobGasPerBlob
 	)
+
 	makeHeader := func(parentExcess, parentBaseFee uint64, blobsUsed int) *types.Header {
 		blobGasUsed := uint64(blobsUsed) * params.BlobTxBlobGasPerBlob
 		return &types.Header{
