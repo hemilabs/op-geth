@@ -55,8 +55,6 @@ type Server struct {
 	batchResponseLimit int
 	httpBodyLimit      int
 	wsReadLimit        int64
-
-	recorder Recorder // optional, may be nil
 }
 
 // NewServer creates a new server instance with no registered handlers.
