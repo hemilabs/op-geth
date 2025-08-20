@@ -683,13 +683,25 @@ func headerByNumberOrHash(ctx context.Context, b Backend, blockNrOrHash rpc.Bloc
 
 // GetBlockReceipts returns the block receipts for the given block hash or number or tag.
 func (api *BlockChainAPI) GetBlockReceipts(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) ([]map[string]interface{}, error) {
-	block, err := api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
-	if block == nil || err != nil {
-		return nil, err
-	}
-	receipts, err := api.b.GetReceipts(ctx, block.Hash())
-	if err != nil {
-		return nil, err
+	var (
+		err      error
+		block    *types.Block
+		receipts types.Receipts
+	)
+	if blockNr, ok := blockNrOrHash.Number(); ok && blockNr == rpc.PendingBlockNumber {
+		block, receipts, _ = api.b.Pending()
+		if block == nil {
+			return nil, errors.New("pending receipts is not available")
+		}
+	} else {
+		block, err = api.b.BlockByNumberOrHash(ctx, blockNrOrHash)
+		if block == nil || err != nil {
+			return nil, err
+		}
+		receipts, err = api.b.GetReceipts(ctx, block.Hash())
+		if err != nil {
+			return nil, err
+		}
 	}
 	txs := block.Transactions()
 	if len(txs) != len(receipts) {

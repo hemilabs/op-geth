@@ -609,7 +609,7 @@ func newTestBackend(t *testing.T, n int, gspec *core.Genesis, engine consensus.E
 	gspec.Alloc[acc.Address] = types.Account{Balance: big.NewInt(params.Ether)}
 
 	// Generate blocks for testing
-	db, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, n, generator)
+	db, blocks, receipts := core.GenerateChainWithGenesis(gspec, engine, n+1, generator)
 
 	chain, err := core.NewBlockChain(db, gspec, engine, options)
 	if err != nil {
@@ -627,10 +627,6 @@ func newTestBackend(t *testing.T, n int, gspec *core.Genesis, engine consensus.E
 		pendingReceipts: receipts[n],
 	}
 	return backend
-}
-
-func (b testBackend) SyncProgress(ctx context.Context) ethereum.SyncProgress {
-	return ethereum.SyncProgress{}
 }
 
 func (b testBackend) SyncProgress(ctx context.Context) ethereum.SyncProgress {
