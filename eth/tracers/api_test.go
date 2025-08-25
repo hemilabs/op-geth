@@ -1502,7 +1502,7 @@ func TestStandardTraceBlockToFile(t *testing.T) {
 		b.AddTx(tx)
 		txHashs = append(txHashs, tx.Hash())
 	})
-	defer backend.chain.Stop()
+	defer backend.teardown()
 
 	var testSuite = []struct {
 		blockNumber rpc.BlockNumber
