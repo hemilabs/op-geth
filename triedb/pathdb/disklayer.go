@@ -378,7 +378,7 @@ func (dl *diskLayer) writeStateHistory(diff *diffLayer) (bool, error) {
 		log.Debug("Skip tail truncation", "persistentID", persistentID, "tailID", tail+1, "headID", diff.stateID(), "limit", limit)
 		return true, nil
 	}
-	pruned, err := truncateFromTail(dl.db.stateFreezer, newFirst-1)
+	pruned, err := truncateFromTail(dl.db.diskdb, dl.db.stateFreezer, newFirst-1)
 	if err != nil {
 		return false, err
 	}
@@ -396,34 +396,9 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	// Construct and store the state history first. If crash happens after storing
 	// the state history but without flushing the corresponding states(journal),
 	// the stored state history will be truncated from head in the next restart.
-	var (
-		overflow bool
-		oldest   uint64
-	)
-	if dl.db.stateFreezer != nil {
-		// Bail out with an error if writing the state history fails.
-		// This can happen, for example, if the device is full.
-		err := writeStateHistory(dl.db.stateFreezer, bottom)
-		if err != nil {
-			return nil, err
-		}
-		// Determine if the persisted history object has exceeded the configured
-		// limitation, set the overflow as true if so.
-		tail, err := dl.db.stateFreezer.Tail()
-		if err != nil {
-			return nil, err
-		}
-		limit := dl.db.config.StateHistory
-		if limit != 0 && bottom.stateID()-tail > limit {
-			overflow = true
-			oldest = bottom.stateID() - limit + 1 // track the id of history **after truncation**
-		}
-		// Notify the state history indexer for newly created history
-		if dl.db.stateIndexer != nil {
-			if err := dl.db.stateIndexer.extend(bottom.stateID()); err != nil {
-				return nil, err
-			}
-		}
+	flush, err := dl.writeStateHistory(bottom)
+	if err != nil {
+		return nil, err
 	}
 	// Mark the diskLayer as stale before applying any mutations on top.
 	dl.stale = true
@@ -436,84 +411,18 @@ func (dl *diskLayer) commit(bottom *diffLayer, force bool) (*diskLayer, error) {
 	}
 	rawdb.WriteStateID(dl.db.diskdb, bottom.rootHash(), bottom.stateID())
 
-	// In a unique scenario where the ID of the oldest history object (after tail
-	// truncation) surpasses the persisted state ID, we take the necessary action
-	// of forcibly committing the cached dirty states to ensure that the persisted
-	// state ID remains higher.
-	persistedID := rawdb.ReadPersistentStateID(dl.db.diskdb)
-	if !force && persistedID < oldest {
-		force = true
-	}
 	// Merge the trie nodes and flat states of the bottom-most diff layer into the
 	// buffer as the combined layer.
 	combined := dl.buffer.commit(bottom.nodes, bottom.states.stateSet)
 
 	// Terminate the background state snapshot generation before mutating the
 	// persistent state.
-	if combined.full() || force {
+	if combined.full() || force || flush {
 		// Wait until the previous frozen buffer is fully flushed
 		if dl.frozen != nil {
 			if err := dl.frozen.waitFlush(); err != nil {
 				return nil, err
 			}
-		}
-		// Release the frozen buffer and the internally referenced maps will
-		// be reclaimed by GC.
-		dl.frozen = nil
-
-		// Terminate the background state snapshot generator before flushing
-		// to prevent data race.
-		var (
-			progress []byte
-			gen      = dl.generator
-		)
-		if gen != nil {
-			gen.stop()
-			progress = gen.progressMarker()
-
-			// If the snapshot has been fully generated, unset the generator
-			if progress == nil {
-				dl.setGenerator(nil)
-			} else {
-				log.Info("Paused snapshot generation")
-			}
-		}
-
-		// Freeze the live buffer and schedule background flushing
-		dl.frozen = combined
-		dl.frozen.flush(bottom.root, dl.db.diskdb, dl.db.stateFreezer, progress, dl.nodes, dl.states, bottom.stateID(), func() {
-			// Resume the background generation if it's not completed yet.
-			// The generator is assumed to be available if the progress is
-			// not nil.
-			//
-			// Notably, the generator will be shared and linked by all the
-			// disk layer instances, regardless of the generation is terminated
-			// or not.
-			if progress != nil {
-				gen.run(bottom.root)
-			}
-		})
-		// Block until the frozen buffer is fully flushed out if the async flushing
-		// is not allowed, or if the oldest history surpasses the persisted state ID.
-		if dl.db.config.NoAsyncFlush || persistedID < oldest {
-			if err := dl.frozen.waitFlush(); err != nil {
-				return nil, err
-			}
-			dl.frozen = nil
-		}
-		combined = newBuffer(dl.db.config.WriteBufferSize, nil, nil, 0)
-	}
-	// Link the generator if snapshot is not yet completed
-	ndl := newDiskLayer(bottom.root, bottom.stateID(), dl.db, dl.nodes, dl.states, combined, dl.frozen)
-	if dl.generator != nil {
-		ndl.setGenerator(dl.generator)
-	}
-	// To remove outdated history objects from the end, we set the 'tail' parameter
-	// to 'oldest-1' due to the offset between the freezer index and the history ID.
-	if overflow {
-		pruned, err := truncateFromTail(ndl.db.diskdb, ndl.db.stateFreezer, oldest-1)
-		if err != nil {
-			return nil, err
 		}
 		// Release the frozen buffer and the internally referenced maps will
 		// be reclaimed by GC.
