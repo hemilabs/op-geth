@@ -219,12 +219,14 @@ type Database struct {
 	isVerkle bool       // Flag if database is used for verkle tree
 	hasher   nodeHasher // Trie node hasher
 
-	config  *Config                      // Configuration for database
-	diskdb  ethdb.Database               // Persistent storage for matured trie nodes
-	tree    *layerTree                   // The group for all known layers
-	freezer ethdb.ResettableAncientStore // Freezer for storing trie histories, nil possible in tests
-	lock    sync.RWMutex                 // Lock to prevent mutations from happening at the same time
-	indexer *historyIndexer              // History indexer
+	config *Config        // Configuration for database
+	diskdb ethdb.Database // Persistent storage for matured trie nodes
+	tree   *layerTree     // The group for all known layers
+
+	stateFreezer ethdb.ResettableAncientStore // Freezer for storing state histories, nil possible in tests
+	stateIndexer *historyIndexer              // History indexer historical state data, nil possible
+
+	lock sync.RWMutex // Lock to prevent mutations from happening at the same time
 }
 
 // New attempts to load an already existing layer from a persistent key-value
@@ -275,8 +277,8 @@ func New(diskdb ethdb.Database, config *Config, isVerkle bool) *Database {
 		log.Crit("Failed to setup the generator", "err", err)
 	}
 	// TODO (rjl493456442) disable the background indexing in read-only mode
-	if db.freezer != nil && db.config.EnableStateIndexing {
-		db.indexer = newHistoryIndexer(db.diskdb, db.freezer, db.tree.bottom().stateID())
+	if db.stateFreezer != nil && db.config.EnableStateIndexing {
+		db.stateIndexer = newHistoryIndexer(db.diskdb, db.stateFreezer, db.tree.bottom().stateID())
 		log.Info("Enabled state history indexing")
 	}
 	fields := config.fields()
@@ -321,7 +323,7 @@ func (db *Database) repairHistory() error {
 			// Purge all state history indexing data first
 			rawdb.DeleteStateHistoryIndexMetadata(db.diskdb)
 			rawdb.DeleteStateHistoryIndex(db.diskdb)
-			err := db.freezer.Reset()
+			err := db.stateFreezer.Reset()
 			if err != nil {
 				log.Crit("Failed to reset state histories", "err", err)
 			}
@@ -331,7 +333,7 @@ func (db *Database) repairHistory() error {
 	}
 	// Truncate the extra state histories above in freezer in case it's not
 	// aligned with the disk layer. It might happen after a unclean shutdown.
-	pruned, err := truncateFromHead(db.stateFreezer, id)
+	pruned, err := truncateFromHead(db.diskdb, db.stateFreezer, id)
 	if err != nil {
 		log.Crit("Failed to truncate extra state histories", "err", err)
 	}
@@ -507,13 +509,13 @@ func (db *Database) Enable(root common.Hash) error {
 	// all root->id mappings should be removed as well. Since
 	// mappings can be huge and might take a while to clear
 	// them, just leave them in disk and wait for overwriting.
-	if db.freezer != nil {
+	if db.stateFreezer != nil {
 		// TODO(rjl493456442) would be better to group them into a batch.
 		//
 		// Purge all state history indexing data first
 		rawdb.DeleteStateHistoryIndexMetadata(db.diskdb)
 		rawdb.DeleteStateHistoryIndex(db.diskdb)
-		if err := db.freezer.Reset(); err != nil {
+		if err := db.stateFreezer.Reset(); err != nil {
 			return err
 		}
 	}
@@ -529,9 +531,9 @@ func (db *Database) Enable(root common.Hash) error {
 	// To ensure the history indexer always matches the current state, we must:
 	//   1. Close any existing indexer
 	//   2. Re-initialize the indexer so it starts indexing from the new state root.
-	if db.indexer != nil && db.freezer != nil && db.config.EnableStateIndexing {
-		db.indexer.close()
-		db.indexer = newHistoryIndexer(db.diskdb, db.freezer, db.tree.bottom().stateID())
+	if db.stateIndexer != nil && db.stateFreezer != nil && db.config.EnableStateIndexing {
+		db.stateIndexer.close()
+		db.stateIndexer = newHistoryIndexer(db.diskdb, db.stateFreezer, db.tree.bottom().stateID())
 		log.Info("Re-enabled state history indexing")
 	}
 	log.Info("Rebuilt trie database", "root", root)
@@ -585,7 +587,7 @@ func (db *Database) Recover(root common.Hash) error {
 	if err := db.diskdb.SyncKeyValue(); err != nil {
 		return err
 	}
-	_, err := truncateFromHead(db.diskdb, db.freezer, dl.stateID())
+	_, err := truncateFromHead(db.diskdb, db.stateFreezer, dl.stateID())
 	if err != nil {
 		return err
 	}
@@ -617,7 +619,7 @@ func (db *Database) Recoverable(root common.Hash) bool {
 		return false
 	}
 	// Ensure the requested state is a canonical state and all state
-	// histories in range [id+1, dl.ID] are present and complete.
+	// histories in range [id+1, disklayer.ID] are present and complete.
 	return checkStateHistories(db.stateFreezer, *id+1, dl.stateID()-*id, func(m *meta) error {
 		if m.parent != root {
 			return errors.New("unexpected state history")
@@ -646,8 +648,8 @@ func (db *Database) Close() error {
 	dl.resetCache() // release the memory held by clean cache
 
 	// Terminate the background state history indexer
-	if db.indexer != nil {
-		db.indexer.close()
+	if db.stateIndexer != nil {
+		db.stateIndexer.close()
 	}
 	// Close the attached state history freezer.
 	if db.stateFreezer == nil {
@@ -733,15 +735,6 @@ func (db *Database) IndexProgress() (uint64, error) {
 		return 0, nil
 	}
 	return db.stateIndexer.progress()
-}
-
-// IndexProgress returns the indexing progress made so far. It provides the
-// number of states that remain unindexed.
-func (db *Database) IndexProgress() (uint64, error) {
-	if db.indexer == nil {
-		return 0, nil
-	}
-	return db.indexer.progress()
 }
 
 // AccountIterator creates a new account iterator for the specified root hash and

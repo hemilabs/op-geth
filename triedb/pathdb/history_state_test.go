@@ -109,7 +109,7 @@ func testEncodeDecodeStateHistory(t *testing.T, rawStorageKey bool) {
 	}
 }
 
-func checkStateHistory(t *testing.T, freezer ethdb.AncientReader, id uint64, exist bool) {
+func checkStateHistory(t *testing.T, db ethdb.KeyValueReader, freezer ethdb.AncientReader, id uint64, root common.Hash, exist bool) {
 	blob := rawdb.ReadStateHistoryMeta(freezer, id)
 	if exist && len(blob) == 0 {
 		t.Fatalf("Failed to load trie history, %d", id)
@@ -125,9 +125,17 @@ func checkHistoriesInRange(t *testing.T, freezer ethdb.AncientReader, from, to u
 	}
 }
 
+func checkHistoriesInRange(t *testing.T, db ethdb.KeyValueReader, freezer ethdb.AncientReader, from, to uint64, roots []common.Hash, exist bool) {
+	for i, j := from, 0; i <= to; i, j = i+1, j+1 {
+		checkStateHistory(t, db, freezer, i, roots[j], exist)
+	}
+}
+
 func TestTruncateHeadStateHistory(t *testing.T) {
 	var (
+		roots      []common.Hash
 		hs         = makeStateHistories(10)
+		db         = rawdb.NewMemoryDatabase()
 		freezer, _ = rawdb.NewStateFreezer(t.TempDir(), false, false)
 	)
 	defer freezer.Close()
@@ -151,7 +159,9 @@ func TestTruncateHeadStateHistory(t *testing.T) {
 
 func TestTruncateTailStateHistory(t *testing.T) {
 	var (
+		roots      []common.Hash
 		hs         = makeStateHistories(10)
+		db         = rawdb.NewMemoryDatabase()
 		freezer, _ = rawdb.NewStateFreezer(t.TempDir(), false, false)
 	)
 	defer freezer.Close()
@@ -200,7 +210,9 @@ func TestTruncateTailStateHistories(t *testing.T) {
 	}
 	for i, c := range cases {
 		var (
+			roots      []common.Hash
 			hs         = makeStateHistories(10)
+			db         = rawdb.NewMemoryDatabase()
 			freezer, _ = rawdb.NewStateFreezer(t.TempDir()+fmt.Sprintf("%d", i), false, false)
 		)
 		defer freezer.Close()
@@ -225,6 +237,7 @@ func TestTruncateTailStateHistories(t *testing.T) {
 func TestTruncateOutOfRange(t *testing.T) {
 	var (
 		hs         = makeStateHistories(10)
+		db         = rawdb.NewMemoryDatabase()
 		freezer, _ = rawdb.NewStateFreezer(t.TempDir(), false, false)
 	)
 	defer freezer.Close()

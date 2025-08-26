@@ -1,4 +1,4 @@
-// Copyright 2023 The go-ethereum Authors
+// Copyright 2025 The go-ethereum Authors
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -12,66 +12,24 @@
 // GNU Lesser General Public License for more details.
 //
 // You should have received a copy of the GNU Lesser General Public License
-// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/>.
+// along with the go-ethereum library. If not, see <http://www.gnu.org/licenses/
 
 package pathdb
 
 import (
-	"bytes"
-	"encoding/binary"
 	"errors"
 	"fmt"
 	"maps"
 	"slices"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/rawdb"
-	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
 	"github.com/ethereum/go-ethereum/log"
 )
 
-// State history records the state changes involved in executing a block. The
-// state can be reverted to the previous version by applying the associated
-// history object (state reverse diff). State history objects are kept to
-// guarantee that the system can perform state rollbacks in case of deep reorg.
-//
-// Each state transition will generate a state history object. Note that not
-// every block has a corresponding state history object. If a block performs
-// no state changes whatsoever, no state is created for it. Each state history
-// will have a sequentially increasing number acting as its unique identifier.
-//
-// The state history is written to disk (ancient store) when the corresponding
-// diff layer is merged into the disk layer. At the same time, system can prune
-// the oldest histories according to config.
-//
-//                                                        Disk State
-//                                                            ^
-//                                                            |
-//   +------------+     +---------+     +---------+     +---------+
-//   | Init State |---->| State 1 |---->|   ...   |---->| State n |
-//   +------------+     +---------+     +---------+     +---------+
-//
-//                     +-----------+      +------+     +-----------+
-//                     | History 1 |----> | ...  |---->| History n |
-//                     +-----------+      +------+     +-----------+
-//
-// # Rollback
-//
-// If the system wants to roll back to a previous state n, it needs to ensure
-// all history objects from n+1 up to the current disk layer are existent. The
-// history objects are applied to the state in reverse order, starting from the
-// current disk layer.
-
-const (
-	accountIndexSize = common.AddressLength + 13 // The length of encoded account index
-	slotIndexSize    = common.HashLength + 5     // The length of encoded slot index
-	historyMetaSize  = 9 + 2*common.HashLength   // The length of encoded history meta
-
-	stateHistoryV0 = uint8(0)       // initial version of state history structure
-	stateHistoryV1 = uint8(1)       // use the storage slot raw key as the identifier instead of the key hash
-	historyVersion = stateHistoryV1 // the default state history version
+var (
+	errHeadTruncationOutOfRange = errors.New("history head truncation out of range")
+	errTailTruncationOutOfRange = errors.New("history tail truncation out of range")
 )
 
 // Each state history entry is consisted of five elements:
@@ -504,20 +462,6 @@ func (h *stateHistory) decode(accountData, storageData, accountIndexes, storageI
 	return nil
 }
 
-// readStateHistoryMeta reads the metadata of state history with the specified id.
-func readStateHistoryMeta(reader ethdb.AncientReader, id uint64) (*meta, error) {
-	data := rawdb.ReadStateHistoryMeta(reader, id)
-	if len(data) == 0 {
-		return nil, fmt.Errorf("metadata is not found, %d", id)
-	}
-	var m meta
-	err := m.decode(data)
-	if err != nil {
-		return nil, err
-	}
-	return &m, nil
-}
-
 // readStateHistory reads a single state history records with the specified id.
 func readStateHistory(reader ethdb.AncientReader, id uint64) (*stateHistory, error) {
 	mData, accountIndexes, storageIndexes, accountData, storageData, err := rawdb.ReadStateHistory(reader, id)
@@ -582,8 +526,8 @@ func writeStateHistory(writer ethdb.AncientWriter, dl *diffLayer) error {
 	return nil
 }
 
-// checkStateHistories retrieves a batch of metadata objects with the specified
-// range and performs the callback on each item.
+// checkStateHistories retrieves a batch of meta objects with the specified range
+// and performs the callback on each item.
 func checkStateHistories(reader ethdb.AncientReader, start, count uint64, check func(*meta) error) error {
 	for count > 0 {
 		number := count
@@ -607,4 +551,61 @@ func checkStateHistories(reader ethdb.AncientReader, start, count uint64, check 
 		start += uint64(len(blobs))
 	}
 	return nil
+}
+
+// truncateFromHead removes the extra state histories from the head with the given
+// parameters. It returns the number of items removed from the head.
+func truncateFromHead(db ethdb.Batcher, store ethdb.AncientStore, nhead uint64) (int, error) {
+	ohead, err := store.Ancients()
+	if err != nil {
+		return 0, err
+	}
+	otail, err := store.Tail()
+	if err != nil {
+		return 0, err
+	}
+	log.Info("Truncating from head", "ohead", ohead, "tail", otail, "nhead", nhead)
+
+	// Ensure that the truncation target falls within the valid range.
+	if ohead < nhead || nhead < otail {
+		return 0, fmt.Errorf("%w, tail: %d, head: %d, target: %d", errHeadTruncationOutOfRange, otail, ohead, nhead)
+	}
+	// Short circuit if nothing to truncate.
+	if ohead == nhead {
+		return 0, nil
+	}
+	ohead, err = store.TruncateHead(nhead)
+	if err != nil {
+		return 0, err
+	}
+	// Associated root->id mappings are left in the database and wait
+	// for overwriting.
+	return int(ohead - nhead), nil
+}
+
+// truncateFromTail removes excess elements from the end of the freezer based
+// on the given parameters. It returns the number of items that were removed.
+func truncateFromTail(store ethdb.AncientStore, ntail uint64) (int, error) {
+	ohead, err := store.Ancients()
+	if err != nil {
+		return 0, err
+	}
+	otail, err := store.Tail()
+	if err != nil {
+		return 0, err
+	}
+	// Ensure that the truncation target falls within the valid range.
+	if otail > ntail || ntail > ohead {
+		return 0, fmt.Errorf("%w, tail: %d, head: %d, target: %d", errTailTruncationOutOfRange, otail, ohead, ntail)
+	}
+	// Short circuit if nothing to truncate.
+	if otail == ntail {
+		return 0, nil
+	}
+	otail, err = store.TruncateTail(ntail)
+	if err != nil {
+		return 0, err
+	}
+	// Associated root->id mappings are left in the database.
+	return int(ntail - otail), nil
 }
