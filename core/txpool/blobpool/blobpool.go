@@ -1419,6 +1419,31 @@ func (p *BlobPool) AvailableBlobs(vhashes []common.Hash) int {
 	return available
 }
 
+// convertSidecar converts the legacy sidecar in the submitted transactions
+// if Osaka fork has been activated.
+func (p *BlobPool) convertSidecar(txs []*types.Transaction) ([]*types.Transaction, []error) {
+	head := p.chain.CurrentBlock()
+	if !p.chain.Config().IsOsaka(head.Number, head.Time) {
+		return txs, make([]error, len(txs))
+	}
+	var errs []error
+	for _, tx := range txs {
+		sidecar := tx.BlobTxSidecar()
+		if sidecar == nil {
+			errs = append(errs, errors.New("missing sidecar in blob transaction"))
+			continue
+		}
+		if sidecar.Version == types.BlobSidecarVersion0 {
+			if err := sidecar.ToV1(); err != nil {
+				errs = append(errs, err)
+				continue
+			}
+		}
+		errs = append(errs, nil)
+	}
+	return txs, errs
+}
+
 // Add inserts a set of blob transactions into the pool if they pass validation (both
 // consensus validity and pool restrictions).
 //
@@ -1431,8 +1456,7 @@ func (p *BlobPool) Add(txs []*types.Transaction, sync bool) []error {
 	)
 	txs, errs = p.convertSidecar(txs)
 	for i, tx := range txs {
-		if tx.IsBtcAttributesDepositedTx() || tx.IsPopPayoutTx() {
-			// Should never happen with blobs, but extra protection
+		if errs[i] != nil {
 			continue
 		}
 		errs[i] = p.add(tx)
