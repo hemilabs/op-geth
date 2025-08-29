@@ -482,21 +482,18 @@ func (r *ReceiptForStorage) EncodeRLP(_w io.Writer) error {
 		if r.DepositReceiptVersion != nil {
 			w.WriteUint64(*r.DepositReceiptVersion)
 		}
-	}
-	if r.PoPPayoutNonce != nil {
+	} else if r.PoPPayoutNonce != nil {
 		// Write placeholders because decoding is untyped, so non-zero values are necessary to indicate
 		// fields should be treated as nil
 		w.WriteUint64(NilDepositDataPlaceholder)
 		w.WriteUint64(NilDepositDataPlaceholder)
 		w.WriteUint64(*r.PoPPayoutNonce)
-	}
-
-	if r.BtcAttributesDepositedNonce != nil {
+	} else if r.BtcAttributesDepositedNonce != nil {
 		// Write placeholders because decoding is untyped, so non-zero values are necessary to indicate
 		// fields should be treated as nil
 		w.WriteUint64(NilDepositDataPlaceholder)
 		w.WriteUint64(NilDepositDataPlaceholder)
-		w.WriteUint64(NilDepositDataPlaceholder)
+		w.WriteUint64(NilPoPPayoutDataPlaceholder)
 		w.WriteUint64(*r.BtcAttributesDepositedNonce)
 	}
 	w.ListEnd(outerList)
