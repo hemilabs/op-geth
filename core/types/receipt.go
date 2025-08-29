@@ -55,6 +55,7 @@ const (
 	// NilDepositDataPlaceholder is a special value placed in DepositNonce and DepositReceiptVersion to indicate
 	// that the fields should be treated as nil but need to be filled to populate later fields
 	NilDepositDataPlaceholder = 0xFFFFFFFFFFFFFFFF
+	NilPoPPayoutDataPlaceholder = NilDepositDataPlaceholder
 )
 
 // Receipt represents the results of a transaction.
@@ -488,9 +489,11 @@ func (r *ReceiptForStorage) EncodeRLP(_w io.Writer) error {
 		w.WriteUint64(NilDepositDataPlaceholder)
 		w.WriteUint64(*r.PoPPayoutNonce)
 	}
+
 	if r.BtcAttributesDepositedNonce != nil {
 		// Write placeholders because decoding is untyped, so non-zero values are necessary to indicate
 		// fields should be treated as nil
+		w.WriteUint64(NilDepositDataPlaceholder)
 		w.WriteUint64(NilDepositDataPlaceholder)
 		w.WriteUint64(NilDepositDataPlaceholder)
 		w.WriteUint64(*r.BtcAttributesDepositedNonce)
@@ -555,13 +558,16 @@ func decodeStoredReceiptRLP(r *ReceiptForStorage, blob []byte) error {
 	r.CumulativeGasUsed = stored.CumulativeGasUsed
 	r.Logs = stored.Logs
 	r.Bloom = CreateBloom((*Receipt)(r))
-	if stored.DepositNonce != nil {
+
+	if stored.DepositNonce != nil && *stored.DepositNonce != NilDepositDataPlaceholder {
 		r.DepositNonce = stored.DepositNonce
 		r.DepositReceiptVersion = stored.DepositReceiptVersion
 	}
-	if stored.PoPPayoutNonce != nil {
+
+	if stored.PoPPayoutNonce != nil && *stored.PoPPayoutNonce != NilPoPPayoutDataPlaceholder {
 		r.PoPPayoutNonce = stored.PoPPayoutNonce
 	}
+
 	if stored.BtcAttributesDepositedNonce != nil {
 		r.BtcAttributesDepositedNonce = stored.BtcAttributesDepositedNonce
 	}

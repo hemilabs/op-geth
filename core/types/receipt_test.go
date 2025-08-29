@@ -196,6 +196,41 @@ var (
 		},
 		Type: PopPayoutTxType,
 	}
+	btcAttributesDepositedWithNoNonce = &Receipt{
+		Status:            ReceiptStatusFailed,
+		CumulativeGasUsed: 1,
+		Logs: []*Log{
+			{
+				Address: common.BytesToAddress([]byte{0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+			{
+				Address: common.BytesToAddress([]byte{0x01, 0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+		},
+		Type: BtcAttributesDepositedTxType,
+	}
+	btcAttributesDepositedWithNonce = &Receipt{
+		Status:            ReceiptStatusFailed,
+		CumulativeGasUsed: 1,
+		BtcAttributesDepositedNonce:    &nonce,
+		Logs: []*Log{
+			{
+				Address: common.BytesToAddress([]byte{0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+			{
+				Address: common.BytesToAddress([]byte{0x01, 0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+		},
+		Type: BtcAttributesDepositedTxType,
+	}
 
 	// Create a few transactions to have receipts for
 	to2 = common.HexToAddress("0x2")
@@ -1169,6 +1204,8 @@ func TestRoundTripReceipt(t *testing.T) {
 		{name: "DepositWithNonceAndVersion", rcpt: depositReceiptWithNonceAndVersion},
 		{name: "PoPPayoutNoNonce", rcpt: popPayoutReceiptNoNonce},
 		{name: "PoPPayoutWithNonce", rcpt: popPayoutReceiptWithNonce},
+		{name: "BtcAttributesDepositedWithNonce", rcpt: btcAttributesDepositedWithNonce},
+		{name: "BtcAttributesDepositedWithNoNonce", rcpt: btcAttributesDepositedWithNoNonce},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1208,6 +1245,8 @@ func TestRoundTripReceiptForStorage(t *testing.T) {
 		{name: "DepositWithNonceAndVersion", rcpt: depositReceiptWithNonceAndVersion},
 		{name: "PoPPayoutNoNonce", rcpt: popPayoutReceiptNoNonce},
 		{name: "PoPPayoutWithNonce", rcpt: popPayoutReceiptWithNonce},
+		{name: "BtcAttributesDepositedWithNonce", rcpt: btcAttributesDepositedWithNonce},
+		{name: "BtcAttributesDepositedWithNoNonce", rcpt: btcAttributesDepositedWithNoNonce},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
