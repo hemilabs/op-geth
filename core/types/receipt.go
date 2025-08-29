@@ -23,6 +23,7 @@ import (
 	"io"
 	"math/big"
 	"unsafe"
+	"math"
 
 	"github.com/ethereum/go-ethereum/log"
 
@@ -54,7 +55,7 @@ const (
 
 	// NilDepositDataPlaceholder is a special value placed in DepositNonce and DepositReceiptVersion to indicate
 	// that the fields should be treated as nil but need to be filled to populate later fields
-	NilDepositDataPlaceholder = 0xFFFFFFFFFFFFFFFF
+	NilDepositDataPlaceholder = math.MaxUint64
 	NilPoPPayoutDataPlaceholder = NilDepositDataPlaceholder
 )
 
