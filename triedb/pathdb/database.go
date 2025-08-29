@@ -334,7 +334,7 @@ func (db *Database) repairHistory() error {
 	}
 	// Truncate the extra state histories above in freezer in case it's not
 	// aligned with the disk layer. It might happen after a unclean shutdown.
-	pruned, err := truncateFromHead(db.diskdb, db.stateFreezer, id)
+	pruned, err := truncateFromHead(db.stateFreezer, id)
 	if err != nil {
 		log.Crit("Failed to truncate extra state histories", "err", err)
 	}
@@ -590,7 +590,7 @@ func (db *Database) Recover(root common.Hash) error {
 	if err := db.diskdb.SyncKeyValue(); err != nil {
 		return err
 	}
-	_, err := truncateFromHead(db.diskdb, db.stateFreezer, dl.stateID())
+	_, err := truncateFromHead(db.stateFreezer, dl.stateID())
 	if err != nil {
 		return err
 	}
@@ -622,7 +622,7 @@ func (db *Database) Recoverable(root common.Hash) bool {
 		return false
 	}
 	// Ensure the requested state is a canonical state and all state
-	// histories in range [id+1, disklayer.ID] are present and complete.
+	// histories in range [id+1, dl.ID] are present and complete.
 	return checkStateHistories(db.stateFreezer, *id+1, dl.stateID()-*id, func(m *meta) error {
 		if m.parent != root {
 			return errors.New("unexpected state history")
