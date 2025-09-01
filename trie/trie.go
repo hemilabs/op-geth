@@ -59,7 +59,7 @@ type Trie struct {
 
 	// Various tracers for capturing the modifications to trie
 	opTracer       *opTracer
-	prevalueTracer *prevalueTracer
+	prevalueTracer *PrevalueTracer
 }
 
 // newFlag returns the cache flag value for a newly created node.
@@ -77,7 +77,7 @@ func (t *Trie) Copy() *Trie {
 		uncommitted:    t.uncommitted,
 		reader:         t.reader,
 		opTracer:       t.opTracer.copy(),
-		prevalueTracer: t.prevalueTracer.copy(),
+		prevalueTracer: t.prevalueTracer.Copy(),
 	}
 }
 
@@ -96,7 +96,7 @@ func New(id *ID, db database.NodeDatabase) (*Trie, error) {
 		owner:          id.Owner,
 		reader:         reader,
 		opTracer:       newOpTracer(),
-		prevalueTracer: newPrevalueTracer(),
+		prevalueTracer: NewPrevalueTracer(),
 	}
 	if id.Root != (common.Hash{}) && id.Root != types.EmptyRootHash {
 		rootnode, err := trie.resolveAndTrack(id.Root[:], nil)
@@ -659,7 +659,7 @@ func (t *Trie) resolveAndTrack(n hashNode, prefix []byte) (node, error) {
 	if err != nil {
 		return nil, err
 	}
-	t.prevalueTracer.put(prefix, blob)
+	t.prevalueTracer.Put(prefix, blob)
 
 	// The returned node blob won't be changed afterward. No need to
 	// deep-copy the slice.
@@ -673,7 +673,7 @@ func (t *Trie) deletedNodes() [][]byte {
 	var (
 		pos   int
 		list  = t.opTracer.deletedList()
-		flags = t.prevalueTracer.hasList(list)
+		flags = t.prevalueTracer.HasList(list)
 	)
 	for i := 0; i < len(list); i++ {
 		if flags[i] {
@@ -711,7 +711,7 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet) {
 		}
 		nodes := trienode.NewNodeSet(t.owner)
 		for _, path := range paths {
-			nodes.AddNode(path, trienode.NewDeletedWithPrev(t.prevalueTracer.get(path)))
+			nodes.AddNode(path, trienode.NewDeletedWithPrev(t.prevalueTracer.Get(path)))
 		}
 		return types.EmptyRootHash, nodes // case (b)
 	}
@@ -729,7 +729,7 @@ func (t *Trie) Commit(collectLeaf bool) (common.Hash, *trienode.NodeSet) {
 	}
 	nodes := trienode.NewNodeSet(t.owner)
 	for _, path := range t.deletedNodes() {
-		nodes.AddNode(path, trienode.NewDeletedWithPrev(t.prevalueTracer.get(path)))
+		nodes.AddNode(path, trienode.NewDeletedWithPrev(t.prevalueTracer.Get(path)))
 	}
 	// If the number of changes is below 100, we let one thread handle it
 	t.root = newCommitter(nodes, t.prevalueTracer, collectLeaf).Commit(t.root, t.uncommitted > 100)
@@ -753,7 +753,7 @@ func (t *Trie) hashRoot() []byte {
 
 // Witness returns a set containing all trie nodes that have been accessed.
 func (t *Trie) Witness() map[string][]byte {
-	return t.prevalueTracer.values()
+	return t.prevalueTracer.Values()
 }
 
 // Reset drops the referenced root node and cleans all internal state.
@@ -763,6 +763,6 @@ func (t *Trie) Reset() {
 	t.unhashed = 0
 	t.uncommitted = 0
 	t.opTracer.reset()
-	t.prevalueTracer.reset()
+	t.prevalueTracer.Reset()
 	t.committed = false
 }
