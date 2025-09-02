@@ -19,6 +19,7 @@ package tests
 
 import (
 	"bytes"
+	"context"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,7 @@ import (
 	"math/big"
 	"os"
 	"reflect"
+	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -156,10 +158,14 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, tracer *t
 		cache.SnapshotLimit = 1
 		cache.SnapshotWait = true
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
 	chain, err := core.NewBlockChain(db, cache, gspec, nil, engine, vm.Config{
 		Tracer:                  tracer,
 		StatelessSelfValidation: witness,
-	}, nil)
+	}, nil, nil, ctx)
 	if err != nil {
 		return err
 	}

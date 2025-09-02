@@ -36,3 +36,6 @@ jobs:
 
       - name: "test cmd/geth"
         run: go test -v ./cmd/geth
+
+      - name: "test ./tests"
+        run: go test -v ./tests
