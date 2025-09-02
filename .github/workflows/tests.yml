@@ -33,3 +33,6 @@ jobs:
       # back in, one by one
       - name: "test core"
         run: go test -v ./core
+
+      - name: "test cmd/geth"
+        run: go test -v ./cmd/geth
