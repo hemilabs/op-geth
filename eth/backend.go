@@ -296,6 +296,16 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 			tbcCfg.EffectiveGenesisBlock.BlockHash().String(), tbcCfg.GenesisHeightOffset, tbcCfg.LevelDBHome, tbcCfg.Network))
 
 		eth.blockchain.SetupHvmHeaderNode(tbcCfg)
+
+		/// XXX setting up Deucalion here means it will not be available after TBC syncs,
+		/// once the Eth services are registered. While trying to ask for health will still
+		/// obviously fail, the error code will not be 503, as one would expect.
+		if config.DeucalionAddress != "" {
+			if err = eth.blockchain.SetupDeucalion(ctx, config.DeucalionAddress); err != nil {
+				log.Crit("error setting up deucalion", "err", err)
+			}
+		}
+
 	}
 	if err != nil {
 		return nil, err

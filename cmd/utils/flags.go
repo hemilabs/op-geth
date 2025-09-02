@@ -1002,6 +1002,12 @@ var (
 		Category: flags.RollupCategory,
 		Value:    "", // No Prometheus by default
 	}
+	HealthDeucalionAddress = &cli.StringFlag{
+		Name:     "hvm.deucalionaddress",
+		Usage:    "Deucalion address for health checks",
+		Category: flags.RollupCategory,
+		Value:    "", // No Deucalion by default
+	}
 	TBCSeeds = &cli.StringSliceFlag{
 		Name:     "tbc.seeds",
 		Usage:    "override tbc seeds when finding peers",
@@ -2200,6 +2206,7 @@ func RegisterEthService(stack *node.Node, cfg *ethconfig.Config, ctx context.Con
 	if err != nil {
 		Fatalf("Failed to register the Ethereum service: %v", err)
 	}
+
 	stack.RegisterAPIs(tracers.APIs(backend.APIBackend))
 	return backend.APIBackend, backend
 }

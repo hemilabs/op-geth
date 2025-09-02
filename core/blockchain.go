@@ -40,6 +40,7 @@ import (
 	"github.com/btcsuite/btcd/wire"
 	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/hemi"
+	"github.com/hemilabs/heminetwork/service/deucalion"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/net/context"
 
@@ -131,6 +132,10 @@ var (
 		0x0C, 0x0B, 0x0A, 0x09, 0x08, 0x07}
 
 	emptyArray = [32]byte{}
+
+	// deucalion interval between progression check
+	progressionInterval = 7 * time.Second
+	maxBlockAge         = 33 * time.Second
 
 	// Special error thrown when blockchain state manipulation functions find that the external header mode TBC
 	// instance is in an impossible state implying data corruption or incrrect application of previous state trnsitions.
@@ -331,6 +336,7 @@ type BlockChain struct {
 	awaitingHvmSnapSync   bool
 	processingHvmSnapSync bool
 	finishedHvmSnapSync   bool
+	healthyNode           atomic.Bool
 
 	// Temporary workaround to allow restarting TBC Full Node when its not progressing
 	fullBlockFailureCount       uint32
@@ -567,6 +573,48 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	bc.tbcHeaderNode = tbcHeaderNode
 	bc.tbcHeaderNodeConfig = config
 	bc.hvmEnabled = true
+}
+
+func (bc *BlockChain) SetupDeucalion(pctx context.Context, address string) error {
+	d, err := deucalion.New(&deucalion.Config{
+		ListenAddress: address,
+	})
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := context.WithCancel(pctx)
+
+	go func() {
+		defer cancel()
+		err := d.Run(ctx, nil, func(ctx context.Context) (bool, any, error) {
+			return bc.healthyNode.Load(), bc.CurrentBlock(), nil
+		})
+		if err != nil && !errors.Is(err, context.Canceled) {
+			log.Error("deucalion terminated with error", "err", err)
+			return
+		}
+		log.Info("deucalion clean shutdown")
+	}()
+
+	go func() {
+		defer cancel()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(progressionInterval):
+				bestTime := time.Unix(int64(bc.CurrentHeader().Time), 0)
+				if time.Since(bestTime) > maxBlockAge {
+					bc.healthyNode.Store(false)
+				} else {
+					bc.healthyNode.Store(true)
+				}
+			}
+		}
+	}()
+
+	return nil
 }
 
 func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {

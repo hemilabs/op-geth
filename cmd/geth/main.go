@@ -173,6 +173,7 @@ var (
 		utils.TBCLevelDBHome,
 		utils.TBCBlockSanity,
 		utils.TBCNetwork,
+		utils.HealthDeucalionAddress,
 		utils.TBCPrometheusAddress,
 		utils.OverrideHvmEnabled,
 		utils.OverrideHvmGenesisHeader,
