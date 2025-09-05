@@ -353,9 +353,6 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 		// configure the gas limit of pending blocks with the miner gas limit config when using optimism
 		header.GasLimit = miner.config.GasCeil
 	}
-	if miner.chainConfig.IsMinBaseFee(header.Time) && genParams.minBaseFee == nil {
-		return nil, errors.New("missing minBaseFee")
-	}
 	if cfg := miner.chainConfig; cfg.IsHolocene(header.Time) {
 		if err := eip1559.ValidateHolocene1559Params(genParams.eip1559Params); err != nil {
 			return nil, err

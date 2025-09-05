@@ -75,7 +75,7 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header, time uint64) 
 	}
 
 	// OPStack addition: calculate the base fee using the upstream code.
-	baseFee := calcBaseFeeInner(config, parent, elasticity, denominator)
+	baseFee := calcBaseFeeInner(parent, elasticity, denominator)
 
 	// OPStack addition: enforce minimum base fee.
 	// If the minimum base fee is 0, this has no effect.
@@ -89,7 +89,7 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header, time uint64) 
 	return baseFee
 }
 
-func calcBaseFeeInner(config *params.ChainConfig, parent *types.Header, elasticity uint64, denominator uint64) *big.Int {
+func calcBaseFeeInner(parent *types.Header, elasticity uint64, denominator uint64) *big.Int {
 	parentGasTarget := parent.GasLimit / elasticity
 	parentGasMetered := parent.GasUsed
 	if config.IsDAFootprintBlockLimit(parent.Time) {
