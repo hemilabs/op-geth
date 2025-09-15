@@ -34,8 +34,6 @@ var (
 	blobT       = reflect.TypeFor[Blob]()
 	commitmentT = reflect.TypeFor[Commitment]()
 	proofT      = reflect.TypeFor[Proof]()
-
-	CellProofsPerBlob = 128
 )
 
 const CellProofsPerBlob = 128
