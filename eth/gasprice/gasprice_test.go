@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hemilabs/heminetwork/hemi"
 	"github.com/holiman/uint256"
 )
 
@@ -122,6 +123,18 @@ func (b *testBackend) SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) eve
 
 func (b *testBackend) teardown() {
 	b.chain.Stop()
+}
+
+func (b *testBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) KeystoneFeed() *event.Feed {
+	return nil
 }
 
 // newTestBackend creates a test backend. OBS: don't forget to invoke tearDown

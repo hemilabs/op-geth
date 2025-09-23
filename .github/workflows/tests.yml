@@ -39,3 +39,6 @@ jobs:
 
       - name: "test ./tests"
         run: go test -v ./tests
+
+      - name: "test ./internal/..."
+        run: go test -v ./internal/...
