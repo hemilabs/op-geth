@@ -36,6 +36,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/internal/ethapi/override"
+	"github.com/hemilabs/heminetwork/hemi"
 
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
@@ -647,7 +648,7 @@ func newTestBackend(t *testing.T, n int, gspec *core.Genesis, engine consensus.E
 	// Generate blocks for testing
 	db, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, n, generator)
 	txlookupLimit := uint64(0)
-	chain, err := core.NewBlockChain(db, cacheConfig, gspec, nil, engine, vm.Config{}, &txlookupLimit)
+	chain, err := core.NewBlockChain(db, cacheConfig, gspec, nil, engine, vm.Config{}, nil, &txlookupLimit, nil)
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -815,6 +816,18 @@ func (b testBackend) HistoricalRPCService() *rpc.Client {
 }
 func (b testBackend) Genesis() *types.Block {
 	panic("implement me")
+}
+
+func (b testBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) KeystoneFeed() *event.Feed {
+	return nil
 }
 
 func TestEstimateGas(t *testing.T) {

@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/ethapi"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hemilabs/heminetwork/hemi"
 )
 
 type testBackend struct {
@@ -171,6 +172,18 @@ func (b *testBackend) ServiceFilter(ctx context.Context, session *bloombits.Matc
 func (b *testBackend) setPending(block *types.Block, receipts types.Receipts) {
 	b.pendingBlock = block
 	b.pendingReceipts = receipts
+}
+
+func (b *testBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) KeystoneFeed() *event.Feed {
+	return nil
 }
 
 func newTestFilterSystem(t testing.TB, db ethdb.Database, cfg Config) (*testBackend, *FilterSystem) {

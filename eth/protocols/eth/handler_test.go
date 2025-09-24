@@ -35,10 +35,12 @@ import (
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/ethdb"
+	"github.com/ethereum/go-ethereum/event"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
+	"github.com/hemilabs/heminetwork/hemi"
 )
 
 var (
@@ -148,6 +150,18 @@ func (b *testBackend) AcceptTxs() bool {
 func (b *testBackend) Handle(*Peer, Packet) error {
 	return nil
 	//panic("data processing tests should be done in the handler package")
+}
+
+func (b *testBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) KeystoneFeed() *event.Feed {
+	return nil
 }
 
 // Tests that block headers can be retrieved from a remote chain based on user queries.
