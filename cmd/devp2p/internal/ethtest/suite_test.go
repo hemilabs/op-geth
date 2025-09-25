@@ -17,6 +17,7 @@
 package ethtest
 
 import (
+	"context"
 	crand "crypto/rand"
 	"fmt"
 	"os"
@@ -51,7 +52,7 @@ func TestEthSuite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not make jwt secret: %v", err)
 	}
-	geth, err := runGeth("./testdata", jwtPath)
+	geth, err := runGeth(t.Context(), "./testdata", jwtPath)
 	if err != nil {
 		t.Fatalf("could not run geth: %v", err)
 	}
@@ -79,7 +80,7 @@ func TestSnapSuite(t *testing.T) {
 	if err != nil {
 		t.Fatalf("could not make jwt secret: %v", err)
 	}
-	geth, err := runGeth("./testdata", jwtPath)
+	geth, err := runGeth(t.Context(), "./testdata", jwtPath)
 	if err != nil {
 		t.Fatalf("could not run geth: %v", err)
 	}
@@ -100,7 +101,7 @@ func TestSnapSuite(t *testing.T) {
 }
 
 // runGeth creates and starts a geth node
-func runGeth(dir string, jwtPath string) (*node.Node, error) {
+func runGeth(ctx context.Context, dir string, jwtPath string) (*node.Node, error) {
 	stack, err := node.New(&node.Config{
 		AuthAddr: "127.0.0.1",
 		AuthPort: 0,
@@ -116,7 +117,7 @@ func runGeth(dir string, jwtPath string) (*node.Node, error) {
 		return nil, err
 	}
 
-	err = setupGeth(stack, dir)
+	err = setupGeth(ctx, stack, dir)
 	if err != nil {
 		stack.Close()
 		return nil, err
@@ -128,7 +129,7 @@ func runGeth(dir string, jwtPath string) (*node.Node, error) {
 	return stack, nil
 }
 
-func setupGeth(stack *node.Node, dir string) error {
+func setupGeth(ctx context.Context, stack *node.Node, dir string) error {
 	chain, err := NewChain(dir)
 	if err != nil {
 		return err
@@ -141,7 +142,8 @@ func setupGeth(stack *node.Node, dir string) error {
 		TrieDirtyCache: 16,
 		TrieTimeout:    60 * time.Minute,
 		SnapshotCache:  10,
-	})
+		HvmEnabled:     false,
+	}, ctx)
 	if err != nil {
 		return err
 	}
