@@ -177,36 +177,6 @@ var (
 			BPO2:   DefaultBPO2BlobConfig,
 		},
 	}
-	// HoodiChainConfig contains the chain parameters to run a node on the Hoodi test network.
-	HoodiChainConfig = &ChainConfig{
-		ChainID:                 big.NewInt(560048),
-		HomesteadBlock:          big.NewInt(0),
-		DAOForkBlock:            nil,
-		DAOForkSupport:          true,
-		EIP150Block:             big.NewInt(0),
-		EIP155Block:             big.NewInt(0),
-		EIP158Block:             big.NewInt(0),
-		ByzantiumBlock:          big.NewInt(0),
-		ConstantinopleBlock:     big.NewInt(0),
-		PetersburgBlock:         big.NewInt(0),
-		IstanbulBlock:           big.NewInt(0),
-		MuirGlacierBlock:        big.NewInt(0),
-		BerlinBlock:             big.NewInt(0),
-		LondonBlock:             big.NewInt(0),
-		ArrowGlacierBlock:       nil,
-		GrayGlacierBlock:        nil,
-		TerminalTotalDifficulty: big.NewInt(0),
-		MergeNetsplitBlock:      big.NewInt(0),
-		ShanghaiTime:            newUint64(0),
-		CancunTime:              newUint64(0),
-		PragueTime:              newUint64(1742999832),
-		DepositContractAddress:  common.HexToAddress("0x00000000219ab540356cBB839Cbe05303d7705Fa"),
-		Ethash:                  new(EthashConfig),
-		BlobScheduleConfig: &BlobScheduleConfig{
-			Cancun: DefaultCancunBlobConfig,
-			Prague: DefaultPragueBlobConfig,
-		},
-	}
 	// AllEthashProtocolChanges contains every protocol change (EIPs) introduced
 	// and accepted by the Ethereum core developers into the Ethash consensus.
 	AllEthashProtocolChanges = &ChainConfig{
@@ -436,6 +406,30 @@ var (
 		Target:         6,
 		Max:            9,
 		UpdateFraction: 5007716,
+	}
+	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	DefaultBPO1BlobConfig = &BlobConfig{
+		Target:         10,
+		Max:            15,
+		UpdateFraction: 8346193,
+	}
+	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	DefaultBPO2BlobConfig = &BlobConfig{
+		Target:         14,
+		Max:            21,
+		UpdateFraction: 11684671,
+	}
+	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	DefaultBPO3BlobConfig = &BlobConfig{
+		Target:         21,
+		Max:            32,
+		UpdateFraction: 20609697,
+	}
+	// DefaultBPO1BlobConfig is the default blob configuration for the Osaka fork.
+	DefaultBPO4BlobConfig = &BlobConfig{
+		Target:         14,
+		Max:            21,
+		UpdateFraction: 13739630,
 	}
 	// DefaultBlobSchedule is the latest configured blob schedule for Ethereum mainnet.
 	DefaultBlobSchedule = &BlobScheduleConfig{

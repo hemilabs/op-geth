@@ -143,17 +143,6 @@ func TestCreation(t *testing.T) {
 				{123, 2000000000, ID{Hash: checksumToBytes(0x23aa1351), Next: 0}},          // Future BPO2 block
 			},
 		},
-		// Hoodi test cases
-		{
-			params.HoodiChainConfig,
-			core.DefaultHoodiGenesisBlock().ToBlock(),
-			[]testcase{
-				{0, 0, ID{Hash: checksumToBytes(0xbef71d30), Next: 1742999832}},            // Unsynced, last Frontier, Homestead, Tangerine, Spurious, Byzantium, Constantinople, Petersburg, Istanbul, Berlin, London, Paris, Shanghai, Cancun block
-				{123, 1742999831, ID{Hash: checksumToBytes(0xbef71d30), Next: 1742999832}}, // Last Cancun block
-				{123, 1742999832, ID{Hash: checksumToBytes(0x0929e24e), Next: 0}},          // First Prague block
-				{123, 2740434112, ID{Hash: checksumToBytes(0x0929e24e), Next: 0}},          // Future Prague block
-			},
-		},
 	}
 	for i, tt := range tests {
 		for j, ttt := range tt.cases {
