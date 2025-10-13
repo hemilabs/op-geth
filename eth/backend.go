@@ -155,7 +155,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		}
 	}
 	// Transfer mining-related config to the ethash config.
-	chainConfig, err := core.LoadChainConfig(chainDb, config.Genesis)
+	chainConfig, _, err := core.LoadChainConfig(chainDb, config.Genesis)
 	if err != nil {
 		return nil, err
 	}
@@ -228,8 +228,8 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	}
 	// Override the chain config with provided settings.
 	var overrides core.ChainOverrides
-	if config.OverrideCancun != nil {
-		overrides.OverrideCancun = config.OverrideCancun
+	if config.OverrideOsaka != nil {
+		overrides.OverrideOsaka = config.OverrideOsaka
 	}
 	if config.OverrideVerkle != nil {
 		overrides.OverrideVerkle = config.OverrideVerkle
