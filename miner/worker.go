@@ -73,8 +73,8 @@ type environment struct {
 	coinbase common.Address
 	evm      *vm.EVM
 
-	// OP-Stack addition: DA footprint block limit
-	daFootprintGasScalar uint16
+	// OP-Stack addition: calldata footprint
+	daFootprint uint64
 
 	header   *types.Header
 	txs      []*types.Transaction
@@ -246,6 +246,12 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 			log.Info("Block contains BTC Attributes Deposited transaction, not adding mempool transactions")
 		}
 	}
+
+	// OP-Stack addition: Jovian maxes the block.gasUsed with the calldata footprint
+	if miner.chainConfig.IsJovian(work.header.Time) && work.daFootprint > work.header.GasUsed {
+		work.header.GasUsed = work.daFootprint
+	}
+
 	body := types.Body{Transactions: work.txs, Withdrawals: genParam.withdrawals}
 
 	allLogs := make([]*types.Log, 0)
@@ -533,6 +539,8 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 	return receipt, err
 }
 
+var minTransactionDAFootprint = new(big.Int).Mul(types.MinTransactionSize, big.NewInt(params.DAFootprintGasScalar))
+
 func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *transactionsByPriceAndNonce, interrupt *atomic.Int32) error {
 	var (
 		isCancun = miner.chainConfig.IsCancun(env.header.Number, env.header.Time)
@@ -544,8 +552,8 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 
 	// OP-Stack additions: throttling and DA footprint limit
 	blockDABytes := new(big.Int)
-	isJovian := miner.chainConfig.IsDAFootprintBlockLimit(env.header.Time)
-	minTransactionDAFootprint := types.MinTransactionSize.Uint64() * uint64(env.daFootprintGasScalar)
+	daFootprintLeft := big.NewInt(int64(gasLimit))
+	isJovian := miner.chainConfig.IsJovian(env.header.Time)
 
 	for {
 		// Check interruption signal and abort building if it's fired.
@@ -559,17 +567,11 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			log.Trace("Not enough gas for further transactions", "have", env.gasPool, "want", params.TxGas)
 			break
 		}
-
-		var daFootprintLeft uint64
-		if isJovian {
-			daFootprintLeft = gasLimit - *env.header.BlobGasUsed
-			// If we don't have enough DA space for any further transactions then we're done.
-			if daFootprintLeft < minTransactionDAFootprint {
-				log.Debug("Not enough DA space for further transactions", "have", daFootprintLeft, "want", minTransactionDAFootprint)
-				break
-			}
+		// If we don't have enough DA space for any further transactions then we're done.
+		if isJovian && daFootprintLeft.Cmp(minTransactionDAFootprint) < 0 {
+			log.Debug("Not enough DA space for further transactions", "have", daFootprintLeft, "want", minTransactionDAFootprint)
+			break
 		}
-
 		// If we don't have enough blob space for any further blob transactions,
 		// skip that list altogether
 		if !blobTxs.Empty() && env.blobs >= eip4844.MaxBlobsPerBlock(miner.chainConfig, env.header.Time) {
@@ -620,12 +622,12 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		}
 
 		// OP-Stack addition: Jovian DA footprint limit
-		var txDAFootprint uint64
+		var txDAFootprint *big.Int
 		// Note that commitTransaction is only called after deposit transactions have already been committed,
 		// so we don't need to resolve the transaction here and exclude deposits.
 		if isJovian {
-			txDAFootprint = ltx.DABytes.Uint64() * uint64(env.daFootprintGasScalar)
-			if daFootprintLeft < txDAFootprint {
+			txDAFootprint = new(big.Int).Mul(ltx.DABytes, big.NewInt(params.DAFootprintGasScalar))
+			if daFootprintLeft.Cmp(txDAFootprint) < 0 {
 				log.Debug("Not enough DA space left for transaction", "hash", ltx.Hash, "left", daFootprintLeft, "needed", txDAFootprint)
 				txs.Pop()
 				continue
@@ -705,7 +707,8 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			// Everything ok, collect the logs and shift in the next transaction from the same account
 			blockDABytes = daBytesAfter
 			if isJovian {
-				*env.header.BlobGasUsed += txDAFootprint
+				daFootprintLeft.Sub(daFootprintLeft, txDAFootprint)
+				env.daFootprint += txDAFootprint.Uint64() // note, it's guaranteed to not overflow because of the max calldata size
 			}
 			txs.Shift()
 

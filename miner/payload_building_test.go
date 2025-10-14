@@ -77,7 +77,10 @@ const (
 	numDAFilterTxs = 256
 )
 
-var zero = uint64(0)
+var (
+	zero               = uint64(0)
+	validEIP1559Params = eip1559.EncodeHolocene1559Params(250, 6)
+)
 
 func init() {
 	testTxPoolConfig = legacypool.DefaultConfig
@@ -220,9 +223,15 @@ func holoceneConfig() *params.ChainConfig {
 	return &config
 }
 
-func jovianConfig() *params.ChainConfig {
+func isthmusConfig() *params.ChainConfig {
 	config := holoceneConfig()
-	zero := uint64(0)
+	config.IsthmusTime = &zero
+	config.PragueTime = &zero
+	return config
+}
+
+func jovianConfig() *params.ChainConfig {
+	config := isthmusConfig()
 	config.JovianTime = &zero
 	return config
 }
@@ -233,8 +242,8 @@ func newPayloadArgs(parentHash common.Hash, params1559 []byte, minBaseFee *uint6
 	return &BuildPayloadArgs{
 		Parent:        parentHash,
 		Timestamp:     testTimestamp,
-		Random:        common.Hash{},
 		FeeRecipient:  testRecipient,
+		Withdrawals:   types.Withdrawals{},
 		NoTxPool:      true,
 		EIP1559Params: params1559,
 		MinBaseFee:    minBaseFee,
@@ -384,8 +393,7 @@ func testDAFilters(t *testing.T, maxDATxSize, maxDABlockSize *big.Int, expectedT
 	txs := genTxs(1, numDAFilterTxs)
 	b.txPool.Add(txs, false)
 
-	params1559 := []byte{0, 1, 2, 3, 4, 5, 6, 7}
-	args := newPayloadArgs(b.chain.CurrentBlock().Hash(), params1559, &zero)
+	args := newPayloadArgs(b.chain.CurrentBlock().Hash(), validEIP1559Params, &zero)
 	args.NoTxPool = false
 
 	payload, err := w.buildPayload(args, false)
@@ -433,14 +441,14 @@ func TestBuildPayloadInvalidHoloceneParams(t *testing.T) {
 	}
 }
 
-func TestBuildPayloadInvalidMinBaseFeeExtraData(t *testing.T) {
+func TestBuildPayloadInvalidJovianBuildPayloadArgs(t *testing.T) {
 	t.Parallel()
 	db := rawdb.NewMemoryDatabase()
 	config := jovianConfig()
 	w, b := newTestWorker(t, config, ethash.NewFaker(), db, 0)
 
 	// 0 denominators shouldn't be allowed
-	badParams := eip1559.EncodeMinBaseFeeExtraData(0, 6, 0)
+	badParams := eip1559.EncodeHolocene1559Params(0, 6)
 
 	args := newPayloadArgs(b.chain.CurrentBlock().Hash(), badParams, &zero)
 	payload, err := w.buildPayload(args, false)
@@ -448,13 +456,11 @@ func TestBuildPayloadInvalidMinBaseFeeExtraData(t *testing.T) {
 		t.Fatalf("expected error, got none")
 	}
 
-	// missing minBaseFee shouldn't be allowed (use Holocene encoder)
-	badParams = eip1559.EncodeHoloceneExtraData(250, 6)
-	args = newPayloadArgs(b.chain.CurrentBlock().Hash(), badParams, &zero)
-	payload, err = w.buildPayload(args, false)
-	if err == nil && (payload == nil || payload.err == nil) {
-		t.Fatalf("expected error, got none")
-	}
+	// missing minBaseFee is wrong input, panics
+	args = newPayloadArgs(b.chain.CurrentBlock().Hash(), validEIP1559Params, nil)
+	require.Panics(t, func() {
+		w.buildPayload(args, false)
+	})
 }
 
 func genTxs(startNonce, count uint64) types.Transactions {
