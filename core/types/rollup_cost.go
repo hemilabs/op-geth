@@ -556,11 +556,10 @@ func ExtractDAFootprintGasScalar(data []byte) (uint16, error) {
 	return daFootprintGasScalar, nil
 }
 
-// CalcDAFootprint calculates the total DA footprint of a block for an OP Stack chain.
-// Jovian introduces a DA footprint block limit which is stored in the BlobGasUsed header field and that is taken
-// into account during base fee updates.
-// CalcDAFootprint must not be called for pre-Jovian blocks.
-func CalcDAFootprint(txs []*Transaction) (uint64, error) {
+// CalcGasUsedJovian calculates the gas used for an OP Stack chain.
+// Jovian introduces a DA footprint block limit, which potentially increases the gasUsed.
+// CalcGasUsedJovian must not be called for pre-Jovian blocks.
+func CalcGasUsedJovian(txs []*Transaction, evmGasUsed uint64) (uint64, error) {
 	if len(txs) == 0 || !txs[0].IsDepositTx() {
 		return 0, errors.New("missing deposit transaction")
 	}
@@ -573,21 +572,25 @@ func CalcDAFootprint(txs []*Transaction) (uint64, error) {
 			// sufficient to check last transaction because deposits precede non-deposit txs
 			return 0, errors.New("unexpected non-deposit transactions in Jovian activation block")
 		}
-		return 0, nil
+		return evmGasUsed, nil
 	} // ExtractDAFootprintGasScalar catches all invalid lengths
 
 	daFootprintGasScalar, err := ExtractDAFootprintGasScalar(data)
 	if err != nil {
 		return 0, err
 	}
-	var daFootprint uint64
+	var cumulativeDAFootprint uint64
 	for _, tx := range txs {
 		if tx.IsDepositTx() {
 			continue
 		}
-		daFootprint += tx.RollupCostData().EstimatedDASize().Uint64() * uint64(daFootprintGasScalar)
+		cumulativeDAFootprint += tx.RollupCostData().EstimatedDASize().Uint64()
 	}
-	return daFootprint, nil
+	daFootprint := uint64(daFootprintGasScalar) * cumulativeDAFootprint
+	if evmGasUsed < daFootprint {
+		return daFootprint, nil
+	}
+	return evmGasUsed, nil
 }
 
 // L1Cost computes the the data availability fee for transactions in blocks prior to the Ecotone
