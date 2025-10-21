@@ -159,6 +159,16 @@ func LatestMaxBlobsPerBlock(cfg *params.ChainConfig) int {
 		return 0
 	}
 	switch {
+	case s.BPO5 != nil:
+		return s.BPO5.Max
+	case s.BPO4 != nil:
+		return s.BPO4.Max
+	case s.BPO3 != nil:
+		return s.BPO3.Max
+	case s.BPO2 != nil:
+		return s.BPO2.Max
+	case s.BPO1 != nil:
+		return s.BPO1.Max
 	case s.Osaka != nil:
 		return s.Osaka.Max
 	case s.Prague != nil:
@@ -180,6 +190,16 @@ func targetBlobsPerBlock(cfg *params.ChainConfig, time uint64) int {
 		s      = cfg.BlobScheduleConfig
 	)
 	switch {
+	case cfg.IsBPO5(london, time) && s.BPO5 != nil:
+		return s.BPO5.Target
+	case cfg.IsBPO4(london, time) && s.BPO4 != nil:
+		return s.BPO4.Target
+	case cfg.IsBPO3(london, time) && s.BPO3 != nil:
+		return s.BPO3.Target
+	case cfg.IsBPO2(london, time) && s.BPO2 != nil:
+		return s.BPO2.Target
+	case cfg.IsBPO1(london, time) && s.BPO1 != nil:
+		return s.BPO1.Target
 	case cfg.IsOsaka(london, time) && s.Osaka != nil:
 		return s.Osaka.Target
 	case cfg.IsPrague(london, time) && s.Prague != nil:
