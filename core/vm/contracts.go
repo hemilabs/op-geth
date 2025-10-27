@@ -192,7 +192,85 @@ var PrecompiledContractsP256Verify = PrecompiledContracts{
 	common.BytesToAddress([]byte{0x1, 0x00}): &p256Verify{},
 }
 
+// PrecompiledContractsFjord contains the default set of pre-compiled Ethereum
+// contracts used in the Fjord release.
+var PrecompiledContractsFjord = map[common.Address]PrecompiledContract{
+	common.BytesToAddress([]byte{1}):          &ecrecover{},
+	common.BytesToAddress([]byte{2}):          &sha256hash{},
+	common.BytesToAddress([]byte{3}):          &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):          &dataCopy{},
+	common.BytesToAddress([]byte{5}):          &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):          &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):          &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):          &bn256PairingIstanbul{},
+	common.BytesToAddress([]byte{9}):          &blake2F{},
+	common.BytesToAddress([]byte{0x0a}):       &kzgPointEvaluation{},
+	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
+}
+
+// PrecompiledContractsGranite contains the default set of pre-compiled Ethereum
+// contracts used in the Granite release.
+var PrecompiledContractsGranite = map[common.Address]PrecompiledContract{
+	common.BytesToAddress([]byte{1}):          &ecrecover{},
+	common.BytesToAddress([]byte{2}):          &sha256hash{},
+	common.BytesToAddress([]byte{3}):          &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):          &dataCopy{},
+	common.BytesToAddress([]byte{5}):          &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):          &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):          &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):          &bn256PairingGranite{},
+	common.BytesToAddress([]byte{9}):          &blake2F{},
+	common.BytesToAddress([]byte{0x0a}):       &kzgPointEvaluation{},
+	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
+}
+
+var PrecompiledContractsIsthmus = map[common.Address]PrecompiledContract{
+	common.BytesToAddress([]byte{1}):          &ecrecover{},
+	common.BytesToAddress([]byte{2}):          &sha256hash{},
+	common.BytesToAddress([]byte{3}):          &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):          &dataCopy{},
+	common.BytesToAddress([]byte{5}):          &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):          &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):          &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):          &bn256PairingGranite{},
+	common.BytesToAddress([]byte{9}):          &blake2F{},
+	common.BytesToAddress([]byte{0x0a}):       &kzgPointEvaluation{},
+	common.BytesToAddress([]byte{0x0b}):       &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}):       &bls12381G1MultiExpIsthmus{},
+	common.BytesToAddress([]byte{0x0d}):       &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}):       &bls12381G2MultiExpIsthmus{},
+	common.BytesToAddress([]byte{0x0f}):       &bls12381PairingIsthmus{},
+	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
+}
+
+var PrecompiledContractsJovian = map[common.Address]PrecompiledContract{
+	common.BytesToAddress([]byte{1}):          &ecrecover{},
+	common.BytesToAddress([]byte{2}):          &sha256hash{},
+	common.BytesToAddress([]byte{3}):          &ripemd160hash{},
+	common.BytesToAddress([]byte{4}):          &dataCopy{},
+	common.BytesToAddress([]byte{5}):          &bigModExp{eip2565: true},
+	common.BytesToAddress([]byte{6}):          &bn256AddIstanbul{},
+	common.BytesToAddress([]byte{7}):          &bn256ScalarMulIstanbul{},
+	common.BytesToAddress([]byte{8}):          &bn256PairingJovian{},
+	common.BytesToAddress([]byte{9}):          &blake2F{},
+	common.BytesToAddress([]byte{0x0a}):       &kzgPointEvaluation{},
+	common.BytesToAddress([]byte{0x0b}):       &bls12381G1Add{},
+	common.BytesToAddress([]byte{0x0c}):       &bls12381G1MultiExpJovian{},
+	common.BytesToAddress([]byte{0x0d}):       &bls12381G2Add{},
+	common.BytesToAddress([]byte{0x0e}):       &bls12381G2MultiExpJovian{},
+	common.BytesToAddress([]byte{0x0f}):       &bls12381PairingJovian{},
+	common.BytesToAddress([]byte{0x10}):       &bls12381MapG1{},
+	common.BytesToAddress([]byte{0x11}):       &bls12381MapG2{},
+	common.BytesToAddress([]byte{0x01, 0x00}): &p256VerifyFjord{},
+}
+
 var (
+	PrecompiledAddressesJovian    []common.Address
+	PrecompiledAddressesIsthmus   []common.Address
+	PrecompiledAddressesGranite   []common.Address
+	PrecompiledAddressesFjord     []common.Address
 	PrecompiledAddressesOsaka     []common.Address
 	PrecompiledAddressesPrague    []common.Address
 	PrecompiledAddressesCancun    []common.Address
@@ -224,6 +302,18 @@ func init() {
 	}
 	for k := range PrecompiledContractsOsaka {
 		PrecompiledAddressesOsaka = append(PrecompiledAddressesOsaka, k)
+	}
+	for k := range PrecompiledContractsFjord {
+		PrecompiledAddressesFjord = append(PrecompiledAddressesFjord, k)
+	}
+	for k := range PrecompiledContractsGranite {
+		PrecompiledAddressesGranite = append(PrecompiledAddressesGranite, k)
+	}
+	for k := range PrecompiledContractsIsthmus {
+		PrecompiledAddressesIsthmus = append(PrecompiledAddressesIsthmus, k)
+	}
+	for k := range PrecompiledContractsJovian {
+		PrecompiledAddressesJovian = append(PrecompiledAddressesJovian, k)
 	}
 }
 
@@ -275,6 +365,14 @@ func ActivePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 // ActivePrecompiles returns the precompiles enabled with the current configuration.
 func activePrecompiles(rules params.Rules) []common.Address {
 	switch {
+	case rules.IsOptimismJovian:
+		return PrecompiledAddressesJovian
+	case rules.IsOptimismIsthmus:
+		return PrecompiledAddressesIsthmus
+	case rules.IsOptimismGranite:
+		return PrecompiledAddressesGranite
+	case rules.IsOptimismFjord:
+		return PrecompiledAddressesFjord
 	case rules.IsOsaka:
 		return PrecompiledAddressesOsaka
 	case rules.IsPrague:
@@ -1891,7 +1989,7 @@ func (c *bn256PairingJovian) RequiredGas(input []byte) uint64 {
 	return new(bn256PairingIstanbul).RequiredGas(input)
 }
 
-func (c *bn256PairingJovian) Run(input []byte, blockContext common.Hash) ([]byte, error) {
+func (c *bn256PairingJovian) Run(input []byte) ([]byte, error) {
 	if len(input) > int(params.Bn256PairingMaxInputSizeJovian) {
 		return nil, errBadPairingInputSize
 	}
@@ -2047,6 +2145,44 @@ func (c *bls12381G1Add) Run(input []byte, blockContext common.Hash) ([]byte, err
 	return encodePointG1(p0), nil
 }
 
+type bls12381G1MultiExpIsthmus struct {
+}
+
+func (c *bls12381G1MultiExpIsthmus) RequiredGas(input []byte) uint64 {
+	return new(bls12381G1MultiExp).RequiredGas(input)
+}
+
+func (c *bls12381G1MultiExpIsthmus) Run(input []byte) ([]byte, error) {
+	if len(input) > int(params.Bls12381G1MulMaxInputSizeIsthmus) {
+		return nil, errBLS12381MaxG1Size
+	}
+
+	return new(bls12381G1MultiExp).Run(input)
+}
+func (c *bls12381G1MultiExpIsthmus) Name() string {
+	return "BLS12_G1MSM"
+}
+
+type bls12381G1MultiExpJovian struct {
+}
+
+func (c *bls12381G1MultiExpJovian) RequiredGas(input []byte) uint64 {
+	return new(bls12381G1MultiExp).RequiredGas(input)
+}
+
+func (c *bls12381G1MultiExpJovian) Run(input []byte) ([]byte, error) {
+	if len(input) > int(params.Bls12381G1MulMaxInputSizeJovian) {
+		return nil, errBLS12381MaxG1Size
+	}
+
+	return new(bls12381G1MultiExp).Run(input)
+}
+
+func (c *bls12381G1MultiExpJovian) Name() string {
+	return "BLS12_G1MSM"
+}
+
+// bls12381G1MultiExp implements EIP-2537 G1MultiExp precompile for Prague (no size limits).
 func (c *bls12381G1Add) Name() string {
 	return "BLS12_G1ADD"
 }
@@ -2156,6 +2292,44 @@ func (c *bls12381G2Add) Name() string {
 	return "BLS12_G2ADD"
 }
 
+type bls12381G2MultiExpIsthmus struct {
+}
+
+func (c *bls12381G2MultiExpIsthmus) RequiredGas(input []byte) uint64 {
+	return new(bls12381G2MultiExp).RequiredGas(input)
+}
+
+func (c *bls12381G2MultiExpIsthmus) Run(input []byte) ([]byte, error) {
+	if len(input) > int(params.Bls12381G2MulMaxInputSizeIsthmus) {
+		return nil, errBLS12381MaxG2Size
+	}
+
+	return new(bls12381G2MultiExp).Run(input)
+}
+
+func (c *bls12381G2MultiExpIsthmus) Name() string {
+	return "BLS12_G2MSM"
+}
+
+type bls12381G2MultiExpJovian struct {
+}
+
+func (c *bls12381G2MultiExpJovian) RequiredGas(input []byte) uint64 {
+	return new(bls12381G2MultiExp).RequiredGas(input)
+}
+
+func (c *bls12381G2MultiExpJovian) Run(input []byte) ([]byte, error) {
+	if len(input) > int(params.Bls12381G2MulMaxInputSizeJovian) {
+		return nil, errBLS12381MaxG2Size
+	}
+
+	return new(bls12381G2MultiExp).Run(input)
+}
+
+func (c *bls12381G2MultiExpJovian) Name() string {
+	return "BLS12_G2MSM"
+}
+
 // bls12381G2MultiExp implements EIP-2537 G2MultiExp precompile.
 type bls12381G2MultiExp struct{}
 
@@ -2218,6 +2392,44 @@ func (c *bls12381G2MultiExp) Run(input []byte, blockContext common.Hash) ([]byte
 
 func (c *bls12381G2MultiExp) Name() string {
 	return "BLS12_G2MSM"
+}
+
+type bls12381PairingIsthmus struct {
+}
+
+func (c *bls12381PairingIsthmus) RequiredGas(input []byte) uint64 {
+	return new(bls12381Pairing).RequiredGas(input)
+}
+
+func (c *bls12381PairingIsthmus) Run(input []byte) ([]byte, error) {
+	if len(input) > int(params.Bls12381PairingMaxInputSizeIsthmus) {
+		return nil, errBLS12381MaxPairingSize
+	}
+
+	return new(bls12381Pairing).Run(input)
+}
+
+func (c *bls12381PairingIsthmus) Name() string {
+	return "BLS12_PAIRING_CHECK"
+}
+
+type bls12381PairingJovian struct {
+}
+
+func (c *bls12381PairingJovian) RequiredGas(input []byte) uint64 {
+	return new(bls12381Pairing).RequiredGas(input)
+}
+
+func (c *bls12381PairingJovian) Run(input []byte) ([]byte, error) {
+	if len(input) > int(params.Bls12381PairingMaxInputSizeJovian) {
+		return nil, errBLS12381MaxPairingSize
+	}
+
+	return new(bls12381Pairing).Run(input)
+}
+
+func (c *bls12381PairingJovian) Name() string {
+	return "BLS12_PAIRING_CHECK"
 }
 
 // bls12381Pairing implements EIP-2537 Pairing precompile.
