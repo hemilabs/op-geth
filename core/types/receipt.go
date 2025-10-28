@@ -121,20 +121,18 @@ type receiptMarshaling struct {
 	TransactionIndex  hexutil.Uint
 
 	// Optimism
-	L1GasPrice                  *hexutil.Big
-	L1GasUsed                   *hexutil.Big
-	L1Fee                       *hexutil.Big
-	FeeScalar                   *big.Float
-	DepositNonce                *hexutil.Uint64
-	DepositReceiptVersion       *hexutil.Uint64
-	PoPPayoutNonce              *hexutil.Uint64
-	BtcAttributesDepositedNonce *hexutil.Uint64
-	L1BlobBaseFee               *hexutil.Big
-	L1BaseFeeScalar             *hexutil.Uint64
-	L1BlobBaseFeeScalar         *hexutil.Uint64
-	OperatorFeeScalar           *hexutil.Uint64
-	OperatorFeeConstant         *hexutil.Uint64
-	DAFootprintGasScalar        *hexutil.Uint64
+	L1GasPrice            *hexutil.Big
+	L1BlobBaseFee         *hexutil.Big
+	L1GasUsed             *hexutil.Big
+	L1Fee                 *hexutil.Big
+	FeeScalar             *big.Float
+	L1BaseFeeScalar       *hexutil.Uint64
+	L1BlobBaseFeeScalar   *hexutil.Uint64
+	DepositNonce          *hexutil.Uint64
+	DepositReceiptVersion *hexutil.Uint64
+	OperatorFeeScalar     *hexutil.Uint64
+	OperatorFeeConstant   *hexutil.Uint64
+	DAFootprintGasScalar  *hexutil.Uint64
 }
 
 // receiptRLP is the consensus encoding of a receipt.
@@ -690,6 +688,10 @@ func (rs Receipts) DeriveFields(config *params.ChainConfig, blockHash common.Has
 			TxIndex:      uint(i),
 		})
 		logIndex += uint(len(rs[i].Logs))
+	}
+
+	if config.IsOptimismBedrock(new(big.Int).SetUint64(blockNumber)) && len(txs) >= 2 {
+		return rs.deriveOPStackFields(config, blockTime, txs)
 	}
 	return nil
 }

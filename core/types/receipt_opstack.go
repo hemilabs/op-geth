@@ -31,7 +31,7 @@ func (rs Receipts) deriveOPStackFields(config *params.ChainConfig, blockTime uin
 	}
 
 	for i := range rs {
-		if txs[i].IsDepositTx() || txs[i].IsPopPayoutTx() || txs[i].IsBtcAttributesDepositedTx() {
+		if txs[i].IsDepositTx() {
 			continue
 		}
 		rs[i].L1GasPrice = gasParams.l1BaseFee
