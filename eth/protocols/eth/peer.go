@@ -138,6 +138,7 @@ func (p *Peer) markTransaction(hash common.Hash) {
 func (p *Peer) SendTransactions(txs types.Transactions) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	for _, tx := range txs {
+		p.Log().Info("will send tx to peer", "hash", tx.Hash(), "peer id", p.ID)
 		p.knownTxs.Add(tx.Hash())
 	}
 	return p2p.Send(p.rw, TransactionsMsg, txs)
@@ -151,6 +152,9 @@ func (p *Peer) AsyncSendTransactions(hashes []common.Hash) {
 	case p.txBroadcast <- hashes:
 		// Mark all the transactions as known, but ensure we don't overflow our limits
 		p.knownTxs.Add(hashes...)
+		for _, hash := range hashes {
+			p.Log().Info("sending pooled tx to peer", "hash", hash, "peer id", p.ID)
+		}
 	case <-p.term:
 		p.Log().Debug("Dropping transaction propagation", "count", len(hashes))
 	}
@@ -186,6 +190,10 @@ func (p *Peer) AsyncSendPooledTransactionHashes(hashes []common.Hash) {
 func (p *Peer) ReplyPooledTransactionsRLP(id uint64, hashes []common.Hash, txs []rlp.RawValue) error {
 	// Mark all the transactions as known, but ensure we don't overflow our limits
 	p.knownTxs.Add(hashes...)
+
+	for _, hash := range hashes {
+		p.Log().Info("replying with pooled tx", "hash", hash, "peer id", p.ID)
+	}
 
 	// Not packed into PooledTransactionsResponse to avoid RLP decoding
 	return p2p.Send(p.rw, PooledTransactionsMsg, &PooledTransactionsRLPPacket{
