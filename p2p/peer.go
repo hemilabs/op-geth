@@ -476,6 +476,7 @@ type protoRW struct {
 
 func (rw *protoRW) WriteMsg(msg Msg) (err error) {
 	if msg.Code >= rw.Length {
+		log.Warn("Message code too high", "code", msg.Code, "rw.Length", rw.Length)
 		return newPeerError(errInvalidMsgCode, "not handled")
 	}
 	msg.meterCap = rw.cap()
