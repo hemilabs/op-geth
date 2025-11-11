@@ -93,6 +93,16 @@ func CalcBlobFee(config *params.ChainConfig, header *types.Header) *big.Int {
 
 	var frac uint64
 	switch config.LatestFork(header.Time) {
+	case forks.BPO5:
+		frac = config.BlobScheduleConfig.BPO5.UpdateFraction
+	case forks.BPO4:
+		frac = config.BlobScheduleConfig.BPO4.UpdateFraction
+	case forks.BPO3:
+		frac = config.BlobScheduleConfig.BPO3.UpdateFraction
+	case forks.BPO2:
+		frac = config.BlobScheduleConfig.BPO2.UpdateFraction
+	case forks.BPO1:
+		frac = config.BlobScheduleConfig.BPO1.UpdateFraction
 	case forks.Osaka:
 		frac = config.BlobScheduleConfig.Osaka.UpdateFraction
 	case forks.Prague:
@@ -115,6 +125,16 @@ func MaxBlobsPerBlock(cfg *params.ChainConfig, time uint64) int {
 		s      = cfg.BlobScheduleConfig
 	)
 	switch {
+	case cfg.IsBPO5(london, time) && s.BPO5 != nil:
+		return s.BPO5.Max
+	case cfg.IsBPO4(london, time) && s.BPO4 != nil:
+		return s.BPO4.Max
+	case cfg.IsBPO3(london, time) && s.BPO3 != nil:
+		return s.BPO3.Max
+	case cfg.IsBPO2(london, time) && s.BPO2 != nil:
+		return s.BPO2.Max
+	case cfg.IsBPO1(london, time) && s.BPO1 != nil:
+		return s.BPO1.Max
 	case cfg.IsOsaka(london, time) && s.Osaka != nil:
 		return s.Osaka.Max
 	case cfg.IsPrague(london, time) && s.Prague != nil:
@@ -139,6 +159,16 @@ func LatestMaxBlobsPerBlock(cfg *params.ChainConfig) int {
 		return 0
 	}
 	switch {
+	case s.BPO5 != nil:
+		return s.BPO5.Max
+	case s.BPO4 != nil:
+		return s.BPO4.Max
+	case s.BPO3 != nil:
+		return s.BPO3.Max
+	case s.BPO2 != nil:
+		return s.BPO2.Max
+	case s.BPO1 != nil:
+		return s.BPO1.Max
 	case s.Osaka != nil:
 		return s.Osaka.Max
 	case s.Prague != nil:
@@ -160,6 +190,16 @@ func targetBlobsPerBlock(cfg *params.ChainConfig, time uint64) int {
 		s      = cfg.BlobScheduleConfig
 	)
 	switch {
+	case cfg.IsBPO5(london, time) && s.BPO5 != nil:
+		return s.BPO5.Target
+	case cfg.IsBPO4(london, time) && s.BPO4 != nil:
+		return s.BPO4.Target
+	case cfg.IsBPO3(london, time) && s.BPO3 != nil:
+		return s.BPO3.Target
+	case cfg.IsBPO2(london, time) && s.BPO2 != nil:
+		return s.BPO2.Target
+	case cfg.IsBPO1(london, time) && s.BPO1 != nil:
+		return s.BPO1.Target
 	case cfg.IsOsaka(london, time) && s.Osaka != nil:
 		return s.Osaka.Target
 	case cfg.IsPrague(london, time) && s.Prague != nil:

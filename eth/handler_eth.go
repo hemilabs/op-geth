@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/eth/protocols/eth"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/p2p/enode"
 )
 
@@ -78,6 +79,9 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
 
 	case *eth.TransactionsPacket:
+		for _, tx := range *packet {
+			log.Info("received transaction in packet from peer", "hash", tx.Hash(), "peer id", peer.ID)
+		}
 		for _, tx := range *packet {
 			if tx.Type() == types.BlobTxType {
 				return errors.New("disallowed broadcast blob transaction")

@@ -95,6 +95,9 @@ func (p *Peer) broadcastTransactions() {
 			if len(txs) > 0 {
 				done = make(chan struct{})
 				go func() {
+					for _, tx := range txs {
+						log.Info("sending tx to peer", "hash", tx.Hash().String(), "peer id", p.ID)
+					}
 					if err := p.SendTransactions(txs); err != nil {
 						fail <- err
 						return
