@@ -68,11 +68,17 @@ var (
 		ShanghaiTime:            newUint64(1681338455),
 		CancunTime:              newUint64(1710338135),
 		PragueTime:              newUint64(1746612311),
+		OsakaTime:               newUint64(1764798551),
+		BPO1Time:                newUint64(1765290071),
+		BPO2Time:                newUint64(1767747671),
 		DepositContractAddress:  common.HexToAddress("0x00000000219ab540356cbb839cbe05303d7705fa"),
 		Ethash:                  new(EthashConfig),
 		BlobScheduleConfig: &BlobScheduleConfig{
 			Cancun: DefaultCancunBlobConfig,
 			Prague: DefaultPragueBlobConfig,
+			Osaka:  DefaultOsakaBlobConfig,
+			BPO1:   DefaultBPO1BlobConfig,
+			BPO2:   DefaultBPO2BlobConfig,
 		},
 	}
 	// HoleskyChainConfig contains the chain parameters to run a node on the Holesky test network.
@@ -377,6 +383,7 @@ var (
 	OptimismTestConfig = func() *ChainConfig {
 		conf := *MergedTestChainConfig // copy the config
 		conf.BlobScheduleConfig = nil
+		conf.OsakaTime = nil // needs to be removed when production fork introduces Osaka
 		conf.BedrockBlock = big.NewInt(0)
 		zero := uint64(0)
 		conf.RegolithTime = &zero
@@ -386,9 +393,9 @@ var (
 		conf.GraniteTime = &zero
 		conf.HoloceneTime = &zero
 		conf.IsthmusTime = &zero
-		conf.InteropTime = nil
 		conf.JovianTime = nil
-		conf.Optimism = &OptimismConfig{EIP1559Elasticity: 50, EIP1559Denominator: 10, EIP1559DenominatorCanyon: uint64ptr(250)}
+		conf.InteropTime = nil
+		conf.Optimism = &OptimismConfig{EIP1559Elasticity: 6, EIP1559Denominator: 50, EIP1559DenominatorCanyon: uint64ptr(250)}
 		return &conf
 	}()
 )

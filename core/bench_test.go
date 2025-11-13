@@ -326,9 +326,7 @@ func benchReadChain(b *testing.B, full bool, count uint64) {
 	genesis := &Genesis{Config: params.AllEthashProtocolChanges}
 	makeChainForBench(db, genesis, full, count)
 	db.Close()
-	cacheConfig := *defaultCacheConfig
-	cacheConfig.TrieDirtyDisabled = true
-
+	options := DefaultConfig().WithArchive(true)
 	b.ReportAllocs()
 	b.ResetTimer()
 

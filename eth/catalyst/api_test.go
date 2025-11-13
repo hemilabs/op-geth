@@ -455,6 +455,9 @@ func startEthServiceWithConfigFn(t *testing.T, blocks []*types.Block, ethcfg *et
 		n.Close()
 		t.Fatal("can't import test blocks:", err)
 	}
+	if err := ethservice.TxPool().Sync(); err != nil {
+		t.Fatal("failed to sync txpool after initial blockchain import:", err)
+	}
 
 	ethservice.SetSynced()
 	return n, ethservice
@@ -1511,7 +1514,7 @@ func checkEqualBody(a *types.Body, b *engine.ExecutionPayloadBody) error {
 		}
 	}
 	if !reflect.DeepEqual(a.Withdrawals, b.Withdrawals) {
-		return fmt.Errorf("withdrawals mismatch")
+		return errors.New("withdrawals mismatch")
 	}
 	return nil
 }
@@ -1525,13 +1528,8 @@ func TestBlockToPayloadWithBlobs(t *testing.T) {
 	}
 
 	txs = append(txs, types.NewTx(&inner))
-	sidecars := []*types.BlobTxSidecar{
-		{
-			Blobs:       make([]kzg4844.Blob, 1),
-			Commitments: make([]kzg4844.Commitment, 1),
-			Proofs:      make([]kzg4844.Proof, 1),
-		},
-	}
+	sidecar := types.NewBlobTxSidecar(types.BlobSidecarVersion0, make([]kzg4844.Blob, 1), make([]kzg4844.Commitment, 1), make([]kzg4844.Proof, 1))
+	sidecars := []*types.BlobTxSidecar{sidecar}
 
 	block := types.NewBlock(&header, &types.Body{Transactions: txs}, nil, trie.NewStackTrie(nil), types.DefaultBlockConfig)
 	envelope := engine.BlockToExecutableData(block, nil, sidecars, nil)

@@ -190,7 +190,6 @@ type blobTxWithBlobsV0 struct {
 	Proofs      []kzg4844.Proof
 }
 
-// blobTxWithBlobs is used for encoding of transactions when blobs are present.
 type blobTxWithBlobsV1 struct {
 	BlobTx      *BlobTx
 	Version     byte

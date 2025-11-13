@@ -32,10 +32,6 @@ echo "Generating index of configs..."
 
 echo "{}" >chains.json
 
-# List of chain IDs to exclude
-declare -A EXCLUDE_CHAIN_IDS
-EXCLUDE_CHAIN_IDS=(["28882"]=1) # Boba
-
 # Function to process each network directory
 process_network_dir() {
     local network_dir="$1"
@@ -54,11 +50,17 @@ process_network_dir() {
         chain_id=$(dasel -f "$toml_file" -r toml "chain_id" | tr -d '"')
         chain_name="$(basename "${toml_file%.*}")"
 
-        # Skip if chain_id is empty or in the exclusion list
-        if [[ -z "$chain_id" || -v EXCLUDE_CHAIN_IDS["$chain_id"] ]]; then
+        if [[ -z "$chain_id"
+              # Boba Sepolia
+              || "$chain_id" -eq 28882
+              # Boba Mainnet
+              || "$chain_id" -eq 288
+              # Celo Mainnet: non-standard genesis format (forked from Ethereum, then converted to L2)
+              || "$chain_id" -eq 42220 ]];
+        then
             echo "Skipping $network_name/$chain_name ($chain_id)"
             rm "$toml_file"
-            rm "genesis/$network_name/$chain_name.json.zst"
+            rm -f "genesis/$network_name/$chain_name.json.zst"
             continue
         fi
 

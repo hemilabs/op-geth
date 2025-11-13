@@ -105,6 +105,15 @@ func testSetupGenesis(t *testing.T, scheme string) {
 			wantErr: &GenesisMismatchError{Stored: customghash, New: params.SepoliaGenesisHash},
 		},
 		{
+			name: "custom block in DB, genesis == hoodi",
+			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, *params.ConfigCompatError, error) {
+				tdb := triedb.NewDatabase(db, newDbConfig(scheme))
+				customg.Commit(db, tdb)
+				return SetupGenesisBlock(db, tdb, DefaultHoodiGenesisBlock())
+			},
+			wantErr: &GenesisMismatchError{Stored: customghash, New: params.HoodiGenesisHash},
+		},
+		{
 			name: "compatible config in DB",
 			fn: func(db ethdb.Database) (*params.ChainConfig, common.Hash, *params.ConfigCompatError, error) {
 				tdb := triedb.NewDatabase(db, newDbConfig(scheme))
@@ -178,6 +187,8 @@ func TestGenesisHashes(t *testing.T) {
 	}{
 		{DefaultGenesisBlock(), params.MainnetGenesisHash},
 		{DefaultSepoliaGenesisBlock(), params.SepoliaGenesisHash},
+		{DefaultHoleskyGenesisBlock(), params.HoleskyGenesisHash},
+		{DefaultHoodiGenesisBlock(), params.HoodiGenesisHash},
 	} {
 		// Test via MustCommit
 		db := rawdb.NewMemoryDatabase()
@@ -249,7 +260,9 @@ func newDbConfig(scheme string) *triedb.Config {
 	if scheme == rawdb.HashScheme {
 		return triedb.HashDefaults
 	}
-	return &triedb.Config{PathDB: pathdb.Defaults}
+	config := *pathdb.Defaults
+	config.NoAsyncFlush = true
+	return &triedb.Config{PathDB: &config}
 }
 
 func TestVerkleGenesisCommit(t *testing.T) {
@@ -306,7 +319,14 @@ func TestVerkleGenesisCommit(t *testing.T) {
 	}
 
 	db := rawdb.NewMemoryDatabase()
-	triedb := triedb.NewDatabase(db, triedb.VerkleDefaults)
+
+	config := *pathdb.Defaults
+	config.NoAsyncFlush = true
+
+	triedb := triedb.NewDatabase(db, &triedb.Config{
+		IsVerkle: true,
+		PathDB:   &config,
+	})
 	block := genesis.MustCommit(db, triedb)
 	if !bytes.Equal(block.Root().Bytes(), expected) {
 		t.Fatalf("invalid genesis state root, expected %x, got %x", expected, block.Root())
