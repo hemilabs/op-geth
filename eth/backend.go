@@ -63,6 +63,7 @@ import (
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/dnsdisc"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/p2p/netutil"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -347,6 +348,11 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		stack.RegisterLifecycle(pj)
 	}
 
+	txGossipNetRestrict, err := parseTxGossipNetRestrict(config.RollupTxPoolNetrestrict)
+	if err != nil {
+		return nil, err
+	}
+
 	// Permit the downloader to use the trie cache allowance during fast sync
 	cacheLimit := options.TrieCleanLimit + options.TrieDirtyLimit + options.SnapshotLimit
 	if eth.handler, err = newHandler(&handlerConfig{
@@ -359,7 +365,11 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		BloomCache:     uint64(cacheLimit),
 		EventMux:       eth.eventMux,
 		RequiredBlocks: config.RequiredBlocks,
-		NoTxGossip:     config.RollupDisableTxPoolGossip,
+
+		// OP Stack additions
+		NoTxGossip:               config.RollupDisableTxPoolGossip,
+		TxGossipNetRestrict:      txGossipNetRestrict,
+		TxGossipTrustedPeersOnly: config.RollupTxPoolTrustedPeersOnly,
 	}); err != nil {
 		return nil, err
 	}
@@ -715,4 +725,16 @@ func (s *Ethereum) HandleRequiredProtocolVersion(required params.ProtocolVersion
 		return s.nodeCloser()
 	}
 	return nil
+}
+
+// parseTxGossipNetRestrict parses the netrestrict string for txpool gossip
+func parseTxGossipNetRestrict(netrestrict string) (*netutil.Netlist, error) {
+	if netrestrict == "" {
+		return nil, nil
+	}
+	list, err := netutil.ParseNetlist(netrestrict)
+	if err != nil {
+		return nil, fmt.Errorf("invalid txpool gossip netrestrict list: %w", err)
+	}
+	return list, nil
 }
