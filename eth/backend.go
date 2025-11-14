@@ -314,7 +314,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	}
 
 	overrides.ApplySuperchainUpgrades = config.ApplySuperchainUpgrades
-	eth.blockchain, err = core.NewBlockChain(chainDb, cacheConfig, config.Genesis, &overrides, eth.engine, vmConfig, nil, &config.TransactionHistory, ctx)
+	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, &overrides, eth.engine, options, nil, &config.TransactionHistory, ctx)
 
 	if config.HvmEnabled {
 		tbcCfg := tbc.NewDefaultConfig()

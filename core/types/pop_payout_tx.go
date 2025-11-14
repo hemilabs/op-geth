@@ -89,3 +89,7 @@ func (tx *PopPayoutTx) encode(b *bytes.Buffer) error {
 func (tx *PopPayoutTx) decode(input []byte) error {
 	return rlp.DecodeBytes(input, tx)
 }
+
+func (tx *PopPayoutTx) sigHash(*big.Int) common.Hash {
+	panic("BtcAttributesDepositedTx cannot be signed")
+}

@@ -373,9 +373,6 @@ func (p *BTCBlocksResponse) Unpack() []*common.BitcoinBlock {
 	return blockset
 }
 
-func (*StatusPacket) Name() string { return "Status" }
-func (*StatusPacket) Kind() byte   { return StatusMsg }
-
 // BlockRangeUpdatePacket is an announcement of the node's available block range.
 type BlockRangeUpdatePacket struct {
 	EarliestBlock   uint64

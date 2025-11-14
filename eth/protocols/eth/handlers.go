@@ -36,7 +36,10 @@ import (
 )
 
 // requestTracker is a singleton tracker for eth/66 and newer request times.
-var requestTracker = tracker.New(ProtocolName, 5*time.Minute)
+var (
+	requestTracker = tracker.New(ProtocolName, 5*time.Minute)
+	errDecode         = errors.New("invalid message")
+)
 
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the complex header query

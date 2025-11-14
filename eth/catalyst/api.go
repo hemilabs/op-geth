@@ -241,64 +241,6 @@ func (api *ConsensusAPI) ForkchoiceUpdatedV3(update engine.ForkchoiceStateV1, pa
 	return api.forkchoiceUpdated(update, params, engine.PayloadV3, false)
 }
 
-// ForkchoiceUpdatedWithWitnessV1 is analogous to ForkchoiceUpdatedV1, only it
-// generates an execution witness too if block building was requested.
-func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV1(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes) (engine.ForkChoiceResponse, error) {
-	if payloadAttributes != nil {
-		if payloadAttributes.Withdrawals != nil || payloadAttributes.BeaconRoot != nil {
-			return engine.STATUS_INVALID, engine.InvalidParams.With(errors.New("withdrawals and beacon root not supported in V1"))
-		}
-		if api.eth.BlockChain().Config().IsShanghai(api.eth.BlockChain().Config().LondonBlock, payloadAttributes.Timestamp) {
-			return engine.STATUS_INVALID, engine.InvalidParams.With(errors.New("forkChoiceUpdateV1 called post-shanghai"))
-		}
-	}
-	return api.forkchoiceUpdated(update, payloadAttributes, engine.PayloadV1, true)
-}
-
-// ForkchoiceUpdatedWithWitnessV2 is analogous to ForkchoiceUpdatedV2, only it
-// generates an execution witness too if block building was requested.
-func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV2(update engine.ForkchoiceStateV1, params *engine.PayloadAttributes) (engine.ForkChoiceResponse, error) {
-	if params != nil {
-		if params.BeaconRoot != nil {
-			return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("unexpected beacon root"))
-		}
-		switch api.eth.BlockChain().Config().LatestFork(params.Timestamp) {
-		case forks.Paris:
-			if params.Withdrawals != nil {
-				return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("withdrawals before shanghai"))
-			}
-		case forks.Shanghai:
-			if params.Withdrawals == nil {
-				return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("missing withdrawals"))
-			}
-		default:
-			return engine.STATUS_INVALID, engine.UnsupportedFork.With(errors.New("forkchoiceUpdatedV2 must only be called with paris and shanghai payloads"))
-		}
-	}
-	return api.forkchoiceUpdated(update, params, engine.PayloadV2, true)
-}
-
-// ForkchoiceUpdatedWithWitnessV3 is analogous to ForkchoiceUpdatedV3, only it
-// generates an execution witness too if block building was requested.
-func (api *ConsensusAPI) ForkchoiceUpdatedWithWitnessV3(update engine.ForkchoiceStateV1, params *engine.PayloadAttributes) (engine.ForkChoiceResponse, error) {
-	if params != nil {
-		if params.Withdrawals == nil {
-			return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("missing withdrawals"))
-		}
-		if params.BeaconRoot == nil {
-			return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(errors.New("missing beacon root"))
-		}
-		if api.eth.BlockChain().Config().LatestFork(params.Timestamp) != forks.Cancun && api.eth.BlockChain().Config().LatestFork(params.Timestamp) != forks.Prague {
-			return engine.STATUS_INVALID, engine.UnsupportedFork.With(errors.New("forkchoiceUpdatedV3 must only be called for cancun payloads"))
-		}
-	}
-	// TODO(matt): the spec requires that fcu is applied when called on a valid
-	// hash, even if params are wrong. To do this we need to split up
-	// forkchoiceUpdate into a function that only updates the head and then a
-	// function that kicks off block construction.
-	return api.forkchoiceUpdated(update, params, engine.PayloadV3, true)
-}
-
 func (api *ConsensusAPI) NewKeystone(keystone hemi.L2Keystone) (engine.KeystoneStatus, error) {
 	if err := api.eth.BlockChain().InsertL2Keystone(keystone); err != nil {
 		return engine.KeystoneStatus{Status: engine.INVALID, ValidationError: err.Error()}, err

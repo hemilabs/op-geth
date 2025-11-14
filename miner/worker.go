@@ -186,10 +186,10 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 	}
 
 	containsBtcAttrDepTx := false
-	if !params.noTxs && len(params.txs) < 2 {
+	if !genParam.noTxs && len(genParam.txs) < 2 {
 		// First, check whether a new Bitcoin Attributes Deposited tx should be included.
 		// This is a redundant check since GetBitcoinAttributesForNextBlock will return nil with no error if hVM is not enabled/activated.
-		if miner.backend.BlockChain().IsHvmEnabled() && miner.chainConfig.IsHvm0(params.timestamp) {
+		if miner.backend.BlockChain().IsHvmEnabled() && miner.chainConfig.IsHvm0(genParam.timestamp) {
 			btcAttrDepTx, err := miner.backend.BlockChain().GetBitcoinAttributesForNextBlock(work.header.Time)
 			if err != nil {
 				log.Error("Failed to create a Bitcoin Attributes Deposited transaction in generateWork()", "err", err)
@@ -210,7 +210,7 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 		}
 
 		// use shared interrupt if present
-		interrupt := params.interrupt
+		interrupt := genParam.interrupt
 		if interrupt == nil {
 			interrupt = new(atomic.Int32)
 		}
@@ -226,7 +226,7 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 		}
 	}
 
-	if !params.noTxs && !containsBtcAttrDepTx {
+	if !genParam.noTxs && !containsBtcAttrDepTx {
 		// use shared interrupt if present
 		interrupt := genParam.interrupt
 		if interrupt == nil {

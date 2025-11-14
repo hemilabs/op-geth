@@ -64,8 +64,9 @@ const (
 // requires a deterministic gas count based on the input size of the Run method of the
 // contract.
 type PrecompiledContract interface {
-	RequiredGas(input []byte) uint64  // RequiredPrice calculates the contract gas use
-	Run(input []byte) ([]byte, error) // Run runs the precompiled contract
+		RequiredGas(input []byte) uint64 // RequiredPrice calculates the contract gas use
+	// Run includes a blockContext so that hVM calls can be attributed correctly to their containing block (or lack thereof)
+	Run(input []byte, blockContext common.Hash) ([]byte, error) // Run runs the precompiled contract
 	Name() string
 }
 
@@ -996,6 +997,11 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 
 type btcBalAddr struct{}
 
+
+func (c *btcBalAddr) Name() string {
+	return "BTC Balance Address"
+}
+
 func (c *btcBalAddr) RequiredGas(input []byte) uint64 {
 	return params.BtcAddrBal
 }
@@ -1046,6 +1052,10 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 }
 
 type btcTxConfirmations struct{}
+
+func (c *btcTxConfirmations) Name() string {
+	return "BTC TX Confirmations"
+}
 
 func (c *btcTxConfirmations) RequiredGas(input []byte) uint64 {
 	return params.BtcTxConf
@@ -1124,6 +1134,10 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 
 type btcAddrToScript struct{}
 
+func (c *btcAddrToScript) Name() string {
+	return "BTC Addr to Script"
+}
+
 func (c *btcAddrToScript) RequiredGas(input []byte) uint64 {
 	return params.BtcAddrToScript
 }
@@ -1179,6 +1193,10 @@ func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, e
 }
 
 type btcLastHeader struct{}
+
+func (c *btcLastHeader) Name() string {
+	return "BTC Last Header"
+}
 
 func (c *btcLastHeader) RequiredGas(input []byte) uint64 {
 	return params.BtcLastHeader
@@ -1254,6 +1272,10 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 }
 
 type btcHeaderN struct{}
+
+func (c *btcHeaderN) Name() string {
+	return "BTC Header N"
+}
 
 func (c *btcHeaderN) RequiredGas(input []byte) uint64 {
 	return params.BtcHeaderN
@@ -1361,6 +1383,10 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 
 type btcUtxosAddrList struct{}
 
+func (c *btcUtxosAddrList) Name() string {
+	return "BTC UTXOs Address List"
+}
+
 func (c *btcUtxosAddrList) RequiredGas(input []byte) uint64 {
 	return params.BtcUtxosAddrList
 }
@@ -1437,6 +1463,10 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 }
 
 type btcInputByTxid struct{}
+
+func (c *btcInputByTxid) Name() string {
+	return "BTC Input by TXID"
+}
 
 func (c *btcInputByTxid) RequiredGas(input []byte) uint64 {
 	// TODO: Gas based on returned size and/or enabled fields
@@ -1565,6 +1595,10 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 
 type btcOutputByTxid struct{}
 
+func (c *btcOutputByTxid) Name() string {
+	return "BTC Output by TXID"
+}
+
 func (c *btcOutputByTxid) RequiredGas(input []byte) uint64 {
 	// TODO: Gas based on returned size and/or enabled fields in future hVM version
 	return params.BtcOutputByTxid
@@ -1665,6 +1699,10 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 
 type btcTxGetInputWitness struct{}
 
+func (c *btcTxGetInputWitness) Name() string {
+	return "BTC TX Get Input Witness"
+}
+
 func (c *btcTxGetInputWitness) RequiredGas(input []byte) uint64 {
 	// TODO: Gas based on returned size and/or enabled fields in future hVM version
 	return params.BtcTxGetInputWitness
@@ -1760,6 +1798,10 @@ func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]by
 }
 
 type btcTxByTxid struct{}
+
+func (c *btcTxByTxid) Name() string {
+	return "BTC TX by TXID"
+}
 
 func (c *btcTxByTxid) RequiredGas(input []byte) uint64 {
 	// TODO: Gas based on returned size and/or enabled fields in future hVM version
@@ -2494,7 +2536,7 @@ func (c *bn256PairingJovian) RequiredGas(input []byte) uint64 {
 	return new(bn256PairingIstanbul).RequiredGas(input)
 }
 
-func (c *bn256PairingJovian) Run(input []byte) ([]byte, error) {
+func (c *bn256PairingJovian) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) > int(params.Bn256PairingMaxInputSizeJovian) {
 		return nil, errBadPairingInputSize
 	}
@@ -2662,7 +2704,7 @@ func (c *bls12381G1MultiExpIsthmus) Run(input []byte, blockContext common.Hash) 
 		return nil, errBLS12381MaxG1Size
 	}
 
-	return new(bls12381G1MultiExp).Run(input)
+	return new(bls12381G1MultiExp).Run(input, blockContext)
 }
 func (c *bls12381G1MultiExpIsthmus) Name() string {
 	return "BLS12_G1MSM"
@@ -2675,12 +2717,12 @@ func (c *bls12381G1MultiExpJovian) RequiredGas(input []byte) uint64 {
 	return new(bls12381G1MultiExp).RequiredGas(input)
 }
 
-func (c *bls12381G1MultiExpJovian) Run(input []byte) ([]byte, error) {
+func (c *bls12381G1MultiExpJovian) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) > int(params.Bls12381G1MulMaxInputSizeJovian) {
 		return nil, errBLS12381MaxG1Size
 	}
 
-	return new(bls12381G1MultiExp).Run(input)
+	return new(bls12381G1MultiExp).Run(input, blockContext)
 }
 
 func (c *bls12381G1MultiExpJovian) Name() string {
@@ -2714,7 +2756,7 @@ func (c *bls12381G1MultiExp) RequiredGas(input []byte) uint64 {
 	return (uint64(k) * params.Bls12381G1MulGas * discount) / 1000
 }
 
-func (c *bls12381G1MultiExp) Run(input []byte) ([]byte, error) {
+func (c *bls12381G1MultiExp) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Implements EIP-2537 G1MultiExp precompile.
 	// G1 multiplication call expects `160*k` bytes as an input that is interpreted as byte concatenation of `k` slices each of them being a byte concatenation of encoding of G1 point (`128` bytes) and encoding of a scalar value (`32` bytes).
 	// Output is an encoding of multiexponentiation operation result - single G1 point (`128` bytes).
@@ -2809,7 +2851,7 @@ func (c *bls12381G2MultiExpIsthmus) Run(input []byte, blockContext common.Hash) 
 		return nil, errBLS12381MaxG2Size
 	}
 
-	return new(bls12381G2MultiExp).Run(input)
+	return new(bls12381G2MultiExp).Run(input, blockContext)
 }
 
 func (c *bls12381G2MultiExpIsthmus) Name() string {
@@ -2823,20 +2865,17 @@ func (c *bls12381G2MultiExpJovian) RequiredGas(input []byte) uint64 {
 	return new(bls12381G2MultiExp).RequiredGas(input)
 }
 
-func (c *bls12381G2MultiExpJovian) Run(input []byte) ([]byte, error) {
+func (c *bls12381G2MultiExpJovian) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) > int(params.Bls12381G2MulMaxInputSizeJovian) {
 		return nil, errBLS12381MaxG2Size
 	}
 
-	return new(bls12381G2MultiExp).Run(input)
+	return new(bls12381G2MultiExp).Run(input, blockContext)
 }
 
 func (c *bls12381G2MultiExpJovian) Name() string {
 	return "BLS12_G2MSM"
 }
-
-// bls12381G2MultiExp implements EIP-2537 G2MultiExp precompile.
-type bls12381G2MultiExp struct{}
 
 // bls12381G2MultiExp implements EIP-2537 G2MultiExp precompile.
 type bls12381G2MultiExp struct{}
@@ -2914,7 +2953,7 @@ func (c *bls12381PairingIsthmus) Run(input []byte, blockContext common.Hash) ([]
 		return nil, errBLS12381MaxPairingSize
 	}
 
-	return new(bls12381Pairing).Run(input)
+	return new(bls12381Pairing).Run(input, blockContext)
 }
 
 func (c *bls12381PairingIsthmus) Name() string {
@@ -2928,12 +2967,12 @@ func (c *bls12381PairingJovian) RequiredGas(input []byte) uint64 {
 	return new(bls12381Pairing).RequiredGas(input)
 }
 
-func (c *bls12381PairingJovian) Run(input []byte) ([]byte, error) {
+func (c *bls12381PairingJovian) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) > int(params.Bls12381PairingMaxInputSizeJovian) {
 		return nil, errBLS12381MaxPairingSize
 	}
 
-	return new(bls12381Pairing).Run(input)
+	return new(bls12381Pairing).Run(input, blockContext)
 }
 
 func (c *bls12381PairingJovian) Name() string {
@@ -2945,6 +2984,69 @@ type bls12381Pairing struct{}
 
 // RequiredGas returns the gas required to execute the pre-compiled contract.
 func (c *bls12381Pairing) RequiredGas(input []byte) uint64 {
+	return params.Bls12381PairingBaseGas + uint64(len(input)/384)*params.Bls12381PairingPerPairGas
+}
+
+func (c *bls12381Pairing) Run(input []byte, blockContext common.Hash) ([]byte, error) {
+	// Implements EIP-2537 Pairing precompile logic.
+	// > Pairing call expects `384*k` bytes as an inputs that is interpreted as byte concatenation of `k` slices. Each slice has the following structure:
+	// > - `128` bytes of G1 point encoding
+	// > - `256` bytes of G2 point encoding
+	// > Output is a `32` bytes where last single byte is `0x01` if pairing result is equal to multiplicative identity in a pairing target field and `0x00` otherwise
+	// > (which is equivalent of Big Endian encoding of Solidity values `uint256(1)` and `uin256(0)` respectively).
+	k := len(input) / 384
+	if len(input) == 0 || len(input)%384 != 0 {
+		return nil, errBLS12381InvalidInputLength
+	}
+
+	var (
+		p []bls12381.G1Affine
+		q []bls12381.G2Affine
+	)
+
+	// Decode pairs
+	for i := 0; i < k; i++ {
+		off := 384 * i
+		t0, t1, t2 := off, off+128, off+384
+
+		// Decode G1 point
+		p1, err := decodePointG1(input[t0:t1])
+		if err != nil {
+			return nil, err
+		}
+		// Decode G2 point
+		p2, err := decodePointG2(input[t1:t2])
+		if err != nil {
+			return nil, err
+		}
+
+		// 'point is on curve' check already done,
+		// Here we need to apply subgroup checks.
+		if !p1.IsInSubGroup() {
+			return nil, errBLS12381G1PointSubgroup
+		}
+		if !p2.IsInSubGroup() {
+			return nil, errBLS12381G2PointSubgroup
+		}
+		p = append(p, *p1)
+		q = append(q, *p2)
+	}
+	// Prepare 32 byte output
+	out := make([]byte, 32)
+
+	// Compute pairing and set the result
+	ok, err := bls12381.PairingCheck(p, q)
+	if err == nil && ok {
+		out[31] = 1
+	}
+	return out, nil
+}
+
+// bls12381PairingPrague implements EIP-2537 Pairing precompile.
+type bls12381PairingPrague struct{}
+
+// RequiredGas returns the gas required to execute the pre-compiled contract.
+func (c *bls12381PairingPrague) RequiredGas(input []byte) uint64 {
 	return params.Bls12381PairingBaseGas + uint64(len(input)/384)*params.Bls12381PairingPerPairGas
 }
 
@@ -3280,3 +3382,4 @@ func (c *p256Verify) Run(input []byte, blockContext common.Hash) ([]byte, error)
 func (c *p256Verify) Name() string {
 	return "P256VERIFY"
 }
+

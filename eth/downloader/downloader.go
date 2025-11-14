@@ -235,7 +235,7 @@ type BlockChain interface {
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
-func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func(), chainID uint64) *Downloader {
+func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func()) *Downloader {
 	hVMSnapFunc := func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
 		log.Info("hVM Snap Sync Func called")
 		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader)
@@ -253,7 +253,6 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer 
 		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
 		stateSyncStart: make(chan *stateSync),
 		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
-		chainID:        chainID,
 	}
 	// Create the post-merge skeleton syncer and start the process
 	dl.skeleton = newSkeleton(stateDb, dl.peers, dropPeer, newBeaconBackfiller(dl, success))

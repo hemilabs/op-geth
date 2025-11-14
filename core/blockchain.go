@@ -74,6 +74,8 @@ import (
 )
 
 var (
+	errNotFound = errors.New("not found")
+
 	headBlockGauge          = metrics.NewRegisteredGauge("chain/head/block", nil)
 	headHeaderGauge         = metrics.NewRegisteredGauge("chain/head/header", nil)
 	headFastBlockGauge      = metrics.NewRegisteredGauge("chain/head/receipt", nil)
@@ -415,7 +417,6 @@ type BlockChain struct {
 
 	ctx context.Context
 
-	logger              *tracing.Hooks
 	keystoneMtx         sync.RWMutex
 	keystoneBackfillMtx sync.RWMutex
 
@@ -798,11 +799,11 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 // NewBlockChain returns a fully initialised block chain using information
 // available in the database. It initialises the default Ethereum Validator
 // and Processor.
-func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis, overrides *ChainOverrides, engine consensus.Engine, vmConfig vm.Config, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64, ctx context.Context) (*BlockChain, error) {
-	if cacheConfig == nil {
-		cacheConfig = defaultCacheConfig
+func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverrides, engine consensus.Engine, cfg *BlockChainConfig, shouldPreserve func(header *types.Header) bool, txLookupLimit *uint64, ctx context.Context) (*BlockChain, error) {
+	if cfg == nil {
+		cfg = DefaultConfig()
 	}
-
+	
 	// Open trie database with provided config
 	enableVerkle, err := EnableVerkleAtGenesis(db, genesis)
 	if err != nil {
@@ -846,7 +847,6 @@ func NewBlockChain(db ethdb.Database, cacheConfig *CacheConfig, genesis *Genesis
 		tempBlocks:    make(map[string]*types.Block),
 		tempHeaders:   make(map[string]*types.Header),
 		engine:        engine,
-		vmConfig:      vmConfig,
 		ctx:           ctx,
 		logger:        cfg.VmConfig.Tracer,
 	}
@@ -4394,7 +4394,6 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	var tbcHeader *types.Header // Original EVM tip that lightweight TBC knowledge represents to revert to when necessary
 	isHvmActivated := false
 	isFirstHvmBlock := false
-	var err error
 	log.Info(fmt.Sprintf("Processing block %s @ %d", block.Hash().String(), block.NumberU64()))
 	// If we are awaiting an hVM snap sync, that will be handled separately in response to a hVM light state P2P msg later
 	if bc.hvmEnabled && !bc.awaitingHvmSnapSync {
@@ -4538,7 +4537,7 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 		}
 	}
 
-	res, err := bc.processor.Process(block, statedb, bc.cfg.vmConfig)
+	res, err := bc.processor.Process(block, statedb, bc.cfg.VmConfig)
 	if err != nil {
 		bc.reportBlock(block, res, err)
 		return nil, err
@@ -4558,13 +4557,10 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 
 	// Update the metrics touched during block processing and validation
 	accountReadTimer.Update(statedb.AccountReads)                   // Account reads are complete(in processing)
-	storageReadTimer.Update(statedb.StorageReads)                   // Storage reads are complete(in processing)
-	snapshotAccountReadTimer.Update(statedb.SnapshotAccountReads)   // Account reads are complete(in processing)
-	snapshotStorageReadTimer.Update(statedb.SnapshotStorageReads)   // Storage reads are complete(in processing)
+	storageReadTimer.Update(statedb.StorageReads)                   // Storage reads are complete(in processing))
 	accountUpdateTimer.Update(statedb.AccountUpdates)               // Account updates are complete(in validation)
 	storageUpdateTimer.Update(statedb.StorageUpdates)               // Storage updates are complete(in validation)
 	accountHashTimer.Update(statedb.AccountHashes)                  // Account hashes are complete(in validation)
-	storageHashTimer.Update(statedb.StorageHashes)                  // Storage hashes are complete(in validation)
 	triehash := statedb.AccountHashes + statedb.StorageHashes       // The time spent on tries hashing
 	trieUpdate := statedb.AccountUpdates + statedb.StorageUpdates   // The time spent on tries update
 	trieRead := statedb.SnapshotAccountReads + statedb.AccountReads // The time spent on account read
@@ -4616,7 +4612,6 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 	// a tight integration to enable running *all* consensus tests through the
 	// witness builder/runner, which would otherwise be impossible due to the
 	// various invalid chain states/behaviors being contained in those tests.
-	xvstart := time.Now()
 	if witness := statedb.Witness(); witness != nil && bc.cfg.VmConfig.StatelessSelfValidation {
 		log.Warn("Running stateless self-validation", "block", block.Number(), "hash", block.Hash())
 
@@ -4640,7 +4635,6 @@ func (bc *BlockChain) processBlock(parentRoot common.Hash, block *types.Block, s
 		}
 	}
 
-	xvtime := time.Since(xvstart)
 	proctime := time.Since(startTime) // processing + validation + cross validation
 
 	// Write the block to the chain and get the status.
