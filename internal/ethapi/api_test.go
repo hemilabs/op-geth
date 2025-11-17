@@ -34,10 +34,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/internal/ethapi/override"
-	"github.com/hemilabs/heminetwork/hemi"
-
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/abi"
@@ -61,6 +57,7 @@ import (
 	"github.com/ethereum/go-ethereum/internal/ethapi/override"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hemilabs/heminetwork/hemi"
 	"github.com/holiman/uint256"
 	"github.com/stretchr/testify/require"
 )
@@ -124,10 +121,6 @@ func TestRPCTransactionDepositTxWithVersion(t *testing.T) {
 	require.Equal(t, "0x1", parsed["depositReceiptVersion"])
 }
 
-func TestNewRPCTransactionPoPPayoutTx(t *testing.T) {
-	// TODO: Implement me
-}
-
 func TestNewRPCTransactionOmitIsSystemTxFalse(t *testing.T) {
 	tx := types.NewTx(&types.DepositTx{
 		IsSystemTransaction: false,
@@ -135,35 +128,6 @@ func TestNewRPCTransactionOmitIsSystemTxFalse(t *testing.T) {
 	got := newRPCTransaction(tx, common.Hash{}, uint64(12), uint64(1234), uint64(1), big.NewInt(0), &params.ChainConfig{}, nil)
 
 	require.Nil(t, got.IsSystemTx, "should omit IsSystemTx when false")
-}
-
-func TestUnmarshalRpcPopTxNoReceipt(t *testing.T) {
-	toAddr := types.PoPPayoutSenderAddress
-	tx := types.NewTx(&types.PopPayoutTx{
-		To:   &toAddr,
-		Gas:  5,
-		Data: []byte{4, 4, 4, 4},
-	})
-
-	t.Logf("Will Unmarshal %+v\n", tx)
-
-	rpcTx := newRPCTransaction(tx, common.Hash{}, uint64(12), uint64(1234), uint64(1), big.NewInt(3), &params.ChainConfig{}, nil)
-
-	if rpcTx.Type != hexutil.Uint64(types.PopPayoutTxType) {
-		t.Fatalf("unexpected rpcTx.Type: 0x%X", rpcTx.Type)
-	}
-
-	if rpcTx.Nonce != 0 {
-		t.Fatalf("unexpected non-zero nonce: %d", rpcTx.Nonce)
-	}
-
-	if rpcTx.Gas != hexutil.Uint64(tx.Gas()) {
-		t.Fatalf("unexpected gas value: got %d, expected %d", rpcTx.Gas, tx.Gas())
-	}
-
-	if rpcTx.Input.String() != hexutil.Encode(tx.Data()) {
-		t.Fatalf("unexpected data: got %x, expected %x", rpcTx.Input.String(), hexutil.Encode(tx.Data()))
-	}
 }
 
 func TestUnmarshalRpcDepositTx(t *testing.T) {
@@ -638,16 +602,16 @@ type testBackend struct {
 }
 
 func newTestBackend(t *testing.T, n int, gspec *core.Genesis, engine consensus.Engine, generator func(i int, b *core.BlockGen)) *testBackend {
-	options := core.DefaultConfig().WithArchive(true)
-	options.TxLookupLimit = 0 // index all txs
+	// options := core.DefaultConfig().WithArchive(true)
+	txLookupLimit := uint64(0) // index all txs
 
 	accman, acc := newTestAccountManager(t)
 	gspec.Alloc[acc.Address] = types.Account{Balance: big.NewInt(params.Ether)}
 
 	// Generate blocks for testing
-	db, blocks, _ := core.GenerateChainWithGenesis(gspec, engine, n, generator)
-	txlookupLimit := uint64(0)
-	chain, err := core.NewBlockChain(db, cacheConfig, gspec, nil, engine, vm.Config{}, nil, &txlookupLimit, nil)
+	db, blocks, receipts := core.GenerateChainWithGenesis(gspec, engine, n+1, generator)
+
+	chain, err := core.NewBlockChain(db, gspec, nil, engine, nil, nil, &txLookupLimit, nil)
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -844,18 +808,6 @@ func (b testBackend) HistoricalRPCService() *rpc.Client {
 }
 func (b testBackend) Genesis() *types.Block {
 	panic("implement me")
-}
-
-func (b testBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
-	return nil, nil
-}
-
-func (b *testBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
-	return nil, nil
-}
-
-func (b *testBackend) KeystoneFeed() *event.Feed {
-	return nil
 }
 
 func TestEstimateGas(t *testing.T) {
@@ -4106,4 +4058,16 @@ func (b configTimeBackend) HeaderByNumber(_ context.Context, n rpc.BlockNumber) 
 
 func (b configTimeBackend) CurrentHeader() *types.Header {
 	return &types.Header{Time: b.time}
+}
+
+func (b testBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error) {
+	return nil, nil
+}
+
+func (b *testBackend) KeystoneFeed() *event.Feed {
+	return nil
 }

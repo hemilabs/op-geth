@@ -30,7 +30,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/ethdb/pebble"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -1796,7 +1795,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 		option.SnapshotLimit = 256
 		option.SnapshotWait = true
 	}
-	chain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil, t.Context())
+	chain, err := NewBlockChain(db, gspec, nil, engine, option, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
@@ -1861,7 +1860,7 @@ func testRepairWithScheme(t *testing.T, tt *rewindTest, snapshots bool, scheme s
 	}
 	defer db.Close()
 
-	newChain, err := NewBlockChain(db, config, gspec, nil, engine, vm.Config{}, nil, nil, t.Context())
+	newChain, err := NewBlockChain(db, gspec, nil, engine, option, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
@@ -1935,7 +1934,7 @@ func testIssue23496(t *testing.T, scheme string) {
 		engine  = ethash.NewFullFaker()
 		options = DefaultConfig().WithStateScheme(scheme)
 	)
-	chain, err := NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), gspec, nil, engine, vm.Config{}, nil, nil, t.Context())
+	chain, err := NewBlockChain(db, gspec, nil, engine, options, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
 	}
@@ -1987,7 +1986,7 @@ func testIssue23496(t *testing.T, scheme string) {
 	}
 	defer db.Close()
 
-	chain, err = NewBlockChain(db, DefaultCacheConfigWithScheme(scheme), gspec, nil, engine, vm.Config{}, nil, nil, t.Context())
+	chain, err = NewBlockChain(db, gspec, nil, engine, nil, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}
