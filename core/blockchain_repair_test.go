@@ -1986,7 +1986,7 @@ func testIssue23496(t *testing.T, scheme string) {
 	}
 	defer db.Close()
 
-	chain, err = NewBlockChain(db, gspec, nil, engine, nil, nil, nil, t.Context())
+	chain, err = NewBlockChain(db, gspec, nil, engine, DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
 	}

@@ -857,7 +857,7 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	defer archiveDb.Close()
 
 	options := DefaultConfig().WithArchive(true).WithStateScheme(scheme)
-	archive, _ := NewBlockChain(archiveDb, gspec, ethash.NewFaker(), options)
+	archive, _ := NewBlockChain(archiveDb, gspec, nil, ethash.NewFaker(), options, nil, nil, t.Context())
 	if n, err := archive.InsertChain(blocks); err != nil {
 		t.Fatalf("failed to process block %d: %v", n, err)
 	}
@@ -870,7 +870,7 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	// Import the chain as a non-archive node and ensure all pointers are updated
 	fastDb := makeDb()
 	defer fastDb.Close()
-	fast, _ := NewBlockChain(fastDb, gspec, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme))
+	fast, _ := NewBlockChain(fastDb, gspec, nil, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
 	defer fast.Stop()
 
 	if n, err := fast.InsertReceiptChain(blocks, types.EncodeBlockReceiptLists(receipts), 0); err != nil {
@@ -883,7 +883,7 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	// Import the chain as a ancient-first node and ensure all pointers are updated
 	ancientDb := makeDb()
 	defer ancientDb.Close()
-	ancient, _ := NewBlockChain(ancientDb, gspec, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme))
+	ancient, _ := NewBlockChain(ancientDb, gspec, nil, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
 	defer ancient.Stop()
 
 	if n, err := ancient.InsertReceiptChain(blocks, types.EncodeBlockReceiptLists(receipts), uint64(3*len(blocks)/4)); err != nil {
@@ -904,7 +904,7 @@ func testLightVsFastVsFullChainHeads(t *testing.T, scheme string) {
 	for i, block := range blocks {
 		headers[i] = block.Header()
 	}
-	light, _ := NewBlockChain(lightDb, gspec, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme))
+	light, _ := NewBlockChain(lightDb, gspec, nil, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
 	if n, err := light.InsertHeaderChain(headers); err != nil {
 		t.Fatalf("failed to insert header %d: %v", n, err)
 	}
@@ -977,7 +977,7 @@ func testChainTxReorgs(t *testing.T, scheme string) {
 	})
 	// Import the chain. This runs all block validation rules.
 	db := rawdb.NewMemoryDatabase()
-	blockchain, _ := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
+	blockchain, _ := NewBlockChain(db, gspec, nil, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
 	if i, err := blockchain.InsertChain(chain); err != nil {
 		t.Fatalf("failed to insert original chain[%d]: %v", i, err)
 	}
@@ -1646,7 +1646,7 @@ func testLargeReorgTrieGC(t *testing.T, scheme string) {
 	db, _ := rawdb.Open(rawdb.NewMemoryDatabase(), rawdb.OpenOptions{})
 	defer db.Close()
 
-	chain, err := NewBlockChain(db, genesis, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
+	chain, err := NewBlockChain(db, genesis, nil, ethash.NewFaker(), DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -1831,7 +1831,7 @@ func testSideImport(t *testing.T, numCanonBlocksInSidechain, blocksBetweenCommon
 		mergeBlock = gomath.MaxInt32
 	)
 	// Generate and import the canonical chain
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, engine, nil)
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -1985,7 +1985,7 @@ func testInsertKnownChainData(t *testing.T, typ string, scheme string) {
 	}
 	defer chaindb.Close()
 
-	chain, err := NewBlockChain(chaindb, genesis, engine, DefaultConfig().WithStateScheme(scheme))
+	chain, err := NewBlockChain(chaindb, genesis, nil, engine, DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -2148,7 +2148,7 @@ func testInsertKnownChainDataWithMerging(t *testing.T, typ string, mergeHeight i
 	}
 	defer chaindb.Close()
 
-	chain, err := NewBlockChain(chaindb, genesis, engine, nil)
+	chain, err := NewBlockChain(chaindb, genesis, nil, engine, nil, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -2254,7 +2254,7 @@ func getLongAndShortChains(scheme string) (*BlockChain, []*types.Block, []*types
 	genDb, longChain, _ := GenerateChainWithGenesis(genesis, engine, 80, func(i int, b *BlockGen) {
 		b.SetCoinbase(common.Address{1})
 	})
-	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), genesis, nil, engine, DefaultConfig().WithStateScheme(scheme), nil, nil, t.Context())
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), genesis, nil, engine, DefaultConfig().WithStateScheme(scheme), nil, nil, context.Background())
 	if err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("failed to create tester chain: %v", err)
 	}
@@ -2430,7 +2430,7 @@ func benchmarkLargeNumberOfValueToNonexisting(b *testing.B, numTxs, numBlocks in
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Import the shared chain and the original canonical one
-		chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, t.Context())
+		chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, context.Background())
 		if err != nil {
 			b.Fatalf("failed to create tester chain: %v", err)
 		}
