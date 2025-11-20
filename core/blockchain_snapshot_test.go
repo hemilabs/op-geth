@@ -81,7 +81,6 @@ func (basic *snapshotTestBasic) prepare(t *testing.T) (*BlockChain, []*types.Blo
 		}
 		engine = ethash.NewFullFaker()
 	)
-
 	chain, err := NewBlockChain(db, gspec, nil, engine, DefaultConfig().WithStateScheme(basic.scheme).WithNoAsyncFlush(true), nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to create chain: %v", err)
@@ -327,6 +326,7 @@ func (snaptest *gappedSnapshotTest) test(t *testing.T) {
 	newchain.Stop()
 
 	// Restart the chain with enabling the snapshot
+	options = DefaultConfig().WithStateScheme(snaptest.scheme)
 	newchain, err = NewBlockChain(snaptest.db, snaptest.gspec, nil, snaptest.engine, options, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("Failed to recreate chain: %v", err)
