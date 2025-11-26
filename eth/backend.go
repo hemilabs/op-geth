@@ -316,6 +316,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	}
 
 	overrides.ApplySuperchainUpgrades = config.ApplySuperchainUpgrades
+	options.Overrides = &overrides
 	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, &overrides, eth.engine, options, nil, &config.TransactionHistory, ctx)
 
 	if config.HvmEnabled {
