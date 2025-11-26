@@ -803,7 +803,7 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 	if cfg == nil {
 		cfg = DefaultConfig()
 	}
-	
+
 	// Open trie database with provided config
 	enableVerkle, err := EnableVerkleAtGenesis(db, genesis)
 	if err != nil {
@@ -830,6 +830,8 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 	if chainConfig.IsOptimism() && chainConfig.RegolithTime == nil {
 		log.Warn("Optimism RegolithTime has not been set")
 	}
+
+	log.Info("going to create block chain", "isthmus time", chainConfig.IsthmusTime)
 
 	bc := &BlockChain{
 		chainConfig:   chainConfig,
