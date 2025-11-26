@@ -47,7 +47,7 @@ type (
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
 	if evm.chainRules.IsHvm0 {
 		for address, contract := range PrecompiledContractsHvm0 {
-			if address.Equal(addr) {
+			if address.Cmp(addr) == 0 {
 				return contract, true
 			}
 		}
