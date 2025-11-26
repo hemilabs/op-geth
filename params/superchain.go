@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/superchain"
 )
 
@@ -25,6 +26,7 @@ func uint64ptr(n uint64) *uint64 {
 
 func LoadOPStackChainConfig(chConfig *superchain.ChainConfig) (*ChainConfig, error) {
 	hardforks := chConfig.Hardforks
+	log.Info("LoadOpStackChainConfig called", "isthmusTime", hardforks.IsthmusTime)
 	genesisActivation := uint64(0)
 	out := &ChainConfig{
 		ChainID:                 new(big.Int).SetUint64(chConfig.ChainID),

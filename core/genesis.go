@@ -317,6 +317,7 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 	// OP-Stack: If applying the superchain-registry to a known OP-Stack chain,
 	// then override the local chain-config with that from the registry.
 	if o.ApplySuperchainUpgrades && cfg.IsOptimism() && cfg.ChainID != nil && cfg.ChainID.IsUint64() {
+		log.Info("Applying superchain upgrades")
 		getChainConfig := func() (*params.ChainConfig, error) {
 			chain, err := superchain.GetChain(cfg.ChainID.Uint64())
 			if err != nil {
@@ -370,6 +371,7 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 		cfg.HoloceneTime = o.OverrideOptimismHolocene
 	}
 	if o.OverrideOptimismIsthmus != nil {
+		log.Info("Setting isthmus time", "time", o.OverrideOptimismIsthmus)
 		cfg.IsthmusTime = o.OverrideOptimismIsthmus
 		cfg.PragueTime = o.OverrideOptimismIsthmus
 	}

@@ -299,6 +299,8 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	}
 	if config.OverrideOptimismIsthmus != nil {
 		overrides.OverrideOptimismIsthmus = config.OverrideOptimismIsthmus
+	} else {
+		log.Info("OverrideOptimismIsthmus == nil")
 	}
 	if config.OverrideOptimismJovian != nil {
 		overrides.OverrideOptimismJovian = config.OverrideOptimismJovian
