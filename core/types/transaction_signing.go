@@ -256,10 +256,10 @@ func (s *modernSigner) Sender(tx *Transaction) (common.Address, error) {
 		case *depositTxWithNonce:
 			return tx.inner.(*depositTxWithNonce).From, nil
 		}
-	}
-
-	if tt == PopPayoutTxType || tt == BtcAttributesDepositedTxType {
-		return tx.From(), nil
+	} else if tt == PopPayoutTxType {
+		return PoPPayoutSenderAddress, nil
+	} else if tt == BtcAttributesDepositedTxType {
+		return BtcAttributesDepositedSenderAddress, nil
 	}
 
 	if !s.supportsType(tt) {
