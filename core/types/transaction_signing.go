@@ -248,8 +248,10 @@ func (s *modernSigner) supportsType(txtype byte) bool {
 func (s *modernSigner) Sender(tx *Transaction) (common.Address, error) {
 	tt := tx.Type()
 
+	log.Info("tx.type", "type", tt)
 	// OP-Stack: deposit transactions store the sender directly as the From field
 	if tt == DepositTxType {
+		log.Info("Deposit Tx", "type", tt)
 		switch tx.inner.(type) {
 		case *DepositTx:
 			return tx.inner.(*DepositTx).From, nil
@@ -257,8 +259,10 @@ func (s *modernSigner) Sender(tx *Transaction) (common.Address, error) {
 			return tx.inner.(*depositTxWithNonce).From, nil
 		}
 	} else if tt == PopPayoutTxType {
+		log.Info("PoP type", "type", tt)
 		return PoPPayoutSenderAddress, nil
 	} else if tt == BtcAttributesDepositedTxType {
+		log.Info("BTC Attr. Dep. type", "type", tt)
 		return BtcAttributesDepositedSenderAddress, nil
 	}
 
