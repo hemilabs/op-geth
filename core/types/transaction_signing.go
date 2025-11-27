@@ -258,6 +258,10 @@ func (s *modernSigner) Sender(tx *Transaction) (common.Address, error) {
 		}
 	}
 
+	if tt == PopPayoutTxType || tt == BtcAttributesDepositedTxType {
+		return tx.From(), nil
+	}
+
 	if !s.supportsType(tt) {
 		return common.Address{}, ErrTxTypeNotSupported
 	}
