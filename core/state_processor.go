@@ -145,6 +145,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
 func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, blockTime uint64, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, err error) {
+	log.Info("Applying transaction with evm", "from", msg.From, "to", msg.To)
 	if hooks := evm.Config.Tracer; hooks != nil {
 		if hooks.OnTxStart != nil {
 			hooks.OnTxStart(evm.GetVMContext(), tx, msg.From)
@@ -157,6 +158,7 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 	nonce := tx.Nonce()
 
 	if (msg.IsDepositTx || msg.IsPopPayoutTx || msg.IsBtcAttributesDepositedTx) && evm.ChainConfig().IsOptimismRegolith(evm.Context.Time) {
+		log.Info("Tx is deposit, pop, or btc attr dep")
 		nonce = statedb.GetNonce(msg.From)
 	}
 
@@ -235,6 +237,8 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 	receipt.BlockHash = blockHash
 	receipt.BlockNumber = blockNumber
 	receipt.TransactionIndex = uint(statedb.TxIndex())
+
+	log.Info("Returning receipt for transaction", "tx", receipt.TxHash, "err", result.Err)
 	return receipt
 }
 
@@ -245,6 +249,7 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 func ApplyTransaction(evm *vm.EVM, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, error) {
 	msg, err := TransactionToMessage(tx, types.MakeSigner(evm.ChainConfig(), header.Number, header.Time), header.BaseFee)
 	if err != nil {
+		log.Info("Error converting transaction to message", "tx", tx.Hash(), "type", tx.Type(), "err", err)
 		return nil, err
 	}
 	// Create a new context to be used in the EVM environment

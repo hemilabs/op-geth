@@ -502,6 +502,7 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		}
 		err = nil
 	}
+	log.Info("returning from execute", "tx from", st.msg.From, "tx to", st.msg.To, "err", err)
 	return result, err
 }
 

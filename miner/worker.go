@@ -486,6 +486,7 @@ func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) e
 		}
 	}
 
+	log.Info("Applying transaction", "tx", tx.Hash())
 	receipt, err := miner.applyTransaction(env, tx)
 	if err != nil {
 		return err
