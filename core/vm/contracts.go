@@ -64,7 +64,7 @@ const (
 // requires a deterministic gas count based on the input size of the Run method of the
 // contract.
 type PrecompiledContract interface {
-		RequiredGas(input []byte) uint64 // RequiredPrice calculates the contract gas use
+	RequiredGas(input []byte) uint64 // RequiredPrice calculates the contract gas use
 	// Run includes a blockContext so that hVM calls can be attributed correctly to their containing block (or lack thereof)
 	Run(input []byte, blockContext common.Hash) ([]byte, error) // Run runs the precompiled contract
 	Name() string
@@ -843,24 +843,6 @@ func init() {
 	for k := range PrecompiledContractsHvm0 {
 		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
 	}
-	for k := range PrecompiledContractsPrague {
-		PrecompiledAddressesPrague = append(PrecompiledAddressesPrague, k)
-	}
-	for k := range PrecompiledContractsOsaka {
-		PrecompiledAddressesOsaka = append(PrecompiledAddressesOsaka, k)
-	}
-	for k := range PrecompiledContractsFjord {
-		PrecompiledAddressesFjord = append(PrecompiledAddressesFjord, k)
-	}
-	for k := range PrecompiledContractsGranite {
-		PrecompiledAddressesGranite = append(PrecompiledAddressesGranite, k)
-	}
-	for k := range PrecompiledContractsIsthmus {
-		PrecompiledAddressesIsthmus = append(PrecompiledAddressesIsthmus, k)
-	}
-	for k := range PrecompiledContractsJovian {
-		PrecompiledAddressesJovian = append(PrecompiledAddressesJovian, k)
-	}
 }
 
 func activePrecompiledContracts(rules params.Rules) PrecompiledContracts {
@@ -996,7 +978,6 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 }
 
 type btcBalAddr struct{}
-
 
 func (c *btcBalAddr) Name() string {
 	return "BTC Balance Address"
@@ -3382,4 +3363,3 @@ func (c *p256Verify) Run(input []byte, blockContext common.Hash) ([]byte, error)
 func (c *p256Verify) Name() string {
 	return "P256VERIFY"
 }
-
