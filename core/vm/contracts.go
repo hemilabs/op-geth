@@ -860,14 +860,41 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 	// Layer on Hemi-specific precompile lists.
 	// Original ActivePrecompiles logic moved to activeUpstreamPrecompiles.
 
-	nonHvmPrecompiles := activePrecompiles(rules)
+	fmt.Printf("[ActivePrecompiles] rules: IsHvm0=%v IsBerlin=%v IsShanghai=%v",
+		rules.IsHvm0,
+		rules.IsBerlin,
+		rules.IsShanghai,
+	)
 
+	fmt.Println("[ActivePrecompiles] --- upstream precompiles (non-HVM0) ---")
+	upstream := activePrecompiles(rules)
+	for i, a := range upstream {
+		fmt.Printf("    upstream[%d] = %s\n", i, a.Hex())
+	}
+
+	fmt.Println("[ActivePrecompiles] --- HVM0 precompiles (static table) ---")
+	for i, a := range PrecompiledAddressesHvm0 {
+		fmt.Printf("    hvm0[%d] = %s\n", i, a.Hex())
+	}
+
+	nonHvmPrecompiles := upstream
+
+	var finalPrecompiles []common.Address
 	switch {
 	case rules.IsHvm0:
-		return append(nonHvmPrecompiles, PrecompiledAddressesHvm0...)
+		finalPrecompiles = append(nonHvmPrecompiles, PrecompiledAddressesHvm0...)
 	default:
-		return nonHvmPrecompiles
+		finalPrecompiles = nonHvmPrecompiles
 	}
+
+	// --- Log the actual returned slice ---
+	fmt.Printf("[ActivePrecompiles] FINAL (len=%d):\n", len(finalPrecompiles))
+	for i, a := range finalPrecompiles {
+		fmt.Printf("    final[%d] = %s\n", i, a.Hex())
+	}
+	fmt.Println("[ActivePrecompiles] ---------------------------------------")
+
+	return finalPrecompiles
 }
 
 // calculateHVMQueryKey constructs an hVMQueryKey which is used to cache hVM responses.
