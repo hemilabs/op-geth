@@ -19,7 +19,6 @@ package types
 import (
 	"bytes"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/big"
@@ -409,9 +408,7 @@ func intToScaledFloat(scalar *big.Int) *big.Float {
 
 // extractL1GasParams extracts the gas parameters necessary to compute gas costs from L1 block info
 func extractL1GasParams(config *params.ChainConfig, time uint64, data []byte) (gasParams, error) {
-	log.Info("extracting l1 gas params", "time", time, "isthmus time", config.IsthmusTime, "data", hex.EncodeToString(data))
 	if config.IsIsthmus(time) && len(data) >= 4 && !bytes.Equal(data[0:4], EcotoneL1AttributesSelector) {
-		log.Info("Isthmus l1 gas param extraction branch")
 		// edge case: for the very first Isthmus block we still need to use the Ecotone
 		// function. We detect this edge case by seeing if the function selector is the old one
 		// If so, fall through to the pre-isthmus format
@@ -427,7 +424,6 @@ func extractL1GasParams(config *params.ChainConfig, time uint64, data []byte) (g
 		)
 		return p, nil
 	} else if config.IsEcotone(time) && len(data) >= 4 && !bytes.Equal(data[0:4], BedrockL1AttributesSelector) {
-		log.Info("Ecotone l1 gas param extraction branch")
 		// edge case: for the very first Ecotone block we still need to use the Bedrock
 		// function. We detect this edge case by seeing if the function selector is the old one
 		// If so, fall through to the pre-ecotone format
