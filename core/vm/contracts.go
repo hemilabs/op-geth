@@ -912,26 +912,37 @@ func ActivePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 func activePrecompiles(rules params.Rules) []common.Address {
 	switch {
 	case rules.IsOptimismJovian:
+		log.Info("Jovian")
 		return PrecompiledAddressesJovian
 	case rules.IsOptimismIsthmus:
+		log.Info("Isthmus")
 		return PrecompiledAddressesIsthmus
 	case rules.IsOptimismGranite:
+		log.Info("Granite")
 		return PrecompiledAddressesGranite
 	case rules.IsOptimismFjord:
+		log.Info("Fjord")
 		return PrecompiledAddressesFjord
 	case rules.IsOsaka:
+		log.Info("Osaka")
 		return PrecompiledAddressesOsaka
 	case rules.IsPrague:
+		log.Info("Prague")
 		return PrecompiledAddressesPrague
 	case rules.IsCancun:
+		log.Info("Cancun")
 		return PrecompiledAddressesCancun
 	case rules.IsBerlin:
+		log.Info("Berlin")
 		return PrecompiledAddressesBerlin
 	case rules.IsIstanbul:
+		log.Info("Istanbul")
 		return PrecompiledAddressesIstanbul
 	case rules.IsByzantium:
+		log.Info("Byzantium")
 		return PrecompiledAddressesByzantium
 	default:
+		log.Info("Default / Homestead")
 		return PrecompiledAddressesHomestead
 	}
 }
