@@ -31,6 +31,7 @@ import (
 // Constants to match up protocol versions and messages
 const (
 	ETH68 = 68
+	ETH69 = 69
 )
 
 // ProtocolName is the official short name of the `eth` protocol used during
@@ -39,11 +40,11 @@ const ProtocolName = "eth"
 
 // ProtocolVersions are the supported versions of the `eth` protocol (first
 // is primary).
-var ProtocolVersions = []uint{ETH68}
+var ProtocolVersions = []uint{ETH69, ETH68}
 
 // protocolLengths are the number of implemented message corresponding to
 // different protocol versions.
-var protocolLengths = map[uint]uint64{ETH68: 19}
+var protocolLengths = map[uint]uint64{ETH68: 19, ETH69: 18}
 
 // maxMessageSize is the maximum cap on the size of a protocol message.
 const maxMessageSize = 10 * 1024 * 1024
@@ -64,18 +65,20 @@ const (
 	ReceiptsMsg                   = 0x10
 	GetBtcBlocksMsg               = 0x11
 	BtcBlocksMsg                  = 0x12
+	BlockRangeUpdateMsg           = 0x11
 )
 
 var (
-	errNoStatusMsg             = errors.New("no status message")
 	errMsgTooLarge             = errors.New("message too long")
-	errDecode                  = errors.New("invalid message")
 	errInvalidMsgCode          = errors.New("invalid message code")
 	errProtocolVersionMismatch = errors.New("protocol version mismatch")
-	errNetworkIDMismatch       = errors.New("network ID mismatch")
-	errGenesisMismatch         = errors.New("genesis mismatch")
-	errForkIDRejected          = errors.New("fork ID rejected")
-	errBtcBlockNotFound        = errors.New("bitcoin block not found")
+	// handshake errors
+	errNoStatusMsg       = errors.New("no status message")
+	errNetworkIDMismatch = errors.New("network ID mismatch")
+	errGenesisMismatch   = errors.New("genesis mismatch")
+	errForkIDRejected    = errors.New("fork ID rejected")
+	errInvalidBlockRange = errors.New("invalid block range in status")
+	errBtcBlockNotFound  = errors.New("bitcoin block not found")
 )
 
 // Packet represents a p2p message in the `eth` protocol.
@@ -85,13 +88,25 @@ type Packet interface {
 }
 
 // StatusPacket is the network packet for the status message.
-type StatusPacket struct {
+type StatusPacket68 struct {
 	ProtocolVersion uint32
 	NetworkID       uint64
 	TD              *big.Int
 	Head            common.Hash
 	Genesis         common.Hash
 	ForkID          forkid.ID
+}
+
+// StatusPacket69 is the network packet for the status message.
+type StatusPacket69 struct {
+	ProtocolVersion uint32
+	NetworkID       uint64
+	Genesis         common.Hash
+	ForkID          forkid.ID
+	// initial available block range
+	EarliestBlock   uint64
+	LatestBlock     uint64
+	LatestBlockHash common.Hash
 }
 
 // NewBlockHashesPacket is the network packet for the block announcements.
@@ -253,13 +268,21 @@ type GetReceiptsPacket struct {
 }
 
 // ReceiptsResponse is the network packet for block receipts distribution.
-type ReceiptsResponse [][]*types.Receipt
+type ReceiptsResponse []types.Receipts
+
+// ReceiptsList is a type constraint for block receceipt list types.
+type ReceiptsList interface {
+	*ReceiptList68 | *ReceiptList69
+	setBuffers(*receiptListBuffers)
+	EncodeForStorage() rlp.RawValue
+	types.DerivableList
+}
 
 // ReceiptsPacket is the network packet for block receipts distribution with
 // request ID wrapping.
-type ReceiptsPacket struct {
+type ReceiptsPacket[L ReceiptsList] struct {
 	RequestId uint64
-	ReceiptsResponse
+	List      []L
 }
 
 // ReceiptsRLPResponse is used for receipts, when we already have it encoded
@@ -350,8 +373,18 @@ func (p *BTCBlocksResponse) Unpack() []*common.BitcoinBlock {
 	return blockset
 }
 
-func (*StatusPacket) Name() string { return "Status" }
-func (*StatusPacket) Kind() byte   { return StatusMsg }
+// BlockRangeUpdatePacket is an announcement of the node's available block range.
+type BlockRangeUpdatePacket struct {
+	EarliestBlock   uint64
+	LatestBlock     uint64
+	LatestBlockHash common.Hash
+}
+
+func (*StatusPacket68) Name() string { return "Status" }
+func (*StatusPacket68) Kind() byte   { return StatusMsg }
+
+func (*StatusPacket69) Name() string { return "Status" }
+func (*StatusPacket69) Kind() byte   { return StatusMsg }
 
 func (*NewBlockHashesPacket) Name() string { return "NewBlockHashes" }
 func (*NewBlockHashesPacket) Kind() byte   { return NewBlockHashesMsg }
@@ -392,5 +425,10 @@ func (*ReceiptsResponse) Kind() byte   { return ReceiptsMsg }
 func (*GetBTCBlocksRequest) Name() string { return "GetBtcBlocks" }
 func (*GetBTCBlocksRequest) Kind() byte   { return GetBtcBlocksMsg }
 
-func (*BTCBlocksResponse) Name() string { return "BtcBlocks" }
-func (*BTCBlocksResponse) Kind() byte   { return BtcBlocksMsg }
+func (*BTCBlocksResponse) Name() string   { return "BtcBlocks" }
+func (*BTCBlocksResponse) Kind() byte     { return BtcBlocksMsg }
+func (*ReceiptsRLPResponse) Name() string { return "Receipts" }
+func (*ReceiptsRLPResponse) Kind() byte   { return ReceiptsMsg }
+
+func (*BlockRangeUpdatePacket) Name() string { return "BlockRangeUpdate" }
+func (*BlockRangeUpdatePacket) Kind() byte   { return BlockRangeUpdateMsg }

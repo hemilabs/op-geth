@@ -27,7 +27,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core"
-	"github.com/ethereum/go-ethereum/core/bloombits"
+	"github.com/ethereum/go-ethereum/core/filtermaps"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -42,7 +42,7 @@ import (
 // both full and light clients) with access to necessary functions.
 type Backend interface {
 	// General Ethereum API
-	SyncProgress() ethereum.SyncProgress
+	SyncProgress(ctx context.Context) ethereum.SyncProgress
 
 	SuggestGasTipCap(ctx context.Context) (*big.Int, error)
 	FeeHistory(ctx context.Context, blockCount uint64, lastBlock rpc.BlockNumber, rewardPercentiles []float64) (*big.Int, [][]*big.Int, []*big.Int, []float64, []*big.Int, []float64, error)
@@ -69,13 +69,15 @@ type Backend interface {
 	StateAndHeaderByNumberOrHash(ctx context.Context, blockNrOrHash rpc.BlockNumberOrHash) (*state.StateDB, *types.Header, error)
 	Pending() (*types.Block, types.Receipts, *state.StateDB)
 	GetReceipts(ctx context.Context, hash common.Hash) (types.Receipts, error)
+	GetCanonicalReceipt(tx *types.Transaction, blockHash common.Hash, blockNumber, blockIndex uint64) (*types.Receipt, error)
 	GetEVM(ctx context.Context, state *state.StateDB, header *types.Header, vmConfig *vm.Config, blockCtx *vm.BlockContext) *vm.EVM
 	SubscribeChainEvent(ch chan<- core.ChainEvent) event.Subscription
 	SubscribeChainHeadEvent(ch chan<- core.ChainHeadEvent) event.Subscription
 
 	// Transaction pool API
 	SendTx(ctx context.Context, signedTx *types.Transaction) error
-	GetTransaction(ctx context.Context, txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64, error)
+	GetCanonicalTransaction(txHash common.Hash) (bool, *types.Transaction, common.Hash, uint64, uint64)
+	TxIndexDone() bool
 	GetPoolTransactions() (types.Transactions, error)
 	GetPoolTransaction(txHash common.Hash) *types.Transaction
 	GetPoolNonce(ctx context.Context, addr common.Address) (uint64, error)
@@ -86,6 +88,7 @@ type Backend interface {
 
 	ChainConfig() *params.ChainConfig
 	Engine() consensus.Engine
+	HistoryPruningCutoff() uint64
 	HistoricalRPCService() *rpc.Client
 	Genesis() *types.Block
 
@@ -96,13 +99,14 @@ type Backend interface {
 	GetLogs(ctx context.Context, blockHash common.Hash, number uint64) ([][]*types.Log, error)
 	SubscribeRemovedLogsEvent(ch chan<- core.RemovedLogsEvent) event.Subscription
 	SubscribeLogsEvent(ch chan<- []*types.Log) event.Subscription
-	BloomStatus() (uint64, uint64)
-	ServiceFilter(ctx context.Context, session *bloombits.MatcherSession)
 
 	// Hemi specific functions
 	KeystoneFeed() *event.Feed
 	GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, error)
 	GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error)
+
+	CurrentView() *filtermaps.ChainView
+	NewMatcherBackend() filtermaps.MatcherBackend
 }
 
 func GetAPIs(apiBackend Backend) []rpc.API {

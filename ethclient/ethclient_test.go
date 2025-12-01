@@ -199,9 +199,17 @@ func newTestBackend(t *testing.T, config *node.Config, enableHistoricalState boo
 	if err != nil {
 		return nil, nil, fmt.Errorf("can't create new ethereum service: %v", err)
 	}
+
+	// Ensure tx pool starts the background operation
+	txPool := ethservice.TxPool()
+	if err = txPool.Sync(); err != nil {
+		return nil, nil, fmt.Errorf("can't sync transaction pool: %v", err)
+	}
+
 	if enableHistoricalState { // swap to the pre-bedrock consensus-engine that we used to generate the historical blocks
 		ethservice.BlockChain().Engine().(*beacon.Beacon).SwapInner(ethash.NewFaker())
 	}
+
 	// Import the test chain.
 	if err := n.Start(); err != nil {
 		return nil, nil, fmt.Errorf("can't start test node: %v", err)
@@ -426,6 +434,12 @@ func testTransactionInBlock(t *testing.T, client *rpc.Client) {
 	if tx.Hash() != testTx2.Hash() {
 		t.Fatalf("unexpected transaction: %v", tx)
 	}
+
+	// Test pending block
+	_, err = ec.BlockByNumber(context.Background(), big.NewInt(int64(rpc.PendingBlockNumber)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 }
 
 func testChainID(t *testing.T, client *rpc.Client) {
@@ -523,6 +537,15 @@ func testStatusFunctions(t *testing.T, client *rpc.Client) {
 		t.Fatalf("unexpected gas tip cap: %v", gasTipCap)
 	}
 
+	// BlobBaseFee
+	blobBaseFee, err := ec.BlobBaseFee(context.Background())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if blobBaseFee.Cmp(big.NewInt(1)) != 0 {
+		t.Fatalf("unexpected blob base fee: %v", blobBaseFee)
+	}
+
 	// FeeHistory
 	history, err := ec.FeeHistory(context.Background(), 1, big.NewInt(2), []float64{95, 99})
 	if err != nil {
@@ -610,8 +633,9 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	}
 
 	// send a transaction for some interesting pending status
-	// and wait for the transaction to be included in the pending block
-	sendTransaction(ec)
+	if err := sendTransaction(ec); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
 
 	// wait for the transaction to be included in the pending block
 	for {
@@ -702,6 +726,48 @@ func testAtFunctions(t *testing.T, client *rpc.Client) {
 	if !bytes.Equal(code, penCode) {
 		t.Fatalf("unexpected code: %v %v", code, penCode)
 	}
+	// Use HeaderByNumber to get a header for EstimateGasAtBlock and EstimateGasAtBlockHash
+	latestHeader, err := ec.HeaderByNumber(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// EstimateGasAtBlock
+	msg := ethereum.CallMsg{
+		From:  testAddr,
+		To:    &common.Address{},
+		Gas:   21000,
+		Value: big.NewInt(1),
+	}
+	gas, err := ec.EstimateGasAtBlock(context.Background(), msg, latestHeader.Number)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gas != 21000 {
+		t.Fatalf("unexpected gas limit: %v", gas)
+	}
+	// EstimateGasAtBlockHash
+	gas, err = ec.EstimateGasAtBlockHash(context.Background(), msg, latestHeader.Hash())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gas != 21000 {
+		t.Fatalf("unexpected gas limit: %v", gas)
+	}
+
+	// Verify that sender address of pending transaction is saved in cache.
+	pendingBlock, err := ec.BlockByNumber(context.Background(), big.NewInt(int64(rpc.PendingBlockNumber)))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// No additional RPC should be required, ensure the server is not asked by
+	// canceling the context.
+	sender, err := ec.TransactionSender(newCanceledContext(), pendingBlock.Transactions()[0], pendingBlock.Hash(), 0)
+	if err != nil {
+		t.Fatal("unable to recover sender:", err)
+	}
+	if sender != testAddr {
+		t.Fatal("wrong sender:", sender)
+	}
 }
 
 func testTransactionSender(t *testing.T, client *rpc.Client) {
@@ -723,10 +789,7 @@ func testTransactionSender(t *testing.T, client *rpc.Client) {
 
 	// The sender address is cached in tx1, so no additional RPC should be required in
 	// TransactionSender. Ensure the server is not asked by canceling the context here.
-	canceledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	<-canceledCtx.Done() // Ensure the close of the Done channel
-	sender1, err := ec.TransactionSender(canceledCtx, tx1, block2.Hash(), 0)
+	sender1, err := ec.TransactionSender(newCanceledContext(), tx1, block2.Hash(), 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -797,6 +860,13 @@ func testHistoricalRPC(t *testing.T, client *rpc.Client) {
 	if string(histVal) != "test" {
 		t.Fatalf("expected %s to equal test", string(histVal))
 	}
+}
+
+func newCanceledContext() context.Context {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	<-ctx.Done() // Ensure the close of the Done channel
+	return ctx
 }
 
 func sendTransaction(ec *ethclient.Client) error {

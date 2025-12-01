@@ -5,7 +5,7 @@ footer: |
 base:
   name: go-ethereum
   url: https://github.com/ethereum/go-ethereum
-  hash: 612c9e0f4ae483f180ef96ace86effec6dc9bb0e # v1.15.3
+  hash: d818a9af7bd5919808df78f31580f59382c53150 # v1.16.3
 fork:
   name: op-geth
   url: https://github.com/ethereum-optimism/op-geth
@@ -18,7 +18,7 @@ def:
 
     The OP-stack architecture is modular, following the Consensus/Execution split of post-Merge Ethereum L1:
 
-      - [`op-node`](https://github.com/ethereum-optimism/optimism/tree/develop/op-node) implements most rollup-specific functionality as Consensus-Layer, similar to a L1 beacon-node. 
+      - [`op-node`](https://github.com/ethereum-optimism/optimism/tree/develop/op-node) implements most rollup-specific functionality as Consensus-Layer, similar to a L1 beacon-node.
       - [`op-geth`](https://github.com/ethereum-optimism/op-geth) implements the Execution-Layer, with **minimal changes** for a secure Ethereum-equivalent application environment.
 
     Related [op-stack specifications](https://github.com/ethereum-optimism/optimism/tree/develop/specs):
@@ -136,11 +136,11 @@ def:
                 - "core/txpool/**/*"
                 - "core/txpool/legacypool/*"
         - title: "RIP-7212"
-          description: ""
+          description: |
+            The OP Stack implemented an secp256r1 precompile in the Fjord fork. Ethereum added the same functionality
+            with a different gas cost in its Osaka fork. Both are included in op-geth for backward compatibility.
           globs:
             - "core/vm/contracts.go"
-            - "crypto/secp256r1/publickey.go"
-            - "crypto/secp256r1/verifier.go"
     - title: "Chain Configuration"
       sub:
         - title: "Chain config"
@@ -196,9 +196,15 @@ def:
           globs:
             - "eth/handler.go"
             - "eth/handler_eth.go"
-        - title: Warn on missing hardfork data
+        - title: Warn on missing hardfork data and emit additional metrics
           globs:
             - "core/blockchain.go"
+        - title: Define additional header-based metrics
+          globs:
+            - "core/blockchain_optimism.go"
+        - title: Add hooks for additional header-chain metrics
+          globs:
+            - "core/headerchain.go"
         - title: Optional Engine API extensions
           globs:
             - "eth/catalyst/superchain.go"
@@ -231,7 +237,7 @@ def:
             - "eth/ethconfig/gen_config.go"
     - title: "Single threaded execution"
       description: |
-        The cannon fault proofs virtual machine does not support the creation of threads. To ensure compatibility, 
+        The cannon fault proofs virtual machine does not support the creation of threads. To ensure compatibility,
         thread creation is avoided when only a single CPU is available.
       globs:
         - "core/state/workers.go"
@@ -247,12 +253,15 @@ def:
     - title: "User API enhancements"
       description: "Encode the Deposit Tx properties, the L1 costs, and daisy-chain RPC-calls for pre-Bedrock historical data"
       sub:
-        - title: "Receipts metadata"
+        - title: "Receipts metadata & deposit receipts"
           description: |
-            Pre-Bedrock L1-cost receipt data is loaded from the database if available, and post-Bedrock the L1-cost 
+            Pre-Bedrock L1-cost receipt data is loaded from the database if available, and post-Bedrock the L1-cost
             metadata is hydrated on-the-fly based on the L1 fee information in the corresponding block.
+            We also populate receipts with L1 block attributes like Operator Fee and DA Footprint parameters.
+            Furthermore, OP Stack introduces Deposit receipts, a special kind of receipts for Deposit transactions.
           globs:
             - "core/types/receipt.go"
+            - "core/types/receipt_opstack.go"
             - "core/types/gen_receipt_json.go"
             - "core/rawdb/accessors_chain.go"
         - title: "API Backend"
@@ -327,6 +336,13 @@ def:
     - title: "Geth extras"
       description: Extend the tools available in geth to improve external testing and tooling.
       sub:
+        - title: Logger improvements
+          description: |
+            Extend the logger with context-logging support. And improve testlog Crit handling.
+          globs:
+            - "log/logger.go"
+            - "log/root.go"
+            - "internal/testlog/testlog.go"
         - title: JSON-RPC recording
           description: |
             Extend server and client with configurable JSON-RPC message recording.
@@ -361,6 +377,11 @@ def:
             not updated to handle the newly added `withdrawalsRoot` field in the block header.
           globs:
             - "cmd/evm/internal/t8ntool/block.go"
+        - title: Metrics
+          description: |
+            Adds support for safely updating gauges from optional big.Int values.
+          globs:
+            - "metrics/gauge.go"
     - title: "Testing"
       description: Additional or modified tests, not already captured by the above diff
       ignore:

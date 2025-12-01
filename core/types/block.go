@@ -96,6 +96,7 @@ type Header struct {
 	WithdrawalsHash *common.Hash `json:"withdrawalsRoot" rlp:"optional"`
 
 	// BlobGasUsed was added by EIP-4844 and is ignored in legacy headers.
+	// OP Stack stores the DA footprint in this field starting with the Jovian fork.
 	BlobGasUsed *uint64 `json:"blobGasUsed" rlp:"optional"`
 
 	// ExcessBlobGas was added by EIP-4844 and is ignored in legacy headers.
@@ -128,7 +129,7 @@ func (h *Header) Hash() common.Hash {
 	return rlpHash(h)
 }
 
-var headerSize = common.StorageSize(reflect.TypeOf(Header{}).Size())
+var headerSize = common.StorageSize(reflect.TypeFor[Header]().Size())
 
 // Size returns the approximate memory used by all internal contents. It is used
 // to approximate and limit the memory consumption of various caches.

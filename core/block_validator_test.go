@@ -28,7 +28,6 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -50,8 +49,11 @@ func testHeaderVerification(t *testing.T, scheme string) {
 		headers[i] = block.Header()
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
-	chain, _ := NewBlockChain(rawdb.NewMemoryDatabase(), DefaultCacheConfigWithScheme(scheme), gspec, nil, ethash.NewFaker(), vm.Config{}, nil, nil, t.Context())
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
 	defer chain.Stop()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for i := 0; i < len(blocks); i++ {
 		for j, valid := range []bool{true, false} {
@@ -163,8 +165,11 @@ func testHeaderVerificationForMerging(t *testing.T, isClique bool) {
 		postHeaders[i] = block.Header()
 	}
 	// Run the header checker for blocks one-by-one, checking for both valid and invalid nonces
-	chain, _ := NewBlockChain(rawdb.NewMemoryDatabase(), nil, gspec, nil, engine, vm.Config{}, nil, nil, t.Context())
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, t.Context())
 	defer chain.Stop()
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify the blocks before the merging
 	for i := 0; i < len(preBlocks); i++ {

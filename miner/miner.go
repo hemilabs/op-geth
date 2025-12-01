@@ -33,7 +33,14 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/types/interoptypes"
 	"github.com/ethereum/go-ethereum/eth/tracers"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
+)
+
+var (
+	maxDATxSizeGauge    = metrics.NewRegisteredGauge("miner/maxDATxSize", nil)
+	maxDABlockSizeGauge = metrics.NewRegisteredGauge("miner/maxDABlockSize", nil)
 )
 
 // Backend wraps all methods required for mining. Only full node is capable
@@ -48,6 +55,13 @@ type BackendWithHistoricalState interface {
 
 type BackendWithInterop interface {
 	CheckAccessList(ctx context.Context, inboxEntries []common.Hash, minSafety interoptypes.SafetyLevel, executingDescriptor interoptypes.ExecutingDescriptor) error
+
+	// GetFailsafeEnabled reads the local failsafe status from the backend
+	GetSupervisorFailsafe() bool
+
+	// QueryFailsafe queries the supervisor over RPC for the failsafe status,
+	// caches it in the backend, and returns the status.
+	QueryFailsafe(ctx context.Context) (bool, error)
 }
 
 // Config is the configuration parameters of mining.
@@ -69,7 +83,7 @@ type Config struct {
 
 // DefaultConfig contains default settings for miner.
 var DefaultConfig = Config{
-	GasCeil:  30_000_000,
+	GasCeil:  45_000_000,
 	GasPrice: big.NewInt(params.Wei),
 
 	// The default recommit time is chosen as two seconds since
@@ -101,7 +115,7 @@ type Miner struct {
 // New creates a new miner with provided config.
 func New(eth Backend, config Config, engine consensus.Engine) *Miner {
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Miner{
+	miner := &Miner{
 		backend:     eth,
 		config:      &config,
 		chainConfig: eth.BlockChain().Config(),
@@ -113,6 +127,40 @@ func New(eth Backend, config Config, engine consensus.Engine) *Miner {
 		lifeCtxCancel: cancel,
 		lifeCtx:       ctx,
 	}
+
+	// OP-Stack: Start background RPC polling
+	miner.startBackgroundInteropFailsafeDetection()
+
+	return miner
+}
+
+// OP-Stack: startBackgroundInteropFailsafeDetection starts a background goroutine that periodically
+// calls the supervisor over RPC to check if the failsafe is enabled
+func (miner *Miner) startBackgroundInteropFailsafeDetection() {
+	backend, ok := miner.backend.(BackendWithInterop)
+	if !ok {
+		log.Warn("Miner backend does not implement BackendWithInterop, skipping interop failsafe detection")
+		return
+	}
+
+	go func() {
+		ticker := time.NewTicker(1 * time.Second)
+		defer ticker.Stop()
+
+		log.Info("Starting background interop failsafe detection", "interval", "1s")
+
+		for {
+			select {
+			case <-ticker.C:
+				ctx, cancel := context.WithTimeout(miner.lifeCtx, 1*time.Second)
+				defer cancel()
+				backend.QueryFailsafe(ctx)
+			case <-miner.lifeCtx.Done():
+				log.Info("Stopping background RPC polling due to miner shutdown")
+				return
+			}
+		}
+	}()
 }
 
 // Pending returns the currently pending block and associated receipts, logs
@@ -175,18 +223,26 @@ func (miner *Miner) SetGasTip(tip *big.Int) error {
 
 // SetMaxDASize sets the maximum data availability size currently allowed for inclusion. 0 means no maximum.
 func (miner *Miner) SetMaxDASize(maxTxSize, maxBlockSize *big.Int) {
+	convertZeroToNil := func(v *big.Int) *big.Int {
+		if v != nil && v.BitLen() == 0 {
+			return nil
+		}
+		return v
+	}
+	convertNilToZero := func(v *big.Int) int64 {
+		if v == nil {
+			return 0
+		}
+		return v.Int64()
+	}
+
 	miner.confMu.Lock()
-	if maxTxSize == nil || maxTxSize.BitLen() == 0 {
-		miner.config.MaxDATxSize = nil
-	} else {
-		miner.config.MaxDATxSize = new(big.Int).Set(maxTxSize)
-	}
-	if maxBlockSize == nil || maxBlockSize.BitLen() == 0 {
-		miner.config.MaxDABlockSize = nil
-	} else {
-		miner.config.MaxDABlockSize = new(big.Int).Set(maxBlockSize)
-	}
+	miner.config.MaxDATxSize = convertZeroToNil(maxTxSize)
+	miner.config.MaxDABlockSize = convertZeroToNil(maxBlockSize)
 	miner.confMu.Unlock()
+
+	maxDATxSizeGauge.Update(convertNilToZero(maxTxSize))
+	maxDABlockSizeGauge.Update(convertNilToZero(maxBlockSize))
 }
 
 // BuildPayload builds the payload according to the provided parameters.
@@ -200,10 +256,10 @@ func (miner *Miner) getPending() *newPayloadResult {
 	header := miner.chain.CurrentHeader()
 	miner.pendingMu.Lock()
 	defer miner.pendingMu.Unlock()
+
 	if cached := miner.pending.resolve(header.Hash()); cached != nil {
 		return cached
 	}
-
 	var (
 		timestamp  = uint64(time.Now().Unix())
 		withdrawal types.Withdrawals

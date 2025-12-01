@@ -34,10 +34,10 @@ import (
 // ExecutionResult includes all output after executing given evm
 // message no matter the execution itself is successful or not.
 type ExecutionResult struct {
-	UsedGas     uint64 // Total used gas, not including the refunded gas
-	RefundedGas uint64 // Total gas refunded after execution
-	Err         error  // Any error encountered during the execution(listed in core/vm/errors.go)
-	ReturnData  []byte // Returned data from evm(function result or data supplied with revert opcode)
+	UsedGas    uint64 // Total used gas, not including the refunded gas
+	MaxUsedGas uint64 // Maximum gas consumed during execution, excluding gas refunds.
+	Err        error  // Any error encountered during the execution(listed in core/vm/errors.go)
+	ReturnData []byte // Returned data from evm(function result or data supplied with revert opcode)
 }
 
 // Unwrap returns the internal evm error which allows us for further
@@ -159,7 +159,9 @@ type Message struct {
 
 	// When SkipNonceChecks is true, the message nonce is not checked against the
 	// account nonce in state.
-	// This field will be set to true for operations like RPC eth_call.
+	//
+	// This field will be set to true for operations like RPC eth_call
+	// or the state prefetching.
 	SkipNonceChecks bool
 
 	// When SkipFromEOACheck is true, the message sender is not checked to be an EOA.
@@ -340,7 +342,7 @@ func (st *stateTransition) preCheck() error {
 		// No fee fields to check, no nonce to check, and no need to check if EOA (L1 already verified it for us)
 		// Gas is free, but no refunds!
 		st.initialGas = st.msg.GasLimit
-		st.gasRemaining += st.msg.GasLimit // Add gas here in order to be able to execute calls.
+		st.gasRemaining = st.msg.GasLimit // Add gas here in order to be able to execute calls.
 		// Don't touch the gas pool for system transactions
 		if st.msg.IsSystemTx {
 			if st.evm.ChainConfig().IsOptimismRegolith(st.evm.Context.Time) {
@@ -401,6 +403,7 @@ func (st *stateTransition) preCheck() error {
 		}
 	}
 	// Check the blob version validity
+	isOsaka := st.evm.ChainConfig().IsOsaka(st.evm.Context.BlockNumber, st.evm.Context.Time)
 	if msg.BlobHashes != nil {
 		// The to field of a blob tx type is mandatory, and a `BlobTx` transaction internally
 		// has it as a non-nillable value, so any msg derived from blob transaction has it non-nil.
@@ -410,6 +413,9 @@ func (st *stateTransition) preCheck() error {
 		}
 		if len(msg.BlobHashes) == 0 {
 			return ErrMissingBlobHashes
+		}
+		if isOsaka && len(msg.BlobHashes) > params.BlobTxMaxBlobs {
+			return ErrTooManyBlobs
 		}
 		for i, hash := range msg.BlobHashes {
 			if !kzg4844.IsValidVersionedHash(hash[:]) {
@@ -440,6 +446,10 @@ func (st *stateTransition) preCheck() error {
 		if len(msg.SetCodeAuthorizations) == 0 {
 			return fmt.Errorf("%w (sender %v)", ErrEmptyAuthList, msg.From)
 		}
+	}
+	// Verify tx gas limit does not exceed EIP-7825 cap.
+	if isOsaka && msg.GasLimit > params.MaxTxGas {
+		return fmt.Errorf("%w (cap: %d, tx: %d)", ErrGasLimitTooHigh, params.MaxTxGas, msg.GasLimit)
 	}
 	return st.buyGas()
 }
@@ -547,7 +557,7 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		st.evm.AccessEvents.AddTxOrigin(msg.From)
 
 		if targetAddr := msg.To; targetAddr != nil {
-			st.evm.AccessEvents.AddTxDestination(*targetAddr, msg.Value.Sign() != 0)
+			st.evm.AccessEvents.AddTxDestination(*targetAddr, msg.Value.Sign() != 0, !st.state.Exist(*targetAddr))
 		}
 	}
 
@@ -617,9 +627,12 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		}, nil
 	}
 
+	// Record the gas used excluding gas refunds. This value represents the actual
+	// gas allowance required to complete execution.
+	peakGasUsed := st.gasUsed()
+
 	// Compute refund counter, capped to a refund quotient.
-	gasRefund := st.calcRefund()
-	st.gasRemaining += gasRefund
+	st.gasRemaining += st.calcRefund()
 	if rules.IsPrague {
 		// After EIP-7623: Data-heavy transactions pay the floor gas.
 		if st.gasUsed() < floorDataGas {
@@ -628,6 +641,9 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 			if t := st.evm.Config.Tracer; t != nil && t.OnGasChange != nil {
 				t.OnGasChange(prev, st.gasRemaining, tracing.GasChangeTxDataFloor)
 			}
+		}
+		if peakGasUsed < floorDataGas {
+			peakGasUsed = floorDataGas
 		}
 	}
 	st.returnGas()
@@ -638,19 +654,16 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 	if (st.msg.IsDepositTx || st.msg.IsPopPayoutTx || st.msg.IsBtcAttributesDepositedTx) && rules.IsOptimismRegolith {
 		// Skip coinbase payments for deposit, PoP payout, and BTC Attr Dep tx in Regolith
 		return &ExecutionResult{
-			UsedGas:     st.gasUsed(),
-			RefundedGas: gasRefund,
-			Err:         vmerr,
-			ReturnData:  ret,
+			UsedGas:    st.gasUsed(),
+			MaxUsedGas: peakGasUsed,
+			Err:        vmerr,
+			ReturnData: ret,
 		}, nil
 	}
 
 	effectiveTip := msg.GasPrice
 	if rules.IsLondon {
-		effectiveTip = new(big.Int).Sub(msg.GasFeeCap, st.evm.Context.BaseFee)
-		if effectiveTip.Cmp(msg.GasTipCap) > 0 {
-			effectiveTip = msg.GasTipCap
-		}
+		effectiveTip = new(big.Int).Sub(msg.GasPrice, st.evm.Context.BaseFee)
 	}
 	effectiveTipU256, _ := uint256.FromBig(effectiveTip)
 
@@ -665,7 +678,7 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 
 		// add the coinbase to the witness iff the fee is greater than 0
 		if rules.IsEIP4762 && fee.Sign() != 0 {
-			st.evm.AccessEvents.AddAccount(st.evm.Context.Coinbase, true)
+			st.evm.AccessEvents.AddAccount(st.evm.Context.Coinbase, true, math.MaxUint64)
 		}
 
 		// Check that we are post bedrock to enable op-geth to be able to create pseudo pre-bedrock blocks (these are pre-bedrock, but don't follow l2 geth rules)
@@ -695,10 +708,10 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 	}
 
 	return &ExecutionResult{
-		UsedGas:     st.gasUsed(),
-		RefundedGas: gasRefund,
-		Err:         vmerr,
-		ReturnData:  ret,
+		UsedGas:    st.gasUsed(),
+		MaxUsedGas: peakGasUsed,
+		Err:        vmerr,
+		ReturnData: ret,
 	}, nil
 }
 

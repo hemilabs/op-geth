@@ -317,6 +317,7 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 	// OP-Stack: If applying the superchain-registry to a known OP-Stack chain,
 	// then override the local chain-config with that from the registry.
 	if o.ApplySuperchainUpgrades && cfg.IsOptimism() && cfg.ChainID != nil && cfg.ChainID.IsUint64() {
+		log.Info("Applying superchain upgrades")
 		getChainConfig := func() (*params.ChainConfig, error) {
 			chain, err := superchain.GetChain(cfg.ChainID.Uint64())
 			if err != nil {
@@ -370,6 +371,7 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 		cfg.HoloceneTime = o.OverrideOptimismHolocene
 	}
 	if o.OverrideOptimismIsthmus != nil {
+		log.Info("Setting isthmus time", "time", o.OverrideOptimismIsthmus)
 		cfg.IsthmusTime = o.OverrideOptimismIsthmus
 		cfg.PragueTime = o.OverrideOptimismIsthmus
 	}
@@ -381,6 +383,13 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 	}
 	if o.OverrideHemiHvm0 != nil {
 		cfg.Hvm0Time = o.OverrideHemiHvm0
+	}
+
+	// We check for validity after applying the overrides, even if there weren't any.
+	// This has the added benefit that the check always happens when
+	// applying overrides, which is at the right places during genesis setup.
+	if verr := cfg.CheckOptimismValidity(); verr != nil {
+		return fmt.Errorf("OP-Stack invalidity after applying overrides: %w", verr)
 	}
 
 	// We check for validity after applying the overrides, even if there weren't any.
