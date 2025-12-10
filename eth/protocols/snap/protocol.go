@@ -60,7 +60,7 @@ const (
 
 var (
 	errMsgTooLarge    = errors.New("message too long")
-	errDecode         = errors.New("invalid message")
+	errDecode         = errors.New("invalid snap message")
 	errInvalidMsgCode = errors.New("invalid message code")
 	errBadRequest     = errors.New("bad request")
 )

@@ -38,7 +38,7 @@ import (
 // requestTracker is a singleton tracker for eth/66 and newer request times.
 var (
 	requestTracker = tracker.New(ProtocolName, 5*time.Minute)
-	errDecode         = errors.New("invalid message")
+	errDecode      = errors.New("invalid message")
 )
 
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
@@ -319,6 +319,7 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 }
 
 func handleGetReceipts68(backend Backend, msg Decoder, peer *Peer) error {
+	log.Info("handleGetReceipts68", "peer", peer.RemoteAddr().String())
 	// Decode the block receipts retrieval message
 	var query GetReceiptsPacket
 	if err := msg.Decode(&query); err != nil {
@@ -329,6 +330,7 @@ func handleGetReceipts68(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func handleGetReceipts69(backend Backend, msg Decoder, peer *Peer) error {
+	log.Info("handleGetReceipts69", "peer", peer.RemoteAddr().String())
 	// Decode the block receipts retrieval message
 	var query GetReceiptsPacket
 	if err := msg.Decode(&query); err != nil {
@@ -532,7 +534,9 @@ func handleBlockBodies(backend Backend, msg Decoder, peer *Peer) error {
 func handleReceipts[L ReceiptsList](backend Backend, msg Decoder, peer *Peer) error {
 	// A batch of receipts arrived to one of our previous requests
 	res := new(ReceiptsPacket[L])
+	log.Info("Decoding receipt list from peer", "peer", peer.RemoteAddr().String())
 	if err := msg.Decode(res); err != nil {
+		log.Error("Error handling receipts from peer", "peer", peer.RemoteAddr().String(), "err", err)
 		return err
 	}
 	// Assign temporary hashing buffer to each list item, the same buffer is shared

@@ -24,6 +24,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/forkid"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 )
@@ -54,6 +55,7 @@ func (p *Peer) handshake68(networkID uint64, chain *core.BlockChain) error {
 		forkID     = forkid.NewID(chain.Config(), genesis, latest.Number.Uint64(), latest.Time)
 		forkFilter = forkid.NewFilter(chain)
 	)
+	log.Info("handshake68", "peer", p.RemoteAddr().String())
 	errc := make(chan error, 2)
 	go func() {
 		pkt := &StatusPacket68{
@@ -100,6 +102,7 @@ func (p *Peer) handshake69(networkID uint64, chain *core.BlockChain, rangeMsg Bl
 		forkFilter = forkid.NewFilter(chain)
 	)
 
+	log.Info("handshake69", "peer", p.RemoteAddr().String())
 	errc := make(chan error, 2)
 	go func() {
 		pkt := &StatusPacket69{

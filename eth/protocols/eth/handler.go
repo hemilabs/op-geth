@@ -209,6 +209,8 @@ var eth69 = map[uint64]msgHandler{
 	ReceiptsMsg:                   handleReceipts[*ReceiptList69],
 	GetPooledTransactionsMsg:      handleGetPooledTransactions,
 	PooledTransactionsMsg:         handlePooledTransactions,
+	GetBtcBlocksMsg:               handleGetBTCBlocks,
+	BtcBlocksMsg:                  handleBTCBlocks,
 	BlockRangeUpdateMsg:           handleBlockRangeUpdate,
 }
 
