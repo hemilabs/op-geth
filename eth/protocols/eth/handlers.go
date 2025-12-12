@@ -391,6 +391,7 @@ func serviceGetReceiptsQuery69(chain *core.BlockChain, query GetReceiptsRequest)
 			break
 		}
 		// Retrieve the requested block's receipts
+		log.Info("Getting receipts", "hash", hash.String())
 		results := chain.GetReceiptsRLP(hash)
 		if results == nil {
 			if header := chain.GetHeaderByHash(hash); header == nil || header.ReceiptHash != types.EmptyRootHash {
@@ -410,6 +411,7 @@ func serviceGetReceiptsQuery69(chain *core.BlockChain, query GetReceiptsRequest)
 		}
 		receipts = append(receipts, results)
 		bytes += len(results)
+		log.Info("receipts length", "hash", hash.String(), "length", len(results), "bytes", bytes)
 	}
 	return receipts
 }
