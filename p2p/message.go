@@ -54,12 +54,37 @@ type Msg struct {
 //
 // For the decoding rules, please see package rlp.
 func (msg Msg) Decode(val interface{}) error {
-	log.Info("Decoding message", "payload", msg.Payload, "size", msg.Size)
-	s := rlp.NewStream(msg.Payload, uint64(msg.Size))
+	log.Info("Decoding message", "size", msg.Size)
+
+	reader, bytes, err := teeReader(msg.Payload)
+	if err != nil {
+		panic(err)
+	}
+
+	// Debug output
+	fmt.Printf("\tP2P message: %x\n", bytes)
+	s := rlp.NewStream(reader, uint64(msg.Size))
 	if err := s.Decode(val); err != nil {
+		log.Info("Decoding failed", "err", err)
 		return newPeerError(errInvalidMsg, "(code %x) (size %d) %v", msg.Code, msg.Size, err)
 	}
 	return nil
+}
+
+func teeReader(r io.Reader) (io.Reader, []byte, error) {
+	var buf bytes.Buffer
+
+	// TeeReader copies everything read from r into buf
+	tr := io.TeeReader(r, &buf)
+
+	// Drain the tee to EOF
+	_, err := io.ReadAll(tr)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// Return a fresh reader backed by the captured bytes
+	return bytes.NewReader(buf.Bytes()), buf.Bytes(), nil
 }
 
 func (msg Msg) String() string {
