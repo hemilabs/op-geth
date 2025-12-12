@@ -31,6 +31,7 @@ import (
 	"io"
 	mrand "math/rand"
 	"net"
+	"os"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common/bitutil"
@@ -145,6 +146,19 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 
 	fmt.Printf("read data, code=%d, wireSize=%d\n", code, wireSize)
 
+	if len(data) > 100000 {
+		f, err := os.OpenFile("received.hex", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+
+		_, err = f.WriteString(fmt.Sprintf("0x%s len=%d", data, len(data)))
+		if err != nil {
+			fmt.Printf("write error: %v\n", err)
+		}
+	}
+
 	// If snappy is enabled, verify and decompress message.
 	if c.snappyReadBuffer != nil {
 		var actualSize int
@@ -221,6 +235,20 @@ func (c *Conn) Write(code uint64, data []byte) (uint32, error) {
 		return 0, errPlainMessageTooLarge
 	}
 	fmt.Printf("writing data, code=%d, data=%d\n", code, len(data))
+
+	if len(data) > 100000 {
+		f, err := os.OpenFile("sent.hex", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+
+		_, err = f.WriteString(fmt.Sprintf("0x%s len=%d", data, len(data)))
+		if err != nil {
+			fmt.Printf("write error: %v\n", err)
+		}
+	}
+
 	if c.snappyWriteBuffer != nil {
 		// Ensure the buffer has sufficient size.
 		// Package snappy will allocate its own buffer if the provided
