@@ -146,19 +146,6 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 
 	fmt.Printf("read data, code=%d, wireSize=%d\n", code, wireSize)
 
-	if len(data) > 100000 {
-		f, err := os.OpenFile("received.hex", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
-		if err != nil {
-			panic(err)
-		}
-		defer f.Close()
-
-		_, err = f.WriteString(fmt.Sprintf("0x%x len=%d\n", data, len(data)))
-		if err != nil {
-			fmt.Printf("write error: %v\n", err)
-		}
-	}
-
 	// If snappy is enabled, verify and decompress message.
 	if c.snappyReadBuffer != nil {
 		var actualSize int
@@ -175,6 +162,20 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 		data, err = snappy.Decode(c.snappyReadBuffer, data)
 		fmt.Printf("after snappy decode, uncompressed size=%d\n", len(data))
 	}
+
+	if len(data) > 100000 {
+		f, err := os.OpenFile("received.hex", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+		if err != nil {
+			panic(err)
+		}
+		defer f.Close()
+
+		_, err = f.WriteString(fmt.Sprintf("0x%x len=%d\n", data, len(data)))
+		if err != nil {
+			fmt.Printf("write error: %v\n", err)
+		}
+	}
+
 	return code, data, wireSize, err
 }
 
