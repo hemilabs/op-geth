@@ -252,6 +252,7 @@ func handleMessage(backend Backend, peer *Peer) error {
 		if msg.Code == BtcBlocksMsg {
 			log.Info(fmt.Sprintf("Raw BTC block message: %s", msg.String()))
 		}
+		log.Info("Handling message", "code", msg.Code, "size", msg.Size)
 		return handler(backend, msg, peer)
 	}
 	return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
