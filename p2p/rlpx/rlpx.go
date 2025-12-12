@@ -153,7 +153,7 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 		}
 		defer f.Close()
 
-		_, err = f.WriteString(fmt.Sprintf("0x%s len=%d", data, len(data)))
+		_, err = f.WriteString(fmt.Sprintf("0x%x len=%d\n", data, len(data)))
 		if err != nil {
 			fmt.Printf("write error: %v\n", err)
 		}
@@ -243,7 +243,7 @@ func (c *Conn) Write(code uint64, data []byte) (uint32, error) {
 		}
 		defer f.Close()
 
-		_, err = f.WriteString(fmt.Sprintf("0x%s len=%d", data, len(data)))
+		_, err = f.WriteString(fmt.Sprintf("0x%x len=%d\n", data, len(data)))
 		if err != nil {
 			fmt.Printf("write error: %v\n", err)
 		}
