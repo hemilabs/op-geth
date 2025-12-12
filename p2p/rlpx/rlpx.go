@@ -224,6 +224,8 @@ func (c *Conn) Write(code uint64, data []byte) (uint32, error) {
 	}
 
 	wireSize := uint32(len(data))
+
+	fmt.Printf("\tSending P2P message, code=%d, size=%d, data=%x\n", code, len(data), data)
 	err := c.session.writeFrame(c.conn, code, data)
 	return wireSize, err
 }
