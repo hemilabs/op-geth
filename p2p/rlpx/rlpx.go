@@ -143,10 +143,14 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 	}
 	wireSize = len(data)
 
+	fmt.Printf("read data, code=%d, wireSize=%d\n", code, wireSize)
+
 	// If snappy is enabled, verify and decompress message.
 	if c.snappyReadBuffer != nil {
 		var actualSize int
 		actualSize, err = snappy.DecodedLen(data)
+
+		fmt.Printf("snappy reader, actualSize=%x, data=%d\n", actualSize, len(data))
 		if err != nil {
 			return code, nil, 0, err
 		}

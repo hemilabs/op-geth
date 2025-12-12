@@ -62,7 +62,7 @@ func (msg Msg) Decode(val interface{}) error {
 	}
 
 	// Debug output
-	fmt.Printf("\tSending P2P message, size=%d, data=%x\n", len(bytes), bytes)
+	fmt.Printf("\tDecoding P2P message, size=%d\n", len(bytes))
 	s := rlp.NewStream(reader, uint64(msg.Size))
 	if err := s.Decode(val); err != nil {
 		log.Info("Decoding failed", "err", err)
@@ -130,7 +130,6 @@ func Send(w MsgWriter, msgcode uint64, data interface{}) error {
 		log.Warn("Error in p2p send", "err", err)
 		return err
 	}
-	log.Info("Sending message", "size", size, "msgcode", msgcode, "data", data)
 	err = w.WriteMsg(Msg{Code: msgcode, Size: uint32(size), Payload: r})
 	if err != nil {
 		log.Warn("Error in WriteMsg", "err", err)
