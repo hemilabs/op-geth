@@ -150,7 +150,7 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 		var actualSize int
 		actualSize, err = snappy.DecodedLen(data)
 
-		fmt.Printf("snappy reader, actualSize=%x, data=%d\n", actualSize, len(data))
+		fmt.Printf("snappy reader, actualSize=%d, data len=%d\n", actualSize, len(data))
 		if err != nil {
 			return code, nil, 0, err
 		}
@@ -159,6 +159,7 @@ func (c *Conn) Read() (code uint64, data []byte, wireSize int, err error) {
 		}
 		c.snappyReadBuffer = growslice(c.snappyReadBuffer, actualSize)
 		data, err = snappy.Decode(c.snappyReadBuffer, data)
+		fmt.Printf("after snappy decode, uncompressed size=%d\n", len(data))
 	}
 	return code, data, wireSize, err
 }
@@ -219,17 +220,19 @@ func (c *Conn) Write(code uint64, data []byte) (uint32, error) {
 	if len(data) > maxUint24 {
 		return 0, errPlainMessageTooLarge
 	}
+	fmt.Printf("writing data, code=%d, data=%d\n", code, len(data))
 	if c.snappyWriteBuffer != nil {
 		// Ensure the buffer has sufficient size.
 		// Package snappy will allocate its own buffer if the provided
 		// one is smaller than MaxEncodedLen.
 		c.snappyWriteBuffer = growslice(c.snappyWriteBuffer, snappy.MaxEncodedLen(len(data)))
 		data = snappy.Encode(c.snappyWriteBuffer, data)
+		fmt.Printf("after snappy compress, write length=%d\n", len(data))
 	}
 
 	wireSize := uint32(len(data))
 
-	fmt.Printf("\tSending P2P message, code=%d, size=%d, data=%x\n", code, len(data), data)
+	fmt.Printf("\tSending P2P message, code=%d, size=%d\n", code, len(data))
 	err := c.session.writeFrame(c.conn, code, data)
 	return wireSize, err
 }
