@@ -33,7 +33,6 @@ require (
 	github.com/fjl/gencodec v0.1.0
 	github.com/fsnotify/fsnotify v1.6.0
 	github.com/gballet/go-libpcsclite v0.0.0-20190607065134-2772fd86a8ff
-	github.com/go-test/deep v1.1.1
 	github.com/gofrs/flock v0.12.1
 	github.com/golang-jwt/jwt/v4 v4.5.2
 	github.com/golang/snappy v0.0.5-0.20220116011046-fa5810519dcb
@@ -177,5 +176,3 @@ exclude google.golang.org/genproto v0.0.0-20180518175338-11a468237815
 exclude google.golang.org/genproto v0.0.0-20230227214838-9b19f0bdc514
 
 exclude google.golang.org/genproto v0.0.0-20230410155749-daa745c078e1
-
-//replace github.com/ethereum-optimism/superchain-registry/superchain => ../superchain-registry/superchain
