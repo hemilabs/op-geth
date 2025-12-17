@@ -602,8 +602,10 @@ type testBackend struct {
 }
 
 func newTestBackend(t *testing.T, n int, gspec *core.Genesis, engine consensus.Engine, generator func(i int, b *core.BlockGen)) *testBackend {
-	// options := core.DefaultConfig().WithArchive(true)
-	txLookupLimit := uint64(0) // index all txs
+	options := core.DefaultConfig().WithArchive(true)
+	options.TxLookupLimit = 0 // index all txs
+
+	txLookupLimit := uint64(options.TxLookupLimit)
 
 	accman, acc := newTestAccountManager(t)
 	gspec.Alloc[acc.Address] = types.Account{Balance: big.NewInt(params.Ether)}

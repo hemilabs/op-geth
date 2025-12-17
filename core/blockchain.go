@@ -385,10 +385,6 @@ type BlockChain struct {
 	processor  Processor // Block transaction processor interface
 	vmConfig   vm.Config
 
-	logger *tracing.Hooks
-
-	lastForkReadyAlert time.Time // Last time there was a fork readiness print out
-
 	hvmEnabled            bool
 	tbcHeaderNode         *tbc.Server
 	tbcHeaderNodeConfig   *tbc.Config
@@ -421,6 +417,10 @@ type BlockChain struct {
 	keystoneBackfillMtx sync.RWMutex
 
 	keystonesBackfilled bool
+
+	logger *tracing.Hooks
+
+	lastForkReadyAlert time.Time // Last time there was a fork readiness print out
 }
 
 // getHeaderModeTBCEVMHeader returns the EVM header for which the
