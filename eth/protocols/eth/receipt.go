@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"math"
 	"math/big"
 
 	"github.com/ethereum/go-ethereum/core/types"
@@ -40,6 +41,9 @@ type Receipt struct {
 	// OP-Stack additions for deposit receipts
 	DepositNonce          *uint64
 	DepositReceiptVersion *uint64
+
+	PoPPayoutNonce              *uint64
+	BtcAttributesDepositedNonce *uint64
 }
 
 func newReceipt(tr *types.Receipt) Receipt {
@@ -125,6 +129,48 @@ func (r *Receipt) decodeInnerList(s *rlp.Stream, readTxType, readBloom bool) err
 	r.Logs, err = s.Raw()
 	if err != nil {
 		return fmt.Errorf("invalid logs: %w", err)
+	}
+
+	if r.TxType == types.BtcAttributesDepositedTxType && s.MoreDataInList() {
+		valueFound := false
+		for s.MoreDataInList() {
+			dn, err := s.Uint64()
+			if err != nil {
+				return fmt.Errorf("invalid pop tx nonce: %w", err)
+			}
+
+			if dn == math.MaxUint64 {
+				continue
+			}
+
+			if valueFound {
+				return fmt.Errorf("too many values in BtcAttributesDepositedTx in receipt")
+			}
+
+			valueFound = true
+			r.BtcAttributesDepositedNonce = &dn
+		}
+	}
+
+	if r.TxType == types.PopPayoutTxType && s.MoreDataInList() {
+		valueFound := false
+		for s.MoreDataInList() {
+			dn, err := s.Uint64()
+			if err != nil {
+				return fmt.Errorf("invalid pop tx nonce: %w", err)
+			}
+
+			if dn == math.MaxUint64 {
+				continue
+			}
+
+			if valueFound {
+				return fmt.Errorf("found too many values in pop tx in receipt")
+			}
+
+			valueFound = true
+			r.PoPPayoutNonce = &dn
+		}
 	}
 
 	// OP-Stack addition: read the deposit nonce and version, if present.
