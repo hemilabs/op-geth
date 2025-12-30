@@ -340,6 +340,7 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 		// Try to find a subpool that accepts the transaction
 		for j, subpool := range p.subpools {
 			if subpool.Filter(tx) {
+				log.Info("txpool for tx found", "hash", tx.Hash().String())
 				txsets[j] = append(txsets[j], tx)
 				splits[i] = j
 				break

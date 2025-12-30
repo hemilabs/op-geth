@@ -1030,12 +1030,14 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 		news = make([]*types.Transaction, 0, len(txs))
 	)
 	for i, tx := range txs {
+		log.Info("Legacy Pool checking tx", "hash", tx.Hash().String())
 		if tx.IsBtcAttributesDepositedTx() || tx.IsPopPayoutTx() {
 			// Should never happen, but extra protection
 			continue
 		}
 		// If the transaction is known, pre-set the error slot
 		if pool.all.Get(tx.Hash()) != nil {
+			log.Info("Tx already known", "hash", tx.Hash().String())
 			errs[i] = txpool.ErrAlreadyKnown
 			knownTxMeter.Mark(1)
 			continue
@@ -1053,6 +1055,7 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 		news = append(news, tx)
 	}
 	if len(news) == 0 {
+		log.Info("No new transactions")
 		return errs
 	}
 
@@ -1063,6 +1066,7 @@ func (pool *LegacyPool) Add(txs []*types.Transaction, sync bool) []error {
 
 	nilSlot := 0
 	for _, err := range newErrs {
+		log.Info("Legacy Tx pool error", "err", err)
 		for errs[nilSlot] != nil {
 			nilSlot++
 		}
@@ -1083,18 +1087,20 @@ func (pool *LegacyPool) addTxsLocked(txs []*types.Transaction) ([]error, *accoun
 	dirty := newAccountSet(pool.signer)
 	errs := make([]error, len(txs))
 	for i, tx := range txs {
+		log.Info("addTxsLocked for tx", "hash", tx.Hash().String())
 		// Exclude transactions which fail the ingress filters
 		filtered := false
 		for _, filter := range pool.ingressFilters {
 			if !filter.FilterTx(pool.filterCtx, tx) {
 				errs[i] = core.ErrTxFilteredOut
-				log.Trace("Discarding filtered transaction", "hash", tx.Hash())
+				log.Info("Discarding filtered transaction", "hash", tx.Hash())
 				invalidTxMeter.Mark(1)
 				filtered = true
 				break
 			}
 		}
 		if filtered {
+			log.Info("tx filtered", "hash", tx.Hash().String())
 			continue
 		}
 		replaced, err := pool.add(tx)
