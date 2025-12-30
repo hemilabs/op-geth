@@ -862,9 +862,14 @@ func (pool *LegacyPool) add(tx *types.Transaction) (replaced bool, err error) {
 		log.Info("Transaction is a replacement", "hash", tx.Hash().String(), "nonce", tx.Nonce())
 		// Nonce already pending, check if required price bump is met
 		inserted, old := list.Add(tx, pool.config.PriceBump)
-		log.Info("Old and new info", "old hash", old.Hash().String(), "new hash", tx.Hash().String(),
-			"old nonce", old.Nonce(), "new nonce", tx.Nonce(), "old gasFeeCap", old.GasFeeCap(), "new gasFeeCap", tx.GasFeeCap(),
-			"old gasTipCap", old.GasTipCap(), "new gasTipCap", tx.GasTipCap())
+		if old != nil {
+			log.Info("Old and new info", "old hash", old.Hash().String(), "new hash", tx.Hash().String(),
+				"old nonce", old.Nonce(), "new nonce", tx.Nonce(), "old gasFeeCap", old.GasFeeCap(), "new gasFeeCap", tx.GasFeeCap(),
+				"old gasTipCap", old.GasTipCap(), "new gasTipCap", tx.GasTipCap())
+		} else {
+			log.Info("No old transaction that new tx is replacing", "new hash", tx.Hash().String(), "new nonce", tx.Nonce(),
+				"new gasFeeCap", tx.GasFeeCap(), "new gasTipCap", tx.GasTipCap())
+		}
 		if !inserted {
 			pendingDiscardMeter.Mark(1)
 			return false, txpool.ErrReplaceUnderpriced
