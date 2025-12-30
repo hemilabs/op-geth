@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/holiman/uint256"
 )
 
@@ -348,7 +349,12 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 	// If there's an older better transaction, abort
 	old := l.txs.Get(tx.Nonce())
 	if old != nil {
+		log.Info("Transaction replaces another at same nonce",
+			"nonce", tx.Nonce(), "old", old.Hash().String(), "new", tx.Hash().String())
 		if old.GasFeeCapCmp(tx) >= 0 || old.GasTipCapCmp(tx) >= 0 {
+			log.Info("Rejecting transaction", "hash", tx.Hash().String(),
+				"old gasFeeCap", old.GasFeeCap(), "new gasFeeCap", tx.GasFeeCap(),
+				"old gasTipCap", old.GasTipCap(), "new gasTipCap", tx.GasTipCap())
 			return false, nil
 		}
 		// thresholdFeeCap = oldFC  * (100 + priceBump) / 100
@@ -365,6 +371,8 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 		// old ones as well as checking the percentage threshold to ensure that
 		// this is accurate for low (Wei-level) gas price replacements.
 		if tx.GasFeeCapIntCmp(thresholdFeeCap) < 0 || tx.GasTipCapIntCmp(thresholdTip) < 0 {
+			log.Info("Rejecting transaction below gas threshold", "hash", tx.Hash().String(), "thresholdFeeCap", thresholdFeeCap,
+				"tx.GasFeeCap", tx.GasFeeCap(), "thresholdTip", thresholdTip, "tx.GasTipCap", tx.GasTipCap())
 			return false, nil
 		}
 		// Old is being replaced, subtract old cost
@@ -373,6 +381,7 @@ func (l *list) Add(tx *types.Transaction, priceBump uint64) (bool, *types.Transa
 	// Add new tx cost to totalcost
 	cost, overflow := txpool.TotalTxCost(tx, l.rollupCostFn())
 	if overflow {
+		log.Info("Rejecting transaction for overflow", "hash", tx.Hash().String())
 		return false, nil
 	}
 	l.txCosts[tx.Hash()] = cost // OP-Stack addition
