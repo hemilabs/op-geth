@@ -103,7 +103,7 @@ func (p *Peer) broadcastTransactions() {
 						return
 					}
 					close(done)
-					p.Log().Trace("Sent transactions", "count", len(txs))
+					log.Info("Sent transactions", "count", len(txs))
 				}()
 			}
 		}

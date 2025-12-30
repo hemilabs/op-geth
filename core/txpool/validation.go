@@ -171,23 +171,28 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	// the transaction metadata
 	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai)
 	if err != nil {
+		log.Info("Error calculating intrinsic gas", "hash", tx.Hash().String(), "err", err)
 		return err
 	}
 	if tx.Gas() < intrGas {
+		log.Info("Tx gas below intrinsic gas", "hash", tx.Hash().String(), "tx.gas", tx.Gas(), "intrGas", intrGas)
 		return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrIntrinsicGas, tx.Gas(), intrGas)
 	}
 	// Ensure the transaction can cover floor data gas.
 	if opts.Config.IsPrague(head.Number, head.Time) {
 		floorDataGas, err := core.FloorDataGas(tx.Data())
 		if err != nil {
+			log.Info("Error calculating floor data gas", "hash", tx.Hash().String(), "err", err)
 			return err
 		}
 		if tx.Gas() < floorDataGas {
+			log.Info("Tx gas below floor data gas", "hash", tx.Hash().String(), "tx.gas", tx.Gas(), "floorDataGas", floorDataGas)
 			return fmt.Errorf("%w: gas %v, minimum needed %v", core.ErrFloorDataGas, tx.Gas(), floorDataGas)
 		}
 	}
 	// Ensure the gasprice is high enough to cover the requirement of the calling pool
 	if tx.GasTipCapIntCmp(opts.MinTip) < 0 {
+		log.Info("Tx gas tip cap below minimum", "hash", tx.Hash().String(), "tx.GasTipCap()", tx.GasTipCap(), "minTip", opts.MinTip)
 		return fmt.Errorf("%w: gas tip cap %v, minimum needed %v", ErrTxGasPriceTooLow, tx.GasTipCap(), opts.MinTip)
 	}
 	if tx.Type() == types.BlobTxType {
@@ -198,6 +203,8 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 			return errors.New("set code tx must have at least one authorization tuple")
 		}
 	}
+
+	log.Info("Transaction successfully validated", "hash", tx.Hash().String())
 	return nil
 }
 

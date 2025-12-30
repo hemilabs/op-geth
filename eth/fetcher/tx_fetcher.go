@@ -310,6 +310,7 @@ func (f *TxFetcher) isKnownUnderpriced(hash common.Hash) bool {
 // direct request replies. The differentiation is important so the fetcher can
 // re-schedule missing transactions as soon as possible.
 func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) error {
+	log.Info("Euqueue called", "tx count", len(txs), "direct", direct)
 	var (
 		inMeter          = txReplyInMeter
 		knownMeter       = txReplyKnownMeter
@@ -344,11 +345,14 @@ func (f *TxFetcher) Enqueue(peer string, txs []*types.Transaction, direct bool) 
 		)
 		batch := txs[i:end]
 
+		log.Info("Euqueuing transactions", "len", len(batch))
+
 		for j, err := range f.addTxs(batch) {
 			// Track the transaction hash if the price is too low for us.
 			// Avoid re-request this transaction when we receive another
 			// announcement.
 			if errors.Is(err, txpool.ErrUnderpriced) || errors.Is(err, txpool.ErrReplaceUnderpriced) || errors.Is(err, txpool.ErrTxGasPriceTooLow) {
+				log.Warn("Error adding transactions to mempool", "err", err)
 				f.underpriced.Add(batch[j].Hash(), batch[j].Time())
 			}
 			// Track a few interesting failure types

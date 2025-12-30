@@ -81,6 +81,7 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.txFetcher.Notify(peer.ID(), packet.Types, packet.Sizes, packet.Hashes)
 
 	case *eth.TransactionsPacket:
+		log.Info("Received transaction packet")
 		for _, tx := range *packet {
 			log.Info("received transaction in packet from peer", "hash", tx.Hash(), "peer id", peer.ID)
 		}

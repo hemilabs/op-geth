@@ -317,6 +317,7 @@ func (p *TxPool) GetMetadata(hash common.Hash) *TxMetadata {
 // Note, if sync is set the method will block until all internal maintenance
 // related to the add is finished. Only use this during tests for determinism.
 func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
+	log.Info("txpool add txes", "len", len(txs))
 	// Split the input transactions between the subpools. It shouldn't really
 	// happen that we receive merged batches, but better graceful than strange
 	// errors.
@@ -327,6 +328,7 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 	splits := make([]int, len(txs))
 
 	for i, tx := range txs {
+		log.Info("txpool considering tx", "hash", tx.Hash().String())
 		if tx.IsBtcAttributesDepositedTx() || tx.IsPopPayoutTx() {
 			// Should never happen, but extra protection
 			continue

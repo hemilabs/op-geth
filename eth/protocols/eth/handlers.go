@@ -38,7 +38,7 @@ import (
 // requestTracker is a singleton tracker for eth/66 and newer request times.
 var (
 	requestTracker = tracker.New(ProtocolName, 5*time.Minute)
-	errDecode         = errors.New("invalid message")
+	errDecode      = errors.New("invalid message")
 )
 
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
@@ -624,7 +624,9 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(&txs); err != nil {
 		return err
 	}
+	log.Info("Received transaction packet", "len", len(txs))
 	for i, tx := range txs {
+		log.Info("Transaction received", "hash", tx.Hash().String())
 		// Validate and mark the remote transaction
 		if tx == nil {
 			return fmt.Errorf("Transactions: transaction %d is nil", i)
