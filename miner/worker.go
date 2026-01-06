@@ -458,7 +458,7 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 }
 
 func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) error {
-	log.Info("commitTransaction", "hash", tx.Hash().String(), "address", tx.From().String())
+	log.Info("commitTransaction", "hash", tx.Hash().String())
 	// OP-Stack addition
 	interopAccessList := interoptypes.TxToInteropAccessList(tx)
 	if len(interopAccessList) > 0 {
@@ -489,7 +489,7 @@ func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) e
 		}
 	}
 
-	log.Info("applying transaction", "hash", tx.Hash().String(), "address", tx.From().String())
+	log.Info("applying transaction", "hash", tx.Hash().String())
 	receipt, err := miner.applyTransaction(env, tx)
 	if err != nil {
 		log.Info("transaction application error", "hash", tx.Hash().String(), "err", err)
@@ -499,7 +499,7 @@ func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) e
 	env.receipts = append(env.receipts, receipt)
 	env.size += tx.Size()
 	env.tcount++
-	log.Info("successfully committed transaction", "hash", tx.Hash().String(), "address", tx.From().String())
+	log.Info("successfully committed transaction", "hash", tx.Hash().String())
 	return nil
 }
 
@@ -619,7 +619,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			continue
 		}
 
-		log.Info("ltx transaction being committed", "hash", ltx.Hash.String(), "address", ltx.Tx.From().String())
+		log.Info("ltx transaction being committed", "hash", ltx.Hash.String())
 
 		// Most of the blob gas logic here is agnostic as to if the chain supports
 		// blobs or not, however the max check panics when called on a chain without
@@ -665,10 +665,10 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		}
 
 		// Transaction seems to fit, pull it up from the pool
-		log.Info("Transaction seems to fit", "hash", ltx.Tx.Hash().String(), "address", ltx.Tx.From().String())
+		log.Info("Transaction seems to fit", "hash", ltx.Tx.Hash().String())
 		tx := ltx.Resolve()
 		if tx == nil {
-			log.Info("Ignoring evicted transaction", "hash", ltx.Hash)
+			log.Info("Ignoring evicted transaction", "hash", ltx.Tx.Hash().String())
 			txs.Pop()
 			continue
 		}
@@ -685,7 +685,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		// if inclusion of the transaction would put the block size over the
 		// maximum we allow, don't add any more txs to the payload.
 		if !env.txFitsSize(tx) {
-			log.Info("Tx does not fit size", "hash", tx.Hash().String(), "address", tx.From().String())
+			log.Info("Tx does not fit size", "hash", tx.Hash().String())
 			break
 		}
 		// Error may be ignored here. The error has already been checked
@@ -702,10 +702,10 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		// Start executing the transaction
 		env.state.SetTxContext(tx.Hash(), env.tcount)
 
-		log.Info("Committing transaction", "hash", tx.Hash().String(), "address", tx.From().String())
+		log.Info("Committing transaction", "hash", tx.Hash().String())
 		err := miner.commitTransaction(env, tx)
 		if err != nil {
-			log.Info("Error committing transaction", "hash", tx.Hash().String(), "address", tx.From().String(), "err", err)
+			log.Info("Error committing transaction", "hash", tx.Hash().String(), "err", err)
 		}
 		switch {
 		case errors.Is(err, core.ErrNonceTooLow):
