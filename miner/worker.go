@@ -458,6 +458,7 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 }
 
 func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) error {
+	log.Info("commitTransaction", "hash", tx.Hash().String(), "address", tx.From().String())
 	// OP-Stack addition
 	interopAccessList := interoptypes.TxToInteropAccessList(tx)
 	if len(interopAccessList) > 0 {
@@ -479,21 +480,26 @@ func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) e
 
 		// check the conditional
 		if err := env.header.CheckTransactionConditional(conditional); err != nil {
+			log.Info("transaction header conditional check failed", "hash", tx.Hash().String(), "err", err)
 			return fmt.Errorf("failed header check: %s: %w", err, errTxConditionalInvalid)
 		}
 		if err := env.state.CheckTransactionConditional(conditional); err != nil {
+			log.Info("transaction state conditional check failed", "hash", tx.Hash().String(), "err", err)
 			return fmt.Errorf("failed state check: %s: %w", err, errTxConditionalInvalid)
 		}
 	}
 
+	log.Info("applying transaction", "hash", tx.Hash().String(), "address", tx.From().String())
 	receipt, err := miner.applyTransaction(env, tx)
 	if err != nil {
+		log.Info("transaction application error", "hash", tx.Hash().String(), "err", err)
 		return err
 	}
 	env.txs = append(env.txs, tx)
 	env.receipts = append(env.receipts, receipt)
 	env.size += tx.Size()
 	env.tcount++
+	log.Info("successfully committed transaction", "hash", tx.Hash().String(), "address", tx.From().String())
 	return nil
 }
 
@@ -613,13 +619,15 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			continue
 		}
 
+		log.Info("ltx transaction being committed", "hash", ltx.Hash.String(), "address", ltx.Tx.From().String())
+
 		// Most of the blob gas logic here is agnostic as to if the chain supports
 		// blobs or not, however the max check panics when called on a chain without
 		// a defined schedule, so we need to verify it's safe to call.
 		if isCancun {
 			left := eip4844.MaxBlobsPerBlock(miner.chainConfig, env.header.Time) - env.blobs
 			if left < int(ltx.BlobGas/params.BlobTxBlobGasPerBlob) {
-				log.Trace("Not enough blob space left for transaction", "hash", ltx.Hash, "left", left, "needed", ltx.BlobGas/params.BlobTxBlobGasPerBlob)
+				log.Info("Not enough blob space left for transaction", "hash", ltx.Hash, "left", left, "needed", ltx.BlobGas/params.BlobTxBlobGasPerBlob)
 				txs.Pop()
 				continue
 			}
@@ -632,7 +640,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		if isJovian {
 			txDAFootprint = ltx.DABytes.Uint64() * uint64(env.daFootprintGasScalar)
 			if daFootprintLeft < txDAFootprint {
-				log.Debug("Not enough DA space left for transaction", "hash", ltx.Hash, "left", daFootprintLeft, "needed", txDAFootprint)
+				log.Info("Not enough DA space left for transaction", "hash", ltx.Hash, "left", daFootprintLeft, "needed", txDAFootprint)
 				txs.Pop()
 				continue
 			}
@@ -643,7 +651,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		if ltx.DABytes != nil && miner.config.MaxDABlockSize != nil {
 			daBytesAfter.Add(blockDABytes, ltx.DABytes)
 			if daBytesAfter.Cmp(miner.config.MaxDABlockSize) > 0 {
-				log.Debug("adding tx would exceed block DA size limit",
+				log.Info("adding tx would exceed block DA size limit",
 					"hash", ltx.Hash, "txda", ltx.DABytes, "blockda", blockDABytes, "dalimit", miner.config.MaxDABlockSize)
 				txs.Pop()
 				// If the number of remaining bytes is too few to hold even the minimum possible transaction size,
@@ -657,9 +665,10 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		}
 
 		// Transaction seems to fit, pull it up from the pool
+		log.Info("Transaction seems to fit", "hash", ltx.Tx.Hash().String(), "address", ltx.Tx.From().String())
 		tx := ltx.Resolve()
 		if tx == nil {
-			log.Trace("Ignoring evicted transaction", "hash", ltx.Hash)
+			log.Info("Ignoring evicted transaction", "hash", ltx.Hash)
 			txs.Pop()
 			continue
 		}
@@ -676,6 +685,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		// if inclusion of the transaction would put the block size over the
 		// maximum we allow, don't add any more txs to the payload.
 		if !env.txFitsSize(tx) {
+			log.Info("Tx does not fit size", "hash", tx.Hash().String(), "address", tx.From().String())
 			break
 		}
 		// Error may be ignored here. The error has already been checked
@@ -685,18 +695,22 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		// Check whether the tx is replay protected. If we're not in the EIP155 hf
 		// phase, start ignoring the sender until we do.
 		if tx.Protected() && !miner.chainConfig.IsEIP155(env.header.Number) {
-			log.Trace("Ignoring replay protected transaction", "hash", ltx.Hash, "eip155", miner.chainConfig.EIP155Block)
+			log.Info("Ignoring replay protected transaction", "hash", ltx.Hash, "eip155", miner.chainConfig.EIP155Block)
 			txs.Pop()
 			continue
 		}
 		// Start executing the transaction
 		env.state.SetTxContext(tx.Hash(), env.tcount)
 
+		log.Info("Committing transaction", "hash", tx.Hash().String(), "address", tx.From().String())
 		err := miner.commitTransaction(env, tx)
+		if err != nil {
+			log.Info("Error committing transaction", "hash", tx.Hash().String(), "address", tx.From().String(), "err", err)
+		}
 		switch {
 		case errors.Is(err, core.ErrNonceTooLow):
 			// New head notification data race between the transaction pool and miner, shift
-			log.Trace("Skipping transaction with low nonce", "hash", ltx.Hash, "sender", from, "nonce", tx.Nonce())
+			log.Info("Skipping transaction with low nonce", "hash", ltx.Hash, "sender", from, "nonce", tx.Nonce())
 			txs.Shift()
 
 		case errors.Is(err, errTxConditionalInvalid):
@@ -705,15 +719,15 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 
 			// mark as rejected so that it can be ejected from the mempool
 			tx.SetRejected()
-			log.Warn("Skipping account, transaction with failed conditional", "sender", from, "hash", ltx.Hash, "err", err)
+			log.Info("Skipping account, transaction with failed conditional", "sender", from, "hash", ltx.Hash, "err", err)
 			txs.Pop()
 
 		case env.rpcCtx != nil && env.rpcCtx.Err() != nil && errors.Is(err, env.rpcCtx.Err()):
-			log.Warn("Transaction processing aborted due to RPC context error", "err", err)
+			log.Info("Transaction processing aborted due to RPC context error", "err", err)
 			txs.Pop() // RPC timeout. Tx could not be checked, and thus not included, but not rejected yet.
 
 		case err != nil && tx.Rejected():
-			log.Warn("Transaction was rejected during block-building", "hash", ltx.Hash, "err", err)
+			log.Info("Transaction was rejected during block-building", "hash", ltx.Hash, "err", err)
 			txs.Pop()
 
 		case errors.Is(err, nil):
@@ -727,7 +741,7 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 		default:
 			// Transaction is regarded as invalid, drop all consecutive transactions from
 			// the same sender because of `nonce-too-high` clause.
-			log.Debug("Transaction failed, account skipped", "hash", ltx.Hash, "err", err)
+			log.Info("Transaction failed, account skipped", "hash", ltx.Hash, "err", err)
 			txs.Pop()
 		}
 	}
@@ -766,6 +780,11 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 	pendingPlainTxs := miner.txpool.Pending(filter)
 	log.Info("Done getting pending plain txs")
 
+	log.Info("regular plain transactions in fillTransactions:")
+	for addr, txes := range pendingPlainTxs {
+		log.Info("\tAddress has txes", "address", addr, "num", len(txes))
+	}
+
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = false, true
 	pendingBlobTxs := miner.txpool.Pending(filter)
 
@@ -785,6 +804,7 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 	}
 	// Fill the block with all available pending transactions.
 	if len(prioPlainTxs) > 0 || len(prioBlobTxs) > 0 {
+		log.Info("processing priority transactions")
 		plainTxs := newTransactionsByPriceAndNonce(env.signer, prioPlainTxs, env.header.BaseFee)
 		blobTxs := newTransactionsByPriceAndNonce(env.signer, prioBlobTxs, env.header.BaseFee)
 
@@ -793,8 +813,16 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 		}
 	}
 	if len(normalPlainTxs) > 0 || len(normalBlobTxs) > 0 {
+		log.Info("processing normal transactions")
 		plainTxs := newTransactionsByPriceAndNonce(env.signer, normalPlainTxs, env.header.BaseFee)
 		blobTxs := newTransactionsByPriceAndNonce(env.signer, normalBlobTxs, env.header.BaseFee)
+
+		for addr, txes := range plainTxs.txs {
+			log.Info("Committing txes", "address", addr, "num", len(txes))
+			for _, tx := range txes {
+				log.Info("\t", "hash", tx.Hash.String())
+			}
+		}
 
 		if err := miner.commitTransactions(env, plainTxs, blobTxs, interrupt); err != nil {
 			return err

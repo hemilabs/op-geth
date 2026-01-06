@@ -620,6 +620,7 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 			}
 		}
 		if len(txs) > 0 {
+			log.Info("Non-zero transactions for address", "address", addr.String(), "num txes", len(txs))
 			lazies := make([]*txpool.LazyTransaction, len(txs))
 			for i := 0; i < len(txs); i++ {
 				daBytes := txs[i].RollupCostData().EstimatedDASize()
