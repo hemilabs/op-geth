@@ -748,8 +748,12 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 		MinTip:      uint256.MustFromBig(tip),
 		MaxDATxSize: miner.config.MaxDATxSize,
 	}
+
+	log.Info("filling transactions", "tip gas price", miner.config.GasPrice, "prio", miner.prio, "filter min tip", filter.MinTip)
+
 	if env.header.BaseFee != nil {
 		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
+		log.Info("Base fee set", "basefee", filter.BaseFee)
 	}
 	if env.header.ExcessBlobGas != nil {
 		filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(miner.chainConfig, env.header))
@@ -758,7 +762,9 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 		filter.GasLimitCap = params.MaxTxGas
 	}
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = true, false
+	log.Info("Getting pending plain txs")
 	pendingPlainTxs := miner.txpool.Pending(filter)
+	log.Info("Done getting pending plain txs")
 
 	filter.OnlyPlainTxs, filter.OnlyBlobTxs = false, true
 	pendingBlobTxs := miner.txpool.Pending(filter)

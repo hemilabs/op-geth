@@ -583,18 +583,23 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 	pending := make(map[common.Address][]*txpool.LazyTransaction, len(pool.pending))
 	for addr, list := range pool.pending {
 		txs := list.Flatten()
+		log.Info("Transactions in legacy pool", "address", addr.String(), "count", len(txs))
 
 		// If the miner requests tip enforcement, cap the lists now
 		if filter.MinTip != nil || filter.GasLimitCap != 0 {
+			log.Info("tip enforcement requested, capping lists")
 			for i, tx := range txs {
+				log.Info("checking tx", "hash", tx.Hash())
 				if filter.MinTip != nil {
 					if tx.EffectiveGasTipIntCmp(filter.MinTip, filter.BaseFee) < 0 {
+						log.Info("EffectiveGasTipIntCmp hit for tx", "hash", tx.Hash(), "filter.MinTip", filter.MinTip, "filter.BaseFee", filter.BaseFee)
 						txs = txs[:i]
 						break
 					}
 				}
 				if filter.GasLimitCap != 0 {
 					if tx.Gas() > filter.GasLimitCap {
+						log.Info("tx gas above gas limit cap", "hash", tx.Hash(), "filter.GasLimitCap", filter.GasLimitCap, "tx.Gas()", tx.Gas())
 						txs = txs[:i]
 						break
 					}
@@ -607,7 +612,7 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 			for i, tx := range txs {
 				estimate := tx.RollupCostData().EstimatedDASize()
 				if estimate.Cmp(filter.MaxDATxSize) > 0 {
-					log.Debug("filtering tx that exceeds max da tx size",
+					log.Info("filtering tx that exceeds max da tx size",
 						"hash", tx.Hash(), "txda", estimate, "dalimit", filter.MaxDATxSize)
 					txs = txs[:i]
 					break
@@ -633,6 +638,12 @@ func (pool *LegacyPool) Pending(filter txpool.PendingFilter) map[common.Address]
 			pending[addr] = lazies
 		}
 	}
+
+	log.Info("legacypool returning pending txes for block creation")
+	for addr, txes := range pending {
+		log.Info("\tAddress stats", "address", addr.String(), "count", len(txes))
+	}
+
 	return pending
 }
 
