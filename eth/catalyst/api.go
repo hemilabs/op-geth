@@ -268,6 +268,13 @@ type PopPayout struct {
 	Amount       *big.Int       `json:"amount"`
 }
 
+// PopPublication represents a PoP miner's publication with relative BTC block height
+// Used by PoPPayoutsV2 contract which calculates rewards based on publication timing
+type PopPublication struct {
+	MinerAddress common.Address `json:"miner_address"`
+	RelPubHeight uint32         `json:"rel_pub_height"` // Relative BTC block height (0-8)
+}
+
 func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash chainhash.Hash) ([]PopPayout, error) {
 	req := tbcapi.KeystoneTxsByL2KeystoneAbrevHashRequest{
 		Depth:               3,
@@ -275,7 +282,7 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 	}
 
 	if vm.TBCFullNodeConfig.Network == "localnet" {
-		req.Depth = 1000
+		req.Depth = 10
 	}
 
 	resp, err := vm.TBCFullNode.KeystoneTxsByHash(ctx, &req)
@@ -310,6 +317,73 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 	}
 
 	return popPayouts, nil
+}
+
+// PopPublicationsByL2Keystone returns PoP publications with relative BTC block heights
+// for use with PoPPayoutsV2 contract that calculates rewards based on publication timing
+func (api *ConsensusAPI) PopPublicationsByL2Keystone(ctx context.Context, abrevHash chainhash.Hash) ([]PopPublication, error) {
+	// Depth of 9 matches the contract's MAXIMUM_BTC_PUBLICATION_DELAY constant.
+	// Publications in blocks 0-8 (relative to first publication) receive points; block 9+ gets 0 points.
+	// Using depth < 9 would miss valid publications that should receive a score > 0.
+	req := tbcapi.KeystoneTxsByL2KeystoneAbrevHashRequest{
+		Depth:               9,
+		L2KeystoneAbrevHash: abrevHash,
+	}
+
+	if vm.TBCFullNodeConfig.Network == "localnet" {
+		// Use maxDepth (10) for localnet to stay within TBC's validation limit
+		req.Depth = 10
+	}
+
+	resp, err := vm.TBCFullNode.KeystoneTxsByHash(ctx, &req)
+	if err != nil {
+		if errors.Is(err, database.ErrNotFound) {
+			return []PopPublication{}, nil
+		}
+		return nil, err
+	}
+
+	if len(resp.KeystoneTxs) == 0 {
+		return []PopPublication{}, nil
+	}
+
+	// Find the minimum BlockHeight (first publication block).
+	// TBC's KeystoneTxsByHash starts from the first indexed block (where the keystone
+	// was first seen), so the minimum BlockHeight is the first publication.
+	minBlockHeight := resp.KeystoneTxs[0].BlockHeight
+	for _, ksTx := range resp.KeystoneTxs[1:] {
+		if ksTx.BlockHeight < minBlockHeight {
+			minBlockHeight = ksTx.BlockHeight
+		}
+	}
+
+	popPublications := make([]PopPublication, 0, len(resp.KeystoneTxs))
+
+	for _, ksTx := range resp.KeystoneTxs {
+		reader := bytes.NewReader(ksTx.RawTx)
+
+		msgTx := wire.MsgTx{}
+		if err := msgTx.Deserialize(reader); err != nil {
+			return nil, err
+		}
+
+		publicKeyUncompressed, err := pop.ParsePublicKeyFromSignatureScript(msgTx.TxIn[0].SignatureScript)
+		if err != nil {
+			return nil, err
+		}
+
+		// RelPubHeight is the relative Bitcoin block height where the PoP tx was mined
+		// relative to the first publication of this keystone.
+		// This is calculated as: BlockHeight - minBlockHeight
+		relPubHeight := uint32(ksTx.BlockHeight - minBlockHeight)
+
+		popPublications = append(popPublications, PopPublication{
+			MinerAddress: ethereum.PublicKeyToAddress(publicKeyUncompressed),
+			RelPubHeight: relPubHeight,
+		})
+	}
+
+	return popPublications, nil
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
