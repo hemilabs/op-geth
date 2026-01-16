@@ -189,13 +189,13 @@ func newTestBackend(t *testing.T, config *node.Config, enableHistoricalState boo
 		return nil, nil, fmt.Errorf("can't create new node: %v", err)
 	}
 	// Create Ethereum Service
-	ecfg := &ethconfig.Config{Genesis: actualGenesis, RPCGasCap: 1000000}
+	ecfg := &ethconfig.Config{Genesis: actualGenesis, RPCGasCap: 1000000, HvmEnabled: false}
 	if enableHistoricalState {
 		histAddr := newMockHistoricalBackend(t)
 		ecfg.RollupHistoricalRPC = histAddr
 		ecfg.RollupHistoricalRPCTimeout = time.Second * 5
 	}
-	ethservice, err := eth.New(n, ecfg)
+	ethservice, err := eth.New(n, ecfg, context.Background())
 	if err != nil {
 		return nil, nil, fmt.Errorf("can't create new ethereum service: %v", err)
 	}

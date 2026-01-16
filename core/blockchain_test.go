@@ -2430,7 +2430,7 @@ func benchmarkLargeNumberOfValueToNonexisting(b *testing.B, numTxs, numBlocks in
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		// Import the shared chain and the original canonical one
-		chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, context.Background())
+		chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, b.Context())
 		if err != nil {
 			b.Fatalf("failed to create tester chain: %v", err)
 		}

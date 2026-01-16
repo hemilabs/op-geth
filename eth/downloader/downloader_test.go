@@ -67,7 +67,7 @@ func newTesterWithNotification(t *testing.T, success func()) *downloadTester {
 		Alloc:   types.GenesisAlloc{testAddress: {Balance: big.NewInt(1000000000000000)}},
 		BaseFee: big.NewInt(params.InitialBaseFee),
 	}
-	chain, err := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
+	chain, err := core.NewBlockChain(db, gspec, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
 	if err != nil {
 		panic(err)
 	}
@@ -362,6 +362,12 @@ func (dlp *downloadTesterPeer) RequestTrieNodes(id uint64, root common.Hash, pat
 	}
 	nodes, _ := snap.ServiceGetTrieNodesQuery(dlp.chain, req, time.Now())
 	go dlp.dl.downloader.SnapSyncer.OnTrieNodes(dlp, id, nodes)
+	return nil
+}
+
+// RequestHvmLightState fetches hVM light state information.
+func (dlp *downloadTesterPeer) RequestHvmLightState(id uint64, tip common.Hash) error {
+	// No-op for test peer
 	return nil
 }
 

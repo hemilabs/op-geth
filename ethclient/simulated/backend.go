@@ -80,6 +80,7 @@ func NewBackend(alloc types.GenesisAlloc, options ...func(nodeConf *node.Config,
 	nodeConf.P2P = p2p.Config{NoDiscovery: true}
 
 	ethConf := ethconfig.Defaults
+	ethConf.HvmEnabled = false
 	ethConf.Genesis = &core.Genesis{
 		Config:   params.AllDevChainProtocolChanges,
 		GasLimit: ethconfig.Defaults.Miner.GasCeil,
@@ -87,6 +88,7 @@ func NewBackend(alloc types.GenesisAlloc, options ...func(nodeConf *node.Config,
 	}
 	ethConf.SyncMode = ethconfig.FullSync
 	ethConf.TxPool.NoLocals = true
+	ethConf.HvmEnabled = false
 
 	for _, option := range options {
 		option(&nodeConf, &ethConf)

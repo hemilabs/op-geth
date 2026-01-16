@@ -72,19 +72,19 @@ func (api *HemiAPI) GetKeystone(abrevHash string, count uint) L2KeystoneValidity
 
 	_, err := chainhash.NewHashFromStr(abrevHash)
 	if err != nil {
-		resp := L2KeystoneValidityResponse{Error: protocol.Errorf(err.Error())}
+		resp := L2KeystoneValidityResponse{Error: protocol.Errorf("%s", err.Error())}
 		return resp
 	}
 
 	b, err := hex.DecodeString(abrevHash)
 	if err != nil {
-		resp := L2KeystoneValidityResponse{Error: protocol.Errorf(err.Error())}
+		resp := L2KeystoneValidityResponse{Error: protocol.Errorf("%s", err.Error())}
 		return resp
 	}
 
 	kss, err := api.e.APIBackend.GetKeystoneAndDescendants(b, count)
 	if err != nil {
-		resp := L2KeystoneValidityResponse{Error: protocol.Errorf(err.Error())}
+		resp := L2KeystoneValidityResponse{Error: protocol.Errorf("%s", err.Error())}
 		return resp
 	}
 

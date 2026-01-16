@@ -426,7 +426,7 @@ func TestEth2DeepReorg(t *testing.T) {
 // startEthService creates a full node instance for testing.
 func startEthService(t *testing.T, genesis *core.Genesis, blocks []*types.Block) (*node.Node, *eth.Ethereum) {
 	mcfg := miner.DefaultConfig
-	ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: ethconfig.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256, Miner: mcfg}
+	ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: ethconfig.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256, Miner: mcfg, HvmEnabled: false}
 	return startEthServiceWithConfigFn(t, blocks, ethcfg)
 }
 
@@ -444,7 +444,7 @@ func startEthServiceWithConfigFn(t *testing.T, blocks []*types.Block, ethcfg *et
 	}
 
 	// OP-Stack test modification: default eth config is moved to startEthService, for reuse.
-	ethservice, err := eth.New(n, ethcfg)
+	ethservice, err := eth.New(n, ethcfg, context.Background())
 	if err != nil {
 		t.Fatal("can't create eth service:", err)
 	}

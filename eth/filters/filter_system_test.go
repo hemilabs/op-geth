@@ -223,7 +223,7 @@ func TestBlockSubscription(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(db, Config{})
+		backend, sys = newTestFilterSystem(t, db, Config{})
 		api          = NewFilterAPI(sys)
 		genesis      = &core.Genesis{
 			Config:  params.TestChainConfig,
@@ -278,7 +278,7 @@ func TestPendingTxFilter(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(db, Config{})
+		backend, sys = newTestFilterSystem(t, db, Config{})
 		api          = NewFilterAPI(sys)
 
 		transactions = []*types.Transaction{
@@ -334,7 +334,7 @@ func TestPendingTxFilterFullTx(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(db, Config{})
+		backend, sys = newTestFilterSystem(t, db, Config{})
 		api          = NewFilterAPI(sys)
 
 		transactions = []*types.Transaction{
@@ -390,7 +390,7 @@ func TestPendingTxFilterFullTx(t *testing.T) {
 func TestLogFilterCreation(t *testing.T) {
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(db, Config{})
+		_, sys = newTestFilterSystem(t, db, Config{})
 		api    = NewFilterAPI(sys)
 
 		testCases = []struct {
@@ -437,7 +437,7 @@ func TestInvalidLogFilterCreation(t *testing.T) {
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(db, Config{})
+		_, sys = newTestFilterSystem(t, db, Config{})
 		api    = NewFilterAPI(sys)
 	)
 
@@ -468,14 +468,14 @@ func TestInvalidGetLogsRequest(t *testing.T) {
 			BaseFee: big.NewInt(params.InitialBaseFee),
 		}
 		db, blocks, _    = core.GenerateChainWithGenesis(genesis, ethash.NewFaker(), 10, func(i int, gen *core.BlockGen) {})
-		_, sys           = newTestFilterSystem(db, Config{})
+		_, sys           = newTestFilterSystem(t, db, Config{})
 		api              = NewFilterAPI(sys)
 		blockHash        = blocks[0].Hash()
 		unknownBlockHash = common.HexToHash("0x1111111111111111111111111111111111111111111111111111111111111111")
 	)
 
 	// Insert the blocks into the chain so filter can look them up
-	blockchain, err := core.NewBlockChain(db, genesis, ethash.NewFaker(), nil)
+	blockchain, err := core.NewBlockChain(db, genesis, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -532,7 +532,7 @@ func TestInvalidGetRangeLogsRequest(t *testing.T) {
 
 	var (
 		db     = rawdb.NewMemoryDatabase()
-		_, sys = newTestFilterSystem(db, Config{})
+		_, sys = newTestFilterSystem(t, db, Config{})
 		api    = NewFilterAPI(sys)
 	)
 
@@ -547,7 +547,7 @@ func TestLogFilter(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(db, Config{})
+		backend, sys = newTestFilterSystem(t, db, Config{})
 		api          = NewFilterAPI(sys)
 
 		firstAddr      = common.HexToAddress("0x1111111111111111111111111111111111111111")
@@ -652,7 +652,7 @@ func TestPendingTxFilterDeadlock(t *testing.T) {
 
 	var (
 		db           = rawdb.NewMemoryDatabase()
-		backend, sys = newTestFilterSystem(db, Config{Timeout: timeout})
+		backend, sys = newTestFilterSystem(t, db, Config{Timeout: timeout})
 		api          = NewFilterAPI(sys)
 		done         = make(chan struct{})
 	)

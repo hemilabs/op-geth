@@ -76,7 +76,7 @@ func newTestBlockChain(t *testing.T, n int, gspec *core.Genesis, generator func(
 		Preimages:      true,
 		ArchiveMode:    true, // Archive mode
 	}
-	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), gspec, engine, options)
+	chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, options, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("failed to create tester chain: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestExecutionWitness(t *testing.T) {
 		Config: params.TestChainConfig,
 		Alloc:  types.GenesisAlloc{testAddr: {Balance: big.NewInt(1000000)}},
 	}
-	chain, _ := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
+	chain, _ := core.NewBlockChain(db, gspec, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
 
 	blockNum := 10
 	_, bs, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), blockNum, nil)

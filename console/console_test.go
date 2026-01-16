@@ -18,6 +18,7 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -98,11 +99,12 @@ func newTester(t *testing.T, confOverride func(*ethconfig.Config)) *tester {
 		Miner: miner.Config{
 			PendingFeeRecipient: common.HexToAddress(testAddress),
 		},
+		HvmEnabled: false,
 	}
 	if confOverride != nil {
 		confOverride(ethConf)
 	}
-	ethBackend, err := eth.New(stack, ethConf)
+	ethBackend, err := eth.New(stack, ethConf, context.Background())
 	if err != nil {
 		t.Fatalf("failed to register Ethereum protocol: %v", err)
 	}

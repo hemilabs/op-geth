@@ -180,6 +180,8 @@ type BlockChain interface {
 	// SetHead rewinds the local chain to a new head.
 	SetHead(uint64) error
 
+	HvmEnabled() bool
+
 	// SetAwaitingHvmSnapSync informs the blockchain that a snap sync is in progress
 	SetAwaitingHvmSnapSync()
 
@@ -372,7 +374,7 @@ func (d *Downloader) synchronise(mode SyncMode, beaconPing chan struct{}) error 
 	if d.notified.CompareAndSwap(false, true) {
 		log.Info("Block synchronisation started")
 	}
-	if mode == ethconfig.SnapSync {
+	if mode == ethconfig.SnapSync && d.blockchain.HvmEnabled() {
 		// Inform blockchain of hVM snap sync status
 		d.blockchain.SetAwaitingHvmSnapSync()
 	}
@@ -432,6 +434,10 @@ func (d *Downloader) getMode() SyncMode {
 }
 
 func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error) {
+	if !d.blockchain.HvmEnabled() {
+		panic("cannot call hVMLightStateSyncWithAllPeers with hvm disabled ")
+	}
+
 	log.Info(fmt.Sprintf("Attempting to snap-sync hVM to L2 block %s", hash.String()))
 
 	// Kick off async hVM light state requests
@@ -616,10 +622,15 @@ func (d *Downloader) syncToHead() (err error) {
 		d.pivotLock.Lock()
 		d.pivotHeader = pivot
 		d.pivotLock.Unlock()
-		d.blockchain.SetAwaitingHvmSnapSync()
+		if d.blockchain.HvmEnabled() {
+			d.blockchain.SetAwaitingHvmSnapSync()
+		}
 
 		fetchers = append(fetchers, func() error { return d.processSnapSyncContent() })
-		fetchers = append(fetchers, func() error { return d.hVMLightStateSyncWithAllPeers(pivot.Hash()) })
+
+		if d.blockchain.HvmEnabled() {
+			fetchers = append(fetchers, func() error { return d.hVMLightStateSyncWithAllPeers(pivot.Hash()) })
+		}
 	} else if mode == ethconfig.FullSync {
 		fetchers = append(fetchers, func() error { return d.processFullSyncContent() })
 	}

@@ -29,19 +29,9 @@ jobs:
           cache: true
           check-latest: true
 
+
+
       # tests are not currently reliable; we need to add testing packages
       # back in, one by one
-      - name: "test core"
-        run: go test -v ./core
-
-      - name: "test cmd/geth"
-        run: go test -v ./cmd/geth
-
-      - name: "test ./tests"
-        run: go test -v ./tests
-
-      - name: "test ./internal/..."
-        run: go test -v ./internal/...
-
-      - name: "test ./cmd/..."
-        run: go test -v ./cmd/...
+      - name: "test"
+        run: make test
