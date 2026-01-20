@@ -664,8 +664,7 @@ func ServiceGetHvmLightStateQuery(chain *core.BlockChain, req *GetHvmLightStateP
 		header = chain.GetHeaderByHash(header.ParentHash)
 		if header == nil {
 			// This node might be snap-synced and not have old enough historical data to answer this query
-			log.Warn(fmt.Sprintf("Unable to fulfill hVM Light State P2P request, do not have previous header %s",
-				header.ParentHash.String()))
+			log.Warn("Unable to fulfill hVM Light State P2P request, do not have previous header")
 			return nil, nil, fmt.Errorf("header for hVM light state query is nil")
 		}
 	}

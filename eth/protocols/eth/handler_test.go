@@ -18,6 +18,7 @@ package eth
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"math"
 	"math/big"
@@ -121,7 +122,7 @@ func newTestBackendWithGenerator(blocks int, shanghai bool, cancun bool, generat
 		Alloc:      types.GenesisAlloc{testAddr: {Balance: big.NewInt(100_000_000_000_000_000)}},
 		Difficulty: common.Big0,
 	}
-	chain, _ := core.NewBlockChain(db, gspec, engine, nil)
+	chain, _ := core.NewBlockChain(db, gspec, nil, engine, nil, nil, nil, context.Background())
 
 	_, bs, _ := core.GenerateChainWithGenesis(gspec, engine, blocks, generator)
 	if _, err := chain.InsertChain(bs); err != nil {

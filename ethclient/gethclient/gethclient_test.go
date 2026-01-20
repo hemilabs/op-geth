@@ -61,8 +61,8 @@ func newTestBackend(t *testing.T) (*node.Node, []*types.Block, []common.Hash) {
 		t.Fatalf("can't create new node: %v", err)
 	}
 	// Create Ethereum Service
-	config := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000}
-	ethservice, err := eth.New(n, config)
+	config := &ethconfig.Config{Genesis: genesis, RPCGasCap: 1000000, HvmEnabled: false}
+	ethservice, err := eth.New(n, config, context.Background())
 	if err != nil {
 		t.Fatalf("can't create new ethereum service: %v", err)
 	}

@@ -64,7 +64,7 @@ func newTestEnv(t *testing.T, n int, gasTip uint64, journal string) *testEnv {
 	})
 
 	db := rawdb.NewMemoryDatabase()
-	chain, _ := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
+	chain, _ := core.NewBlockChain(db, gspec, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
 
 	legacyPool := legacypool.New(legacypool.DefaultConfig, chain)
 	pool, err := txpool.New(gasTip, chain, []txpool.SubPool{legacyPool}, nil)

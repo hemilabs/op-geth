@@ -42,7 +42,6 @@ import (
 	"github.com/ethereum/go-ethereum/node"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
-	"github.com/ethereum/go-ethereum/params"
 )
 
 func main() {
@@ -102,15 +101,6 @@ func main() {
 		stack.AccountManager().AddBackend(ks)
 	}
 
-	// Iterate over all the nodes and start signing on them
-	time.Sleep(3 * time.Second)
-	for _, node := range nodes {
-		if err := node.StartMining(); err != nil {
-			panic(err)
-		}
-	}
-	time.Sleep(3 * time.Second)
-
 	// Start injecting transactions from the faucet like crazy
 	nonces := make([]uint64, len(faucets))
 	for {
@@ -133,7 +123,7 @@ func main() {
 		if err != nil {
 			panic(err)
 		}
-		if err := backend.TxPool().Add([]*types.Transaction{tx}, true, false); err != nil {
+		if err := backend.TxPool().Add([]*types.Transaction{tx}, true); err != nil {
 			panic(err)
 		}
 		nonces[index]++
@@ -187,7 +177,6 @@ func makeSealer(genesis *core.Genesis) (*node.Node, *eth.Ethereum, error) {
 
 	config := &node.Config{
 		Name:    "geth",
-		Version: params.Version,
 		DataDir: datadir,
 		P2P: p2p.Config{
 			ListenAddr:  "0.0.0.0:0",
@@ -214,6 +203,7 @@ func makeSealer(genesis *core.Genesis) (*node.Node, *eth.Ethereum, error) {
 			GasPrice: big.NewInt(1),
 			Recommit: time.Second,
 		},
+		HvmEnabled: false,
 	}, context.Background())
 	if err != nil {
 		return nil, nil, err

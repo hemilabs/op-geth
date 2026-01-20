@@ -1009,7 +1009,6 @@ func TestDeriveOptimismBedrockTxReceipts(t *testing.T) {
 		t.Fatalf("DeriveFields(...) = %v, want <nil>", err)
 	}
 	checkBedrockReceipts(t, receipts, derivedReceipts)
-
 	// Should get same result with the Ecotone config because it will assume this is "first ecotone block"
 	// if it sees the bedrock style L1 attributes.
 	err = Receipts(derivedReceipts).DeriveFields(ecotoneTestConfig, blockHash, blockNumber.Uint64(), 0, baseFee, nil, txs)
@@ -1040,6 +1039,9 @@ func TestDeriveOptimismEcotoneTxReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeriveFields(...) = %v, want <nil>", err)
 	}
+	for _, r := range receipts {
+		r.Bloom = CreateBloom(r)
+	}
 	diffReceipts(t, receipts, derivedReceipts)
 }
 
@@ -1066,6 +1068,9 @@ func TestDeriveOptimismIsthmusTxReceipts(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeriveFields(...) = %v, want <nil>", err)
 	}
+	for _, r := range receipts {
+		r.Bloom = CreateBloom(r)
+	}
 	diffReceipts(t, receipts, derivedReceipts)
 }
 
@@ -1090,6 +1095,10 @@ func TestDeriveOptimismIsthmusTxReceiptsNoOperatorFee(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DeriveFields(...) = %v, want <nil>", err)
 	}
+
+	for _, r := range receipts {
+		r.Bloom = CreateBloom(r)
+	}
 	diffReceipts(t, receipts, derivedReceipts)
 }
 
@@ -1110,6 +1119,9 @@ func diffReceipts(t *testing.T, receipts, derivedReceipts []*Receipt) {
 }
 
 func checkBedrockReceipts(t *testing.T, receipts, derivedReceipts []*Receipt) {
+	for _, r := range receipts {
+		r.Bloom = CreateBloom(r)
+	}
 	diffReceipts(t, receipts, derivedReceipts)
 
 	// Check that we preserved the invariant: l1Fee = l1GasPrice * l1GasUsed * l1FeeScalar

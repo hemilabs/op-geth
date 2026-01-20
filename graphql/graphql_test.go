@@ -488,6 +488,7 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 		SnapshotCache:  5,
 		RPCGasCap:      1000000,
 		StateScheme:    rawdb.HashScheme,
+		HvmEnabled:     false,
 	}
 	var engine = beacon.New(ethash.NewFaker())
 	if shanghai {
@@ -499,7 +500,7 @@ func newGQLService(t *testing.T, stack *node.Node, shanghai bool, gspec *core.Ge
 		gspec.Config.ShanghaiTime = &shanghaiTime
 	}
 
-	ethBackend, err := eth.New(stack, ethConf)
+	ethBackend, err := eth.New(stack, ethConf, context.Background())
 	if err != nil {
 		t.Fatalf("could not create eth backend: %v", err)
 	}

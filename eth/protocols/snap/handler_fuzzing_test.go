@@ -18,6 +18,7 @@ package snap
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"fmt"
 	"math/big"
@@ -125,7 +126,7 @@ func getChain() *core.BlockChain {
 		SnapshotWait:   true,
 	}
 	trieRoot = blocks[len(blocks)-1].Root()
-	bc, _ := core.NewBlockChain(rawdb.NewMemoryDatabase(), gspec, ethash.NewFaker(), options)
+	bc, _ := core.NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, ethash.NewFaker(), options, nil, nil, context.Background())
 	if _, err := bc.InsertChain(blocks); err != nil {
 		panic(err)
 	}

@@ -1305,10 +1305,18 @@ func (bc *BlockChain) findCommonAncestor(a *types.Header, b *types.Header) (*typ
 	return highCursor, nil
 }
 
+func (bc *BlockChain) HvmEnabled() bool {
+	return bc.hvmEnabled
+}
+
 // SetAwaitingHvmSnapSync is called when an Ethereum protocol snap-sync has
 // been completed to inform the blockchain to wait for an hVM snap sync instruction
 // before performing any chain progression.
 func (bc *BlockChain) SetAwaitingHvmSnapSync() {
+	if !bc.HvmEnabled() {
+		panic("cannot SetAwaitingHvmSnapSync with hvm disabled")
+	}
+
 	log.Info("Blockchain informed to await hVM snap sync")
 	bc.awaitingHvmSnapSync = true
 }

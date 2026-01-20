@@ -140,7 +140,7 @@ func newTestWorkerBackend(t *testing.T, chainConfig *params.ChainConfig, engine 
 		minBaseFee := uint64(0)
 		gspec.ExtraData = eip1559.EncodeOptimismExtraData(chainConfig, *chainConfig.HoloceneTime, 250, 6, &minBaseFee)
 	}
-	chain, err := core.NewBlockChain(db, gspec, engine, &core.BlockChainConfig{ArchiveMode: true})
+	chain, err := core.NewBlockChain(db, gspec, nil, engine, nil, nil, nil, t.Context())
 	if err != nil {
 		t.Fatalf("core.NewBlockChain failed: %v", err)
 	}

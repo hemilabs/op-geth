@@ -17,6 +17,7 @@
 package eth
 
 import (
+	"context"
 	"fmt"
 	"maps"
 	"math/big"
@@ -191,7 +192,7 @@ func newTestHandlerWithBlocks(blocks int) *testHandler {
 		Config: params.TestChainConfig,
 		Alloc:  types.GenesisAlloc{testAddr: {Balance: big.NewInt(1000000)}},
 	}
-	chain, _ := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
+	chain, _ := core.NewBlockChain(db, gspec, nil, ethash.NewFaker(), nil, nil, nil, context.Background())
 
 	_, bs, _ := core.GenerateChainWithGenesis(gspec, ethash.NewFaker(), blocks, nil)
 	if _, err := chain.InsertChain(bs); err != nil {
@@ -347,7 +348,7 @@ func TestHandlerTxPool(t *testing.T) {
 		Config: params.TestChainConfig,
 		Alloc:  types.GenesisAlloc{testAddr: {Balance: big.NewInt(1000000)}},
 	}
-	chain, _ := core.NewBlockChain(db, gspec, ethash.NewFaker(), nil)
+	chain, _ := core.NewBlockChain(db, gspec, nil, ethash.NewFaker(), nil, nil, nil, t.Context())
 	txpool := newTestTxPool()
 
 	// Set up netrestrict to allow only 127.0.0.0/8 range

@@ -17,6 +17,7 @@
 package downloader
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 	"sync"
@@ -216,7 +217,7 @@ func newTestBlockchain(blocks []*types.Block) *core.BlockChain {
 		if pregenerated {
 			panic("Requested chain generation outside of init")
 		}
-		chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), testGspec, ethash.NewFaker(), nil)
+		chain, err := core.NewBlockChain(rawdb.NewMemoryDatabase(), testGspec, nil, ethash.NewFaker(), nil, nil, nil, context.Background())
 		if err != nil {
 			panic(err)
 		}

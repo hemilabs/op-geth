@@ -214,6 +214,12 @@ func (t *testPeer) RequestByteCodes(id uint64, hashes []common.Hash, bytes uint6
 	return nil
 }
 
+// RequestHvmLightState fetches hVM light state information.
+func (t *testPeer) RequestHvmLightState(id uint64, tip common.Hash) error {
+	// No-op for test peer
+	return nil
+}
+
 // defaultTrieRequestHandler is a well-behaving handler for trie healing requests
 func defaultTrieRequestHandler(t *testPeer, requestId uint64, root common.Hash, paths []TrieNodePathSet, cap uint64) error {
 	// Pass the response
@@ -625,7 +631,7 @@ func testSyncBloatedProof(t *testing.T, scheme string) {
 
 func setupSyncer(scheme string, peers ...*testPeer) *Syncer {
 	stateDb := rawdb.NewMemoryDatabase()
-	syncer := NewSyncer(stateDb, scheme)
+	syncer := NewSyncer(stateDb, scheme, nil)
 	for _, peer := range peers {
 		syncer.Register(peer)
 		peer.remote = syncer

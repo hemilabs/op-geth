@@ -49,8 +49,8 @@ func startSimulatedBeaconEthService(t *testing.T, genesis *core.Genesis, period 
 		t.Fatal("can't create node:", err)
 	}
 
-	ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: ethconfig.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256, Miner: miner.DefaultConfig}
-	ethservice, err := eth.New(n, ethcfg)
+	ethcfg := &ethconfig.Config{Genesis: genesis, SyncMode: ethconfig.FullSync, TrieTimeout: time.Minute, TrieDirtyCache: 256, TrieCleanCache: 256, Miner: miner.DefaultConfig, HvmEnabled: false}
+	ethservice, err := eth.New(n, ethcfg, context.Background())
 	if err != nil {
 		t.Fatal("can't create eth service:", err)
 	}
