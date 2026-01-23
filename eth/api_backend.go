@@ -23,6 +23,9 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/common"
@@ -45,6 +48,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rpc"
+	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/hemi"
 )
 
@@ -56,6 +60,8 @@ type EthAPIBackend struct {
 	eth                 *Ethereum
 	gpo                 *gasprice.Oracle
 }
+
+var ErrTbcFullNodeNotInit = errors.New("tbc full node not init'd")
 
 // ChainConfig returns the active chain configuration.
 func (b *EthAPIBackend) ChainConfig() *params.ChainConfig {
@@ -551,4 +557,35 @@ func (b *EthAPIBackend) GetMostRecentKeystones(count uint) ([]hemi.L2Keystone, e
 
 func (b *EthAPIBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]hemi.L2Keystone, error) {
 	return b.eth.blockchain.GetKeystoneAndDescendants(hash, count)
+}
+
+func (b *EthAPIBackend) GetBtcBlockByHash(ctx context.Context, hash chainhash.Hash) (*btcutil.Block, error) {
+	if vm.TBCFullNode == nil {
+		return nil, ErrTbcFullNodeNotInit
+	}
+
+	block, err := vm.TBCFullNode.BlockByHash(ctx, hash)
+	if err != nil {
+		return nil, err
+	}
+
+	return block, nil
+}
+
+func (b *EthAPIBackend) GetBtcBlockHeaderByHash(ctx context.Context, hash chainhash.Hash) (*wire.BlockHeader, error) {
+	if vm.TBCFullNode == nil {
+		return nil, ErrTbcFullNodeNotInit
+	}
+
+	blockHeader, _, err := vm.TBCFullNode.BlockHeaderByHash(ctx, hash)
+	if err != nil {
+		// Clayton note:
+		// instead of the real error, we seem to be getting a *fmt.wrapError
+		// when querying for a hash that does not exists.  this is likely
+		// an issue with the BlockHeaderByHash function, though I am unsure
+		// this will work for now but needs to be investigated
+		return nil, database.ErrNotFound
+	}
+
+	return blockHeader, nil
 }

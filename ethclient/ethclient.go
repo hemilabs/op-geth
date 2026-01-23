@@ -24,6 +24,9 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -250,6 +253,26 @@ func (ec *Client) HeaderByNumber(ctx context.Context, number *big.Int) (*types.H
 		err = ethereum.NotFound
 	}
 	return head, err
+}
+
+func (ec *Client) GetBtcBlockByHash(ctx context.Context, hash chainhash.Hash) (*btcutil.Block, error) {
+	var block btcutil.Block
+	err := ec.c.CallContext(ctx, &block, "hemi_getBtcBlockByHash", hash.String())
+	if err != nil {
+		return nil, err
+	}
+
+	return &block, nil
+}
+
+func (ec *Client) GetBtcBlockHeaderByHash(ctx context.Context, hash chainhash.Hash) (*wire.BlockHeader, error) {
+	var blockHeader wire.BlockHeader
+	err := ec.c.CallContext(ctx, &blockHeader, "hemi_getBtcBlockHeaderByHash", hash.String())
+	if err != nil {
+		return nil, err
+	}
+
+	return &blockHeader, nil
 }
 
 type rpcTransaction struct {

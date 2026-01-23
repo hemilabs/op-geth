@@ -22,6 +22,9 @@ import (
 	"errors"
 	"math/big"
 
+	"github.com/btcsuite/btcd/btcutil"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -280,4 +283,9 @@ type BlockNumberReader interface {
 // ChainIDReader provides access to the chain ID.
 type ChainIDReader interface {
 	ChainID(ctx context.Context) (*big.Int, error)
+}
+
+type BtcChainReader interface {
+	GetBtcBlockByHash(ctx context.Context, hash chainhash.Hash) (*btcutil.Block, error)
+	GetBtcBlockHeaderByHash(ctx context.Context, hash chainhash.Hash) (*wire.BlockHeader, error)
 }

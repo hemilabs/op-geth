@@ -552,8 +552,18 @@ func (s *Ethereum) APIs() []rpc.API {
 		}, {
 			Namespace: "net",
 			Service:   s.netRPCService,
-		}, {
+		},
+
+		// this is redundant, but we introduced hemi-specific calls into the
+		// "kss" namespace because we were only dealing with kss keystones at
+		// the time.  we can discuss, but I think that a better namespace would
+		// be "hemi", so make each do the same for now
+		{
 			Namespace: "kss",
+			Service:   NewHemiAPI(s),
+		},
+		{
+			Namespace: "hemi",
 			Service:   NewHemiAPI(s),
 		},
 	}...)
