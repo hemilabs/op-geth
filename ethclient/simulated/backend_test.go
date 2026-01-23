@@ -389,7 +389,7 @@ func TestHemiAPIGetBtcBlockByHash(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer os.RemoveAll(tbcParentDir)
+				defer os.RemoveAll(tbcDir)
 
 				if err := vm.SetupTBCFullNode(t.Context(), &tbc.Config{
 					Network:     "localnet",
@@ -466,7 +466,7 @@ func TestHemiAPIGetBtcBlockHeaderByHash(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				defer os.RemoveAll(tbcParentDir)
+				defer os.RemoveAll(tbcDir)
 
 				if err := vm.SetupTBCFullNode(t.Context(), &tbc.Config{
 					Network:     "localnet",
