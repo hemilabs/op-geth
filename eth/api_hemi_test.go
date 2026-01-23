@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/ethereum/go-ethereum/core/vm"
@@ -81,7 +80,7 @@ func TestGetBtcBlockByHash(t *testing.T) {
 					t.Fatalf("unexpected diff: %s", diff)
 				}
 			} else if testCase.expectedError == nil {
-				if diff := deep.Equal(btcutil.NewBlock(realBitcoinBlock), block); len(diff) > 0 {
+				if diff := deep.Equal(realBitcoinBlock, block); len(diff) > 0 {
 					t.Fatalf("unexpected diff: %s", diff)
 				}
 			}

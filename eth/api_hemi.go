@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/hex"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/log"
@@ -131,7 +130,7 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 	return rpcSub, nil
 }
 
-func (api *HemiAPI) GetBtcBlockByHash(ctx context.Context, hash *chainhash.Hash) (*btcutil.Block, error) {
+func (api *HemiAPI) GetBtcBlockByHash(ctx context.Context, hash *chainhash.Hash) (*wire.MsgBlock, error) {
 	block, err := api.e.APIBackend.GetBtcBlockByHash(ctx, *hash)
 	if err != nil {
 		return nil, err

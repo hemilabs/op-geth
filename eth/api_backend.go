@@ -23,7 +23,6 @@ import (
 	"math/big"
 	"time"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum"
@@ -559,7 +558,7 @@ func (b *EthAPIBackend) GetKeystoneAndDescendants(hash []byte, count uint) ([]he
 	return b.eth.blockchain.GetKeystoneAndDescendants(hash, count)
 }
 
-func (b *EthAPIBackend) GetBtcBlockByHash(ctx context.Context, hash chainhash.Hash) (*btcutil.Block, error) {
+func (b *EthAPIBackend) GetBtcBlockByHash(ctx context.Context, hash chainhash.Hash) (*wire.MsgBlock, error) {
 	if vm.TBCFullNode == nil {
 		return nil, ErrTbcFullNodeNotInit
 	}
@@ -569,7 +568,7 @@ func (b *EthAPIBackend) GetBtcBlockByHash(ctx context.Context, hash chainhash.Ha
 		return nil, err
 	}
 
-	return block, nil
+	return block.MsgBlock().Copy(), nil
 }
 
 func (b *EthAPIBackend) GetBtcBlockHeaderByHash(ctx context.Context, hash chainhash.Hash) (*wire.BlockHeader, error) {

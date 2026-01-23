@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"math/big"
 
-	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum"
@@ -255,14 +254,14 @@ func (ec *Client) HeaderByNumber(ctx context.Context, number *big.Int) (*types.H
 	return head, err
 }
 
-func (ec *Client) GetBtcBlockByHash(ctx context.Context, hash chainhash.Hash) (*btcutil.Block, error) {
-	var block btcutil.Block
+func (ec *Client) GetBtcBlockByHash(ctx context.Context, hash chainhash.Hash) (*wire.MsgBlock, error) {
+	var block wire.MsgBlock
 	err := ec.c.CallContext(ctx, &block, "hemi_getBtcBlockByHash", hash.String())
 	if err != nil {
 		return nil, err
 	}
 
-	return &block, nil
+	return block.Copy(), nil
 }
 
 func (ec *Client) GetBtcBlockHeaderByHash(ctx context.Context, hash chainhash.Hash) (*wire.BlockHeader, error) {
