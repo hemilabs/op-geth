@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/hemilabs/heminetwork/api/protocol"
@@ -127,4 +128,22 @@ func (api *HemiAPI) NewKeystones(ctx context.Context) (*rpc.Subscription, error)
 	}()
 
 	return rpcSub, nil
+}
+
+func (api *HemiAPI) GetBtcBlockByHash(ctx context.Context, hash *chainhash.Hash) (*wire.MsgBlock, error) {
+	block, err := api.e.APIBackend.GetBtcBlockByHash(ctx, *hash)
+	if err != nil {
+		return nil, err
+	}
+
+	return block, nil
+}
+
+func (api *HemiAPI) GetBtcBlockHeaderByHash(ctx context.Context, hash *chainhash.Hash) (*wire.BlockHeader, error) {
+	blockHeader, err := api.e.APIBackend.GetBtcBlockHeaderByHash(ctx, *hash)
+	if err != nil {
+		return nil, err
+	}
+
+	return blockHeader, nil
 }

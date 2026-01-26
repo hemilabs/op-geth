@@ -20,17 +20,26 @@ import (
 	"context"
 	"crypto/ecdsa"
 	"crypto/sha256"
+	"io/ioutil"
 	"math/big"
 	"math/rand"
+	"os"
 	"testing"
 	"time"
 
+	"github.com/btcsuite/btcd/chaincfg"
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
+	"github.com/ethereum/go-ethereum/eth"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/go-test/deep"
+	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/service/tbc"
 	"github.com/holiman/uint256"
 	"go.uber.org/goleak"
 )
@@ -337,6 +346,159 @@ func TestAdjustTimeAfterFork(t *testing.T) {
 	head, _ := client.HeaderByNumber(ctx, nil)
 	if head.Number.Uint64() == 2 && head.ParentHash != h1.Hash() {
 		t.Errorf("failed to build block on fork")
+	}
+}
+
+func TestHemiAPIGetBtcBlockByHash(t *testing.T) {
+	type testTableItem struct {
+		name          string
+		hash          chainhash.Hash
+		expectedError error
+		testNoInit    bool
+	}
+
+	fakeBitcoinBlockHash := chainhash.DoubleHashH([]byte("notreal"))
+	realBitcoinBlockHash := *chaincfg.RegressionNetParams.GenesisHash
+	realBitcoinBlock := chaincfg.RegressionNetParams.GenesisBlock
+
+	testTable := []testTableItem{
+		testTableItem{
+			name:          "btc block by hash not found",
+			hash:          fakeBitcoinBlockHash,
+			expectedError: database.BlockNotFoundError{fakeBitcoinBlockHash},
+		},
+		testTableItem{
+			name:          "btc block by hash found (regtest genesis)",
+			hash:          realBitcoinBlockHash,
+			expectedError: nil,
+		},
+		testTableItem{
+			name:          "tbc not init yet",
+			expectedError: eth.ErrTbcFullNodeNotInit,
+			testNoInit:    true,
+		},
+	}
+
+	for _, testCase := range testTable {
+		t.Run(testCase.name, func(t *testing.T) {
+			vm.TBCFullNode = nil
+			if !testCase.testNoInit {
+				tbcParentDir := os.TempDir()
+				tbcDir, err := ioutil.TempDir(tbcParentDir, testCase.name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer os.RemoveAll(tbcDir)
+
+				if err := vm.SetupTBCFullNode(t.Context(), &tbc.Config{
+					Network:     "localnet",
+					LevelDBHome: tbcDir,
+					Seeds:       []string{},
+				}); err != nil {
+					t.Fatalf("could not set up tbc full node: %s", err)
+				}
+
+				select {
+				case <-time.After(5 * time.Second):
+				case <-t.Context().Done():
+					t.Fatal(t.Context().Err())
+				}
+			}
+
+			sim := NewBackend(types.GenesisAlloc{})
+			defer sim.Close()
+
+			client := sim.Client()
+			block, err := client.GetBtcBlockByHash(context.Background(), testCase.hash)
+			if err != nil && testCase.expectedError == nil {
+				t.Fatalf("unexpected error: %s", err)
+			} else if err != nil && testCase.expectedError != nil {
+				if diff := deep.Equal(err.Error(), testCase.expectedError.Error()); len(diff) > 0 {
+					t.Fatalf("unexpected diff: %s", diff)
+				}
+			} else if testCase.expectedError == nil {
+				if diff := deep.Equal(realBitcoinBlock, block); len(diff) > 0 {
+					t.Fatalf("unexpected diff: %s", diff)
+				}
+			}
+		})
+	}
+}
+
+func TestHemiAPIGetBtcBlockHeaderByHash(t *testing.T) {
+	type testTableItem struct {
+		name          string
+		hash          chainhash.Hash
+		expectedError error
+		testNoInit    bool
+	}
+
+	fakeBitcoinBlockHash := chainhash.DoubleHashH([]byte("notreal"))
+	realBitcoinBlockHash := *chaincfg.RegressionNetParams.GenesisHash
+	realBitcoinBlock := chaincfg.RegressionNetParams.GenesisBlock
+	realBitcoinBlockHeader := realBitcoinBlock.Header
+
+	testTable := []testTableItem{
+		testTableItem{
+			name:          "btc block header by hash not found",
+			hash:          fakeBitcoinBlockHash,
+			expectedError: database.ErrNotFound,
+		},
+		testTableItem{
+			name:          "btc block header by hash found (regtest genesis)",
+			hash:          realBitcoinBlockHash,
+			expectedError: nil,
+		},
+		testTableItem{
+			name:          "tbc not init yet",
+			expectedError: eth.ErrTbcFullNodeNotInit,
+			testNoInit:    true,
+		},
+	}
+
+	for _, testCase := range testTable {
+		t.Run(testCase.name, func(t *testing.T) {
+			vm.TBCFullNode = nil
+			if !testCase.testNoInit {
+				tbcParentDir := os.TempDir()
+				tbcDir, err := ioutil.TempDir(tbcParentDir, testCase.name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer os.RemoveAll(tbcDir)
+
+				if err := vm.SetupTBCFullNode(t.Context(), &tbc.Config{
+					Network:     "localnet",
+					LevelDBHome: tbcDir,
+					Seeds:       []string{},
+				}); err != nil {
+					t.Fatalf("could not set up tbc full node: %s", err)
+				}
+
+				select {
+				case <-time.After(5 * time.Second):
+				case <-t.Context().Done():
+					t.Fatal(t.Context().Err())
+				}
+			}
+
+			sim := NewBackend(types.GenesisAlloc{})
+			defer sim.Close()
+
+			client := sim.Client()
+			blockHeader, err := client.GetBtcBlockHeaderByHash(context.Background(), testCase.hash)
+			if err != nil && testCase.expectedError == nil {
+				t.Fatalf("unexpected error: %s", err)
+			} else if err != nil && testCase.expectedError != nil {
+				if diff := deep.Equal(err.Error(), testCase.expectedError.Error()); len(diff) > 0 {
+					t.Fatalf("unexpected diff: %s", diff)
+				}
+			} else if testCase.expectedError == nil {
+				if diff := deep.Equal(&realBitcoinBlockHeader, blockHeader); len(diff) > 0 {
+					t.Fatalf("unexpected diff: %s", diff)
+				}
+			}
+		})
 	}
 }
 

@@ -52,6 +52,7 @@ type Client interface {
 	ethereum.TransactionReader
 	ethereum.TransactionSender
 	ethereum.ChainIDReader
+	ethereum.BtcChainReader
 }
 
 // simClient wraps ethclient. This exists to prevent extracting ethclient.Client
