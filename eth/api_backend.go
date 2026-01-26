@@ -581,7 +581,7 @@ func (b *EthAPIBackend) GetBtcBlockHeaderByHash(ctx context.Context, hash chainh
 		// Clayton note:
 		// instead of the real error, we seem to be getting a *fmt.wrapError
 		// when querying for a hash that does not exists.  this is likely
-		// an issue with the BlockHeaderByHash function, though I am unsure
+		// an issue with the BlockHeaderByHash function, though I am unsure.
 		// this will work for now but needs to be investigated
 		return nil, database.ErrNotFound
 	}
