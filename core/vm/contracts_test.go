@@ -18,12 +18,17 @@ package vm
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
 )
@@ -110,7 +115,7 @@ func testPrecompiled(addr string, test precompiledTest, t *testing.T) {
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.Name, gas), func(t *testing.T) {
-		if res, _, err := RunPrecompiledContract(p, in, gas, common.Hash{}, nil); err != nil {
+		if res, _, err := RunPrecompiledContract(p, in, gas, nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.Expected {
 			t.Errorf("Expected %v, got %v", test.Expected, common.Bytes2Hex(res))
@@ -132,7 +137,7 @@ func testPrecompiledOOG(addr string, test precompiledTest, t *testing.T) {
 	gas := test.Gas - 1
 
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.Name, gas), func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(p, in, gas, common.Hash{}, nil)
+		_, _, err := RunPrecompiledContract(p, in, gas, nil)
 		if err.Error() != "out of gas" {
 			t.Errorf("Expected error [out of gas], got [%v]", err)
 		}
@@ -149,7 +154,7 @@ func testPrecompiledFailure(addr string, test precompiledFailureTest, t *testing
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(test.Name, func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(p, in, gas, common.Hash{}, nil)
+		_, _, err := RunPrecompiledContract(p, in, gas, nil)
 		if err.Error() != test.ExpectedError {
 			t.Errorf("Expected error [%v], got [%v]", test.ExpectedError, err)
 		}
@@ -180,7 +185,7 @@ func benchmarkPrecompiled(addr string, test precompiledTest, bench *testing.B) {
 		start := time.Now()
 		for bench.Loop() {
 			copy(data, in)
-			res, _, err = RunPrecompiledContract(p, data, reqGas, common.Hash{0}, nil)
+			res, _, err = RunPrecompiledContract(p, data, reqGas, nil)
 		}
 		elapsed := uint64(time.Since(start))
 		if elapsed < 1 {
@@ -426,6 +431,57 @@ func TestPrecompileJovianInputSizeLimits(t *testing.T) {
 			})
 		})
 	}
+}
+
+type BalanceCircuit struct {
+	Y frontend.Variable `gnark:",public"`
+}
+
+// Define declares the circuit constraints.
+func (circuit *BalanceCircuit) Define(api frontend.API) error {
+	return nil
+}
+
+func TestHvmPrecompilesViaZKProofs(t *testing.T) {
+	t.Run("btcBalAddr", func(t *testing.T) {
+		var circuit BalanceCircuit
+		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		pk, vk, err := groth16.Setup(ccs)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		// assert that any bitcoin address has a balance of 73 for this test
+		assignment := BalanceCircuit{Y: 73}
+		witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
+		publicWitness, err := witness.Public()
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		proof, err := groth16.Prove(ccs, pk, witness)
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		fakeBtcAddr := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4}
+
+		addProof([]byte{0x40}, hex.EncodeToString(fakeBtcAddr), Proof{
+			publicWitness: publicWitness,
+			verifyingKey:  vk,
+			proof:         proof,
+		})
+
+		c := &btcBalAddr{}
+		_, err = c.Run(fakeBtcAddr, common.Hash{})
+		if err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func testJson(name, addr string, t *testing.T) {
