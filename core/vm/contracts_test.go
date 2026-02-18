@@ -18,19 +18,23 @@ package vm
 
 import (
 	"bytes"
-	"encoding/hex"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math/big"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/consensys/gnark-crypto/ecc"
 	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/witness"
 	"github.com/consensys/gnark/frontend"
 	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/params"
+
+	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 )
 
 // precompiledTest defines the input/output pairs for precompiled contract tests.
@@ -327,11 +331,43 @@ func TestPrecompileBlsInputSize(t *testing.T) {
 func TestPrecompiledEcrecover(t *testing.T) { testJson("ecRecover", "01", t) }
 
 type BalanceCircuit struct {
-	Y frontend.Variable `gnark:",public"`
+	Address   frontend.Variable `gnark:",public"`
+	StateRoot frontend.Variable `gnark:",public"`
+	Balance   frontend.Variable `gnark:",public"`
 }
 
 // Define declares the circuit constraints.
 func (circuit *BalanceCircuit) Define(api frontend.API) error {
+	// mocked; always valid
+	return nil
+}
+
+type Groth16Proof struct {
+	verifyingKey  groth16.VerifyingKey
+	publicWitness witness.Witness
+	proof         groth16.Proof
+}
+
+func (g *Groth16Proof) Result() []byte {
+	vector := g.publicWitness.Vector().(fr_bn254.Vector)
+
+	// vector Element is [4]uint64
+	buf := make([]byte, 64*4)
+
+	_, err := binary.Encode(buf, binary.BigEndian, vector[0])
+	if err != nil {
+		panic(err) // should not happen
+	}
+
+	return buf
+}
+
+func (g *Groth16Proof) Verify() error {
+	err := groth16.Verify(g.proof, g.verifyingKey, g.publicWitness)
+	if err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -349,7 +385,11 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 		}
 
 		// assert that any bitcoin address has a balance of 73 for this test
-		assignment := BalanceCircuit{Y: 73}
+		assignment := BalanceCircuit{
+			Address:   big.NewInt(1),
+			StateRoot: big.NewInt(2),
+			Balance:   big.NewInt(73),
+		}
 		witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
 		publicWitness, err := witness.Public()
 		if err != nil {
@@ -363,11 +403,13 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 
 		fakeBtcAddr := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4}
 
-		addProof([]byte{0x40}, hex.EncodeToString(fakeBtcAddr), Proof{
+		addProof([]byte{0x40}, fakeBtcAddr, &Groth16Proof{
 			publicWitness: publicWitness,
 			verifyingKey:  vk,
 			proof:         proof,
 		})
+
+		defer removeProof([]byte{0x40}, fakeBtcAddr)
 
 		c := &btcBalAddr{}
 		_, err = c.Run(fakeBtcAddr, common.Hash{})
