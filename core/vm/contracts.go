@@ -21,12 +21,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"math/big"
 	"reflect"
+	"sync"
 	"time"
 
 	"github.com/btcsuite/btcd/btcutil"
@@ -40,6 +42,10 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fp"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
+	"github.com/consensys/gnark/backend/groth16"
+	groth16_bn254 "github.com/consensys/gnark/backend/groth16/bn254"
+	"github.com/consensys/gnark/backend/witness"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/bitutil"
 	"github.com/ethereum/go-ethereum/core/tracing"
@@ -981,12 +987,79 @@ func isValidBlock(blockContext common.Hash) bool {
 	return !bytes.Equal(blockContext[:], HvmNullBlockHash)
 }
 
+type Proof struct {
+	verifyingKey  groth16.VerifyingKey
+	publicWitness witness.Witness
+	proof         groth16.Proof
+}
+
+var proofsMtx sync.Mutex
+var proofs map[string]*Proof = map[string]*Proof{}
+
+func proofKey(precompile []byte, encodedCalldata string) string {
+	return fmt.Sprintf("%X-%s", precompile, encodedCalldata)
+}
+
+func removeProof(precompile []byte, encodedCalldata string) {
+	key := proofKey(precompile, encodedCalldata)
+
+	proofsMtx.Lock()
+	defer proofsMtx.Unlock()
+
+	delete(proofs, key)
+}
+
+func addProof(precompile []byte, encodedCalldata string, proof Proof) {
+	key := proofKey(precompile, encodedCalldata)
+
+	proofsMtx.Lock()
+	defer proofsMtx.Unlock()
+
+	proofs[key] = &proof
+}
+
+func proofForPrecompileCall(precompile []byte, encodedCalldata string) ([]byte, error) {
+	key := proofKey(precompile, encodedCalldata)
+
+	proofsMtx.Lock()
+	foundProof := proofs[key]
+	if foundProof == nil {
+		proofsMtx.Unlock()
+		return nil, errors.New("proof not found")
+	}
+	ret := *foundProof
+	proofsMtx.Unlock()
+
+	err := groth16.Verify(ret.proof, ret.verifyingKey, ret.publicWitness)
+	if err != nil {
+		return nil, err
+	}
+
+	switch ret.proof.(type) {
+	case *groth16_bn254.Proof:
+	default:
+		return nil, errors.New("unknown proof type")
+	}
+
+	vector := ret.publicWitness.Vector().(fr_bn254.Vector)
+
+	// vector Element is [4]uint64
+	buf := make([]byte, 64*4)
+
+	_, err = binary.Encode(buf, binary.BigEndian, vector[0])
+	if err != nil {
+		return nil, err
+	}
+
+	return buf, nil
+}
+
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
 // It returns
 // - the returned bytes,
 // - the _remaining_ gas,
 // - any error that occurred
-func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, blockContext common.Hash, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
+func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas
@@ -995,7 +1068,7 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 		logger.OnGasChange(suppliedGas, suppliedGas-gasCost, tracing.GasChangeCallPrecompiledContract)
 	}
 	suppliedGas -= gasCost
-	output, err := p.Run(input, blockContext)
+	output, err := p.Run(input, common.Hash{})
 	return output, suppliedGas, err
 }
 
@@ -1013,6 +1086,17 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	if input == nil || len(input) < MIN_BTC_ADDRESS_LENGTH {
 		log.Debug("btcBalAddr run called with nil or too small address as input", "input", input)
 		return nil, nil
+	}
+
+	precompileAddr := hvmContractsToAddress[reflect.TypeOf(c)]
+
+	vector, err := proofForPrecompileCall(precompileAddr, hex.EncodeToString(input))
+	if err != nil {
+		return nil, err
+	}
+
+	if vector != nil {
+		return vector, nil
 	}
 
 	if TBCFullNode == nil {
