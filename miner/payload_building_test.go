@@ -271,11 +271,11 @@ func newPayloadArgs(parentHash common.Hash, cfg *params.ChainConfig) *BuildPaylo
 		args.EIP1559Params = validEIP1559Params
 	}
 	dtx := new(types.DepositTx)
-	if cfg.IsDAFootprintBlockLimit(args.Timestamp) {
+	if cfg.IsJovian(args.Timestamp) {
 		dtx = jovianDepositTx(testDAFootprintGasScalar)
 	}
 	args.Transactions = []*types.Transaction{types.NewTx(dtx)}
-	if cfg.IsMinBaseFee(args.Timestamp) {
+	if cfg.IsJovian(args.Timestamp) {
 		args.MinBaseFee = ptr(uint64(1e9))
 	}
 
@@ -344,8 +344,8 @@ func testBuildPayload(t *testing.T, noTxPool, interrupt bool, params1559 []byte,
 	var expected []byte
 	if len(params1559) != 0 {
 		versionByte := eip1559.HoloceneExtraDataVersionByte
-		if config.IsMinBaseFee(testTimestamp) {
-			versionByte = eip1559.MinBaseFeeExtraDataVersionByte
+		if config.IsJovian(testTimestamp) {
+			versionByte = eip1559.JovianExtraDataVersionByte
 		}
 		expected = []byte{versionByte}
 
@@ -355,7 +355,7 @@ func testBuildPayload(t *testing.T, noTxPool, interrupt bool, params1559 []byte,
 		} else {
 			expected = append(expected, params1559...)
 		}
-		if versionByte == eip1559.MinBaseFeeExtraDataVersionByte {
+		if versionByte == eip1559.JovianExtraDataVersionByte {
 			buf := make([]byte, 8)
 			binary.BigEndian.PutUint64(buf, *args.MinBaseFee)
 			expected = append(expected, buf...)
@@ -418,7 +418,7 @@ func testDAFilters(t *testing.T, maxDATxSize, maxDABlockSize *big.Int, expectedT
 	w, b := newTestWorker(t, config, ethash.NewFaker(), db, 0)
 	w.SetMaxDASize(maxDATxSize, maxDABlockSize)
 	txs := genTxs(1, numDAFilterTxs)
-	b.txPool.Add(txs, false)
+	b.txPool.Add(txs, true)
 
 	args := newPayloadArgs(b.chain.CurrentBlock().Hash(), config)
 	args.NoTxPool = false

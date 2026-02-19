@@ -79,6 +79,7 @@ var (
 	errForkIDRejected    = errors.New("fork ID rejected")
 	errInvalidBlockRange = errors.New("invalid block range in status")
 	errBtcBlockNotFound  = errors.New("bitcoin block not found")
+	errDecode            = errors.New("invalid message")
 )
 
 // Packet represents a p2p message in the `eth` protocol.

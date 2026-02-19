@@ -5,7 +5,7 @@ footer: |
 base:
   name: go-ethereum
   url: https://github.com/ethereum/go-ethereum
-  hash: d818a9af7bd5919808df78f31580f59382c53150 # v1.16.3
+  hash: abeb78c647e354ed922726a1d719ac7bc64a07e2 # v1.16.8
 fork:
   name: op-geth
   url: https://github.com/ethereum-optimism/op-geth
@@ -150,6 +150,7 @@ def:
             The parameters can be overriden for testing.
           globs:
             - "params/config.go"
+            - "params/config_op.go"
             - "params/protocol_params.go"
             - "core/genesis.go"
         - title: "Chain config cleanup"
@@ -273,6 +274,7 @@ def:
             Forward transactions to the sequencer if configured.
           globs:
             - "eth/api_backend.go"
+            - "eth/api_backend_op.go"
             - "eth/backend.go"
             - "internal/ethapi/backend.go"
         - title: "Apply L1 cost in API responses"

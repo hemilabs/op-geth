@@ -122,16 +122,16 @@ type receiptMarshaling struct {
 
 	// Optimism
 	L1GasPrice                  *hexutil.Big
+	L1BlobBaseFee               *hexutil.Big
 	L1GasUsed                   *hexutil.Big
 	L1Fee                       *hexutil.Big
 	FeeScalar                   *big.Float
+	L1BaseFeeScalar             *hexutil.Uint64
+	L1BlobBaseFeeScalar         *hexutil.Uint64
 	DepositNonce                *hexutil.Uint64
 	DepositReceiptVersion       *hexutil.Uint64
 	PoPPayoutNonce              *hexutil.Uint64
 	BtcAttributesDepositedNonce *hexutil.Uint64
-	L1BlobBaseFee               *hexutil.Big
-	L1BaseFeeScalar             *hexutil.Uint64
-	L1BlobBaseFeeScalar         *hexutil.Uint64
 	OperatorFeeScalar           *hexutil.Uint64
 	OperatorFeeConstant         *hexutil.Uint64
 	DAFootprintGasScalar        *hexutil.Uint64
@@ -205,10 +205,15 @@ type LegacyOptimismStoredReceiptRLP struct {
 	PostStateOrStatus []byte
 	CumulativeGasUsed uint64
 	Logs              []*LogForStorage
-	L1GasUsed         *big.Int
-	L1GasPrice        *big.Int
-	L1Fee             *big.Int
-	FeeScalar         string
+
+	// Remaining fields are declared to allow the receipt RLP to be parsed without errors.
+	// However, they must not be used as they may not be populated correctly due to multiple receipt formats
+	// being combined into a single list of optional fields which can be mistaken for each other.
+	// DepositNonce (*uint64) from Regolith deposit tx receipts will be parsed into L1GasUsed
+	L1GasUsed  *big.Int `rlp:"optional"` // OVM Legacy
+	L1GasPrice *big.Int `rlp:"optional"` // OVM Legacy
+	L1Fee      *big.Int `rlp:"optional"` // OVM Legacy
+	FeeScalar  string   `rlp:"optional"` // OVM Legacy
 }
 
 // LogForStorage is a wrapper around a Log that handles

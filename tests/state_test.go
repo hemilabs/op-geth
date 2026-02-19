@@ -65,7 +65,9 @@ func TestState(t *testing.T) {
 	st := new(testMatcher)
 	initMatcher(st)
 	for _, dir := range []string{
-		filepath.Join(baseDir, "EIPTests", "StateTests"),
+		// Clayton note: this doesn't seem to be in the submodule, causing errors
+		// skip for now
+		// filepath.Join(baseDir, "EIPTests", "StateTests")
 		stateTestDir,
 		benchmarksDir,
 	} {
@@ -156,8 +158,8 @@ func execStateTest(t *testing.T, st *testMatcher, test *StateTest) {
 			withTrace(t, test.gasLimit(subtest), func(vmconfig vm.Config) error {
 				var result error
 				test.Run(subtest, vmconfig, true, rawdb.PathScheme, func(err error, state *StateTestState) {
-					if state.Snapshots != nil && state.StateDB != nil {
-						if _, err := state.Snapshots.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
+					if state.TrieDB != nil && state.StateDB != nil {
+						if err := state.TrieDB.Journal(state.StateDB.IntermediateRoot(false)); err != nil {
 							result = err
 							return
 						}

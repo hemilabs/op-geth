@@ -36,10 +36,7 @@ import (
 )
 
 // requestTracker is a singleton tracker for eth/66 and newer request times.
-var (
-	requestTracker = tracker.New(ProtocolName, 5*time.Minute)
-	errDecode      = errors.New("invalid message")
-)
+var requestTracker = tracker.New(ProtocolName, 5*time.Minute)
 
 func handleGetBlockHeaders(backend Backend, msg Decoder, peer *Peer) error {
 	// Decode the complex header query
@@ -624,12 +621,19 @@ func handleTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(&txs); err != nil {
 		return err
 	}
+	// Duplicate transactions are not allowed
+	seen := make(map[common.Hash]struct{})
 	for i, tx := range txs {
 		// Validate and mark the remote transaction
 		if tx == nil {
 			return fmt.Errorf("Transactions: transaction %d is nil", i)
 		}
-		peer.markTransaction(tx.Hash())
+		hash := tx.Hash()
+		if _, exists := seen[hash]; exists {
+			return fmt.Errorf("Transactions: multiple copies of the same hash %v", hash)
+		}
+		seen[hash] = struct{}{}
+		peer.markTransaction(hash)
 	}
 	return backend.Handle(peer, &txs)
 }
@@ -644,12 +648,19 @@ func handlePooledTransactions(backend Backend, msg Decoder, peer *Peer) error {
 	if err := msg.Decode(&txs); err != nil {
 		return err
 	}
+	// Duplicate transactions are not allowed
+	seen := make(map[common.Hash]struct{})
 	for i, tx := range txs.PooledTransactionsResponse {
 		// Validate and mark the remote transaction
 		if tx == nil {
 			return fmt.Errorf("PooledTransactions: transaction %d is nil", i)
 		}
-		peer.markTransaction(tx.Hash())
+		hash := tx.Hash()
+		if _, exists := seen[hash]; exists {
+			return fmt.Errorf("PooledTransactions: multiple copies of the same hash %v", hash)
+		}
+		seen[hash] = struct{}{}
+		peer.markTransaction(hash)
 	}
 	requestTracker.Fulfil(peer.id, peer.version, PooledTransactionsMsg, txs.RequestId)
 

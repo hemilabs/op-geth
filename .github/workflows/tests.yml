@@ -29,7 +29,8 @@ jobs:
           cache: true
           check-latest: true
 
-
+      - name: "clone submodules"
+        run: git submodule update --init --recursive
 
       # tests are not currently reliable; we need to add testing packages
       # back in, one by one

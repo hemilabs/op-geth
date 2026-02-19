@@ -242,19 +242,21 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer 
 		log.Info("hVM Snap Sync Func called")
 		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader)
 	}
-
+	cutoffNumber, cutoffHash := chain.HistoryPruningCutoff()
 	dl := &Downloader{
-		stateDB:        stateDb,
-		mux:            mux,
-		queue:          newQueue(chain.Config(), blockCacheMaxItems, blockCacheInitialItems),
-		peers:          newPeerSet(),
-		blockchain:     chain,
-		dropPeer:       dropPeer,
-		headerProcCh:   make(chan *headerTask, 1),
-		quitCh:         make(chan struct{}),
-		SnapSyncer:     snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
-		stateSyncStart: make(chan *stateSync),
-		syncStartBlock: chain.CurrentSnapBlock().Number.Uint64(),
+		stateDB:           stateDb,
+		mux:               mux,
+		queue:             newQueue(chain.Config(), blockCacheMaxItems, blockCacheInitialItems),
+		peers:             newPeerSet(),
+		blockchain:        chain,
+		chainCutoffNumber: cutoffNumber,
+		chainCutoffHash:   cutoffHash,
+		dropPeer:          dropPeer,
+		headerProcCh:      make(chan *headerTask, 1),
+		quitCh:            make(chan struct{}),
+		SnapSyncer:        snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
+		stateSyncStart:    make(chan *stateSync),
+		syncStartBlock:    chain.CurrentSnapBlock().Number.Uint64(),
 	}
 	// Create the post-merge skeleton syncer and start the process
 	dl.skeleton = newSkeleton(stateDb, dl.peers, dropPeer, newBeaconBackfiller(dl, success))
