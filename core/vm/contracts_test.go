@@ -18,7 +18,6 @@ package vm
 
 import (
 	"bytes"
-	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -463,15 +462,6 @@ type Groth16Proof struct {
 
 func (g *Groth16Proof) Result() []byte {
 	vector := g.publicWitness.Vector().(fr_bn254.Vector)
-
-	// vector Element is [4]uint64
-	buf := make([]byte, 64*4)
-
-	_, err := binary.Encode(buf, binary.BigEndian, vector[0])
-	if err != nil {
-		panic(err) // should not happen
-	}
-
 	b := vector[2].Bytes()
 	return b[:]
 }

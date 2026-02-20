@@ -311,6 +311,11 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
+	for _, proof := range payloadAttributes.ZKProofs {
+		vm.AddProof(proof.PrecompiledContract, proof.Calldata, proof.Proof)
+		defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
+	}
+
 	api.forkchoiceLock.Lock()
 	defer api.forkchoiceLock.Unlock()
 
