@@ -311,13 +311,30 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 	return popPayouts, nil
 }
 
+type AlwaysCorrectProof struct {
+	Result []byte
+}
+
+func (a *AlwaysCorrectProof) Verify() bool {
+	return true
+}
+
+func (a *AlwaysCorrectProof) Result() []byte {
+	return []byte("correct")
+}
+
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
 	for _, proof := range payloadAttributes.ZKProofs {
 		precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
 		if precompiledContract == nil {
-			return nil, fmt.Errorf("could not find hvm0 precompiled contract at address %X", proof.PrecompiledContract)
+			return engine.STATUS_INVALID, fmt.Errorf("could not find hvm0 precompiled contract at address %X", proof.PrecompiledContract)
 		}
-		vm.AddProof(precompiledContract, proof.Calldata, proof.Proof)
+
+		// Clayton note: given the precompile proof, create a proof verification
+		// implemenation. For now, just mock this out.  when we start to
+		// implement this ensure we fill this out with the correct
+		// implementation
+		vm.AddProof(&AlwaysCorrectProof{}, proof.Calldata, proof.Proof)
 		defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
 	}
 
