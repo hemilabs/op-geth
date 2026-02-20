@@ -58,6 +58,11 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		RPCGasCap                                 uint64
 		RPCEVMTimeout                             time.Duration
 		RPCTxFeeCap                               float64
+		HvmEnabled                                bool          `toml:",omitempty"`
+		HvmGenesisHeader                          string        `toml:",omitempty"`
+		HvmGenesisHeight                          uint64        `toml:",omitempty"`
+		HvmHeaderDataDir                          string        `toml:",omitempty"`
+		DeucalionAddress                          string        `toml:",omitempty"`
 		OverrideOsaka                             *uint64       `toml:",omitempty"`
 		OverrideBPO1                              *uint64       `toml:",omitempty"`
 		OverrideBPO2                              *uint64       `toml:",omitempty"`
@@ -72,6 +77,11 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		OverrideOptimismIsthmus                   *uint64       `toml:",omitempty"`
 		OverrideOptimismJovian                    *uint64       `toml:",omitempty"`
 		OverrideOptimismInterop                   *uint64       `toml:",omitempty"`
+		OverrideHemiHvm0                          *uint64       `toml:",omitempty"`
+		OverrideHvmEnabled                        bool          `toml:",omitempty"`
+		OverrideHvmGenesisHeader                  string        `toml:",omitempty"`
+		OverrideHvmGenesisHeight                  *uint64       `toml:",omitempty"`
+		OverrideHvmHeaderDataDir                  string        `toml:",omitempty"`
 		ApplySuperchainUpgrades                   bool          `toml:",omitempty"`
 		RollupSequencerHTTP                       string
 		RollupSequencerTxConditionalEnabled       bool
@@ -128,6 +138,11 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.RPCGasCap = c.RPCGasCap
 	enc.RPCEVMTimeout = c.RPCEVMTimeout
 	enc.RPCTxFeeCap = c.RPCTxFeeCap
+	enc.HvmEnabled = c.HvmEnabled
+	enc.HvmGenesisHeader = c.HvmGenesisHeader
+	enc.HvmGenesisHeight = c.HvmGenesisHeight
+	enc.HvmHeaderDataDir = c.HvmHeaderDataDir
+	enc.DeucalionAddress = c.DeucalionAddress
 	enc.OverrideOsaka = c.OverrideOsaka
 	enc.OverrideBPO1 = c.OverrideBPO1
 	enc.OverrideBPO2 = c.OverrideBPO2
@@ -142,6 +157,11 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.OverrideOptimismIsthmus = c.OverrideOptimismIsthmus
 	enc.OverrideOptimismJovian = c.OverrideOptimismJovian
 	enc.OverrideOptimismInterop = c.OverrideOptimismInterop
+	enc.OverrideHemiHvm0 = c.OverrideHemiHvm0
+	enc.OverrideHvmEnabled = c.OverrideHvmEnabled
+	enc.OverrideHvmGenesisHeader = c.OverrideHvmGenesisHeader
+	enc.OverrideHvmGenesisHeight = c.OverrideHvmGenesisHeight
+	enc.OverrideHvmHeaderDataDir = c.OverrideHvmHeaderDataDir
 	enc.ApplySuperchainUpgrades = c.ApplySuperchainUpgrades
 	enc.RollupSequencerHTTP = c.RollupSequencerHTTP
 	enc.RollupSequencerTxConditionalEnabled = c.RollupSequencerTxConditionalEnabled
@@ -202,6 +222,11 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		RPCGasCap                                 *uint64
 		RPCEVMTimeout                             *time.Duration
 		RPCTxFeeCap                               *float64
+		HvmEnabled                                *bool          `toml:",omitempty"`
+		HvmGenesisHeader                          *string        `toml:",omitempty"`
+		HvmGenesisHeight                          *uint64        `toml:",omitempty"`
+		HvmHeaderDataDir                          *string        `toml:",omitempty"`
+		DeucalionAddress                          *string        `toml:",omitempty"`
 		OverrideOsaka                             *uint64        `toml:",omitempty"`
 		OverrideBPO1                              *uint64        `toml:",omitempty"`
 		OverrideBPO2                              *uint64        `toml:",omitempty"`
@@ -216,6 +241,11 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		OverrideOptimismIsthmus                   *uint64        `toml:",omitempty"`
 		OverrideOptimismJovian                    *uint64        `toml:",omitempty"`
 		OverrideOptimismInterop                   *uint64        `toml:",omitempty"`
+		OverrideHemiHvm0                          *uint64        `toml:",omitempty"`
+		OverrideHvmEnabled                        *bool          `toml:",omitempty"`
+		OverrideHvmGenesisHeader                  *string        `toml:",omitempty"`
+		OverrideHvmGenesisHeight                  *uint64        `toml:",omitempty"`
+		OverrideHvmHeaderDataDir                  *string        `toml:",omitempty"`
 		ApplySuperchainUpgrades                   *bool          `toml:",omitempty"`
 		RollupSequencerHTTP                       *string
 		RollupSequencerTxConditionalEnabled       *bool
@@ -357,6 +387,21 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.RPCTxFeeCap != nil {
 		c.RPCTxFeeCap = *dec.RPCTxFeeCap
 	}
+	if dec.HvmEnabled != nil {
+		c.HvmEnabled = *dec.HvmEnabled
+	}
+	if dec.HvmGenesisHeader != nil {
+		c.HvmGenesisHeader = *dec.HvmGenesisHeader
+	}
+	if dec.HvmGenesisHeight != nil {
+		c.HvmGenesisHeight = *dec.HvmGenesisHeight
+	}
+	if dec.HvmHeaderDataDir != nil {
+		c.HvmHeaderDataDir = *dec.HvmHeaderDataDir
+	}
+	if dec.DeucalionAddress != nil {
+		c.DeucalionAddress = *dec.DeucalionAddress
+	}
 	if dec.OverrideOsaka != nil {
 		c.OverrideOsaka = dec.OverrideOsaka
 	}
@@ -398,6 +443,21 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.OverrideOptimismInterop != nil {
 		c.OverrideOptimismInterop = dec.OverrideOptimismInterop
+	}
+	if dec.OverrideHemiHvm0 != nil {
+		c.OverrideHemiHvm0 = dec.OverrideHemiHvm0
+	}
+	if dec.OverrideHvmEnabled != nil {
+		c.OverrideHvmEnabled = *dec.OverrideHvmEnabled
+	}
+	if dec.OverrideHvmGenesisHeader != nil {
+		c.OverrideHvmGenesisHeader = *dec.OverrideHvmGenesisHeader
+	}
+	if dec.OverrideHvmGenesisHeight != nil {
+		c.OverrideHvmGenesisHeight = dec.OverrideHvmGenesisHeight
+	}
+	if dec.OverrideHvmHeaderDataDir != nil {
+		c.OverrideHvmHeaderDataDir = *dec.OverrideHvmHeaderDataDir
 	}
 	if dec.ApplySuperchainUpgrades != nil {
 		c.ApplySuperchainUpgrades = *dec.ApplySuperchainUpgrades

@@ -63,9 +63,9 @@ const (
 	PooledTransactionsMsg         = 0x0a
 	GetReceiptsMsg                = 0x0f
 	ReceiptsMsg                   = 0x10
-	BlockRangeUpdateMsg           = 0x11
+	GetBtcBlocksMsg               = 0x11
 	BtcBlocksMsg                  = 0x12
-	GetBtcBlocksMsg               = 0x13
+	BlockRangeUpdateMsg           = 0x11
 )
 
 var (
