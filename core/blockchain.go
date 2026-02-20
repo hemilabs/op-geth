@@ -39,9 +39,9 @@ import (
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/hemilabs/heminetwork/hemi"
-	"github.com/hemilabs/heminetwork/service/deucalion"
-	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/hemilabs/heminetwork/v2/hemi"
+	"github.com/hemilabs/heminetwork/v2/service/deucalion"
+	"github.com/hemilabs/heminetwork/v2/service/tbc"
 	"golang.org/x/net/context"
 
 	"github.com/ethereum/go-ethereum/common"

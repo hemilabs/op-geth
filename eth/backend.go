@@ -28,8 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/hemilabs/heminetwork/v2/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/v2/service/tbc"
 	"github.com/holiman/uint256"
 	"golang.org/x/time/rate"
 

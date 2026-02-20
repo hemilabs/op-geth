@@ -34,7 +34,7 @@ import (
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/rlp"
-	"github.com/hemilabs/heminetwork/hemi"
+	"github.com/hemilabs/heminetwork/v2/hemi"
 )
 
 // ReadCanonicalHash retrieves the hash assigned to a canonical block number.

@@ -33,7 +33,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/v2/database"
 	"github.com/holiman/uint256"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -53,7 +53,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/secp256r1"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/hemilabs/heminetwork/v2/service/tbc"
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/exp/slices"
 )
