@@ -122,7 +122,8 @@ var hvmQueryMap = make(map[hVMQueryKey][]byte)
 
 var HvmNullBlockHash = make([]byte, 32)
 
-const zkMode = true
+// Clayton note: update me
+var zkMode = true
 
 func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 	syncInfo := TBCFullNode.Synced(MainCtx)
@@ -1034,6 +1035,14 @@ func removeProof(precompile []byte, calldata []byte) {
 	defer proofsMtx.Unlock()
 
 	delete(proofs, key)
+}
+
+func RemoveProof(precompile []byte, calldata []byte) {
+	removeProof(precompile, calldata)
+}
+
+func AddProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
+	addProof(precompile, calldata, proof)
 }
 
 func addProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {

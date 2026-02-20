@@ -40,6 +40,16 @@ var (
 
 //go:generate go run github.com/fjl/gencodec -type PayloadAttributes -field-override payloadAttributesMarshaling -out gen_blockparams.go
 
+// ZKProof represents an association between a precompiled contract call
+// and proof of its answer.  When running in "ZK Mode", hvm precompile calls
+// will be required to have a proof assocated with the exact call
+// (contract address + calldata)
+type ZKProof struct {
+	PrecompiledContract []byte `json:"precompiled_contract"`
+	Calldata            []byte `json:"calldata"`
+	Proof               []byte `json:"proof"`
+}
+
 // PayloadAttributes describes the environment context in which a block should
 // be built.
 type PayloadAttributes struct {
@@ -63,6 +73,8 @@ type PayloadAttributes struct {
 	// MinBaseFee is a field for rollups implementing the minimum base fee feature.
 	// See https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#minimum-base-fee-in-payloadattributesv3
 	MinBaseFee *uint64 `json:"minBaseFee,omitempty" gencodec:"optional"`
+
+	ZKProofs []ZKProof `json:"zk_proofs,omitempty" gencodec:"optional"`
 }
 
 // JSON type overrides for PayloadAttributes.
