@@ -333,15 +333,18 @@ func TestPrecompileBlsInputSize(t *testing.T) {
 
 func TestPrecompiledEcrecover(t *testing.T) { testJson("ecRecover", "01", t) }
 
-type BalanceCircuit struct {
-	Address   frontend.Variable `gnark:",public"`
-	StateRoot frontend.Variable `gnark:",public"`
-	Balance   frontend.Variable `gnark:",public"`
+type MockCircuit struct {
+	X frontend.Variable `gnark:",public"`
+	Y frontend.Variable `gnark:",public"`
+	Z frontend.Variable `gnark:",public"`
 }
 
 // Define declares the circuit constraints.
-func (circuit *BalanceCircuit) Define(api frontend.API) error {
-	// mocked; always valid
+func (circuit *MockCircuit) Define(api frontend.API) error {
+	// trivial
+	api.AssertIsDifferent(circuit.X, circuit.Y)
+	api.AssertIsDifferent(circuit.X, circuit.Z)
+	api.AssertIsDifferent(circuit.Z, circuit.Y)
 	return nil
 }
 
@@ -377,20 +380,55 @@ func (g *Groth16Proof) Verify() error {
 
 func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 	type testTableItem struct {
-		name      string
-		precomile PrecompiledContract
+		precompile PrecompiledContract
 	}
 
 	testTable := []testTableItem{
 		testTableItem{
-			name:      "btcBalAddr",
-			precomile: &btcBalAddr{},
+			precompile: &btcBalAddr{},
+		},
+		// btcUtxosAddrListAddr,
+		testTableItem{
+			precompile: &btcUtxosAddrList{},
+		},
+		// btcTxByTxidAddr,
+		testTableItem{
+			precompile: &btcTxByTxid{},
+		},
+		// btcTxConfirmationsAddr,
+		testTableItem{
+			precompile: &btcTxConfirmations{},
+		},
+		// btcLastHeaderAddr,
+		testTableItem{
+			precompile: &btcLastHeader{},
+		},
+		// btcHeaderNAddr,
+		testTableItem{
+			precompile: &btcHeaderN{},
+		},
+		// btcAddrToScriptAddr,
+		testTableItem{
+			precompile: &btcAddrToScript{},
+		},
+		// btcInputByTxidAddr,
+		testTableItem{
+			precompile: &btcInputByTxid{},
+		},
+		// btcOutputByTxidAddr,
+		testTableItem{
+			precompile: &btcOutputByTxid{},
+		},
+		// btcTxGetInputWitnessAddr,
+		testTableItem{
+			precompile: &btcTxGetInputWitness{},
 		},
 	}
 
 	for _, testCase := range testTable {
-		t.Run(testCase.name, func(t *testing.T) {
-			var circuit BalanceCircuit
+		t.Run(testCase.precompile.Name(), func(t *testing.T) {
+			t.Parallel()
+			var circuit MockCircuit
 			ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 			if err != nil {
 				t.Fatal(err)
@@ -402,10 +440,10 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 			}
 
 			// assert that any bitcoin address has a balance of 73 for this test
-			assignment := BalanceCircuit{
-				Address:   big.NewInt(1),
-				StateRoot: big.NewInt(2),
-				Balance:   big.NewInt(73),
+			assignment := MockCircuit{
+				X: big.NewInt(1),
+				Y: big.NewInt(2),
+				Z: big.NewInt(73),
 			}
 			witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
 			publicWitness, err := witness.Public()
@@ -418,7 +456,7 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			c := hvmContractsToAddress[reflect.TypeOf(testCase.precomile)]
+			c := hvmContractsToAddress[reflect.TypeOf(testCase.precompile)]
 			calldata := []byte("this is not real calldata")
 
 			addProof(c, calldata, &Groth16Proof{
@@ -428,7 +466,7 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 			})
 
 			defer removeProof(c, calldata)
-			runAndExpectPrecompiledContract(t, testCase.precomile, calldata)
+			runAndExpectPrecompiledContract(t, testCase.precompile, calldata)
 		})
 	}
 }
