@@ -311,7 +311,7 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 }
 
 type AlwaysCorrectProof struct {
-	Result []byte
+	Proof []byte
 }
 
 func (a *AlwaysCorrectProof) Verify() bool {
@@ -333,7 +333,9 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 		// implemenation. For now, just mock this out.  when we start to
 		// implement this ensure we fill this out with the correct
 		// implementation
-		vm.AddProof(&AlwaysCorrectProof{}, proof.Calldata, proof.Proof)
+		vm.AddProof(proof.PrecompiledContract, proof.Calldata, &AlwaysCorrectProof{
+			Proof: proof.Proof,
+		})
 		defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
 	}
 
