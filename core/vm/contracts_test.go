@@ -571,8 +571,8 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 				verifyingKey:  vk,
 				proof:         proof,
 			})
-
 			defer removeProof(c, calldata)
+
 			runAndExpectPrecompiledContract(t, testCase.precompile, calldata)
 		})
 	}
