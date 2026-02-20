@@ -21,8 +21,11 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/big"
 	"os"
+	"reflect"
+	"slices"
 	"testing"
 	"time"
 
@@ -466,7 +469,8 @@ func (g *Groth16Proof) Result() []byte {
 		panic(err) // should not happen
 	}
 
-	return buf
+	b := vector[2].Bytes()
+	return b[:]
 }
 
 func (g *Groth16Proof) Verify() error {
@@ -479,51 +483,73 @@ func (g *Groth16Proof) Verify() error {
 }
 
 func TestHvmPrecompilesViaZKProofs(t *testing.T) {
-	t.Run("btcBalAddr", func(t *testing.T) {
-		var circuit BalanceCircuit
-		ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
-		if err != nil {
-			t.Fatal(err)
-		}
+	type testTableItem struct {
+		name      string
+		precomile PrecompiledContract
+	}
 
-		pk, vk, err := groth16.Setup(ccs)
-		if err != nil {
-			t.Fatal(err)
-		}
+	testTable := []testTableItem{
+		testTableItem{
+			name:      "btcBalAddr",
+			precomile: &btcBalAddr{},
+		},
+	}
 
-		// assert that any bitcoin address has a balance of 73 for this test
-		assignment := BalanceCircuit{
-			Address:   big.NewInt(1),
-			StateRoot: big.NewInt(2),
-			Balance:   big.NewInt(73),
-		}
-		witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
-		publicWitness, err := witness.Public()
-		if err != nil {
-			t.Fatal(err)
-		}
+	for _, testCase := range testTable {
+		t.Run(testCase.name, func(t *testing.T) {
+			var circuit BalanceCircuit
+			ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		proof, err := groth16.Prove(ccs, pk, witness)
-		if err != nil {
-			t.Fatal(err)
-		}
+			pk, vk, err := groth16.Setup(ccs)
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		fakeBtcAddr := []byte{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1, 2, 3, 4}
+			// assert that any bitcoin address has a balance of 73 for this test
+			assignment := BalanceCircuit{
+				Address:   big.NewInt(1),
+				StateRoot: big.NewInt(2),
+				Balance:   big.NewInt(73),
+			}
+			witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
+			publicWitness, err := witness.Public()
+			if err != nil {
+				t.Fatal(err)
+			}
 
-		addProof([]byte{0x40}, fakeBtcAddr, &Groth16Proof{
-			publicWitness: publicWitness,
-			verifyingKey:  vk,
-			proof:         proof,
+			proof, err := groth16.Prove(ccs, pk, witness)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			c := hvmContractsToAddress[reflect.TypeOf(testCase.precomile)]
+			calldata := []byte("this is not real calldata")
+
+			addProof(c, calldata, &Groth16Proof{
+				publicWitness: publicWitness,
+				verifyingKey:  vk,
+				proof:         proof,
+			})
+
+			defer removeProof(c, calldata)
+			runAndExpectPrecompiledContract(t, testCase.precomile, calldata)
 		})
+	}
+}
 
-		defer removeProof([]byte{0x40}, fakeBtcAddr)
-
-		c := &btcBalAddr{}
-		_, err = c.Run(fakeBtcAddr, common.Hash{})
-		if err != nil {
-			t.Fatal(err)
-		}
-	})
+func runAndExpectPrecompiledContract(t *testing.T, precompiledAddress PrecompiledContract, calldata []byte) {
+	result, _, err := RunPrecompiledContract(precompiledAddress, calldata, math.MaxUint64, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expected := make([]byte, fr_bn254.Bytes)
+	expected[fr_bn254.Bytes-1] = 73
+	if !slices.Equal(expected, result) {
+		t.Fatalf("unexpected result: %v", result)
+	}
 }
 
 func testJson(name, addr string, t *testing.T) {

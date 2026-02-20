@@ -63,7 +63,38 @@ import (
 const (
 	MIN_BTC_ADDRESS_LENGTH = 24
 	BTC_TXID_LENGTH_BYTES  = 32
+
+	btcBalAddrAddr           = byte(0x40)
+	btcUtxosAddrListAddr     = byte(0x41)
+	btcTxByTxidAddr          = byte(0x42)
+	btcTxConfirmationsAddr   = byte(0x43)
+	btcLastHeaderAddr        = byte(0x44)
+	btcHeaderNAddr           = byte(0x45)
+	btcAddrToScriptAddr      = byte(0x46)
+	btcInputByTxidAddr       = byte(0x47)
+	btcOutputByTxidAddr      = byte(0x48)
+	btcTxGetInputWitnessAddr = byte(0x49)
 )
+
+func isHvmPrecompileCall(precompile []byte) bool {
+	// all hvm precompile addresses are 1 byte as of now
+	if len(precompile) != 1 {
+		return false
+	}
+
+	return slices.Contains([]byte{
+		btcBalAddrAddr,
+		btcUtxosAddrListAddr,
+		btcTxByTxidAddr,
+		btcTxConfirmationsAddr,
+		btcLastHeaderAddr,
+		btcHeaderNAddr,
+		btcAddrToScriptAddr,
+		btcInputByTxidAddr,
+		btcOutputByTxidAddr,
+		btcTxGetInputWitnessAddr,
+	}, precompile[0])
+}
 
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
 // requires a deterministic gas count based on the input size of the Run method of the
@@ -94,6 +125,8 @@ var MainCtx context.Context
 var hvmQueryMap = make(map[hVMQueryKey][]byte)
 
 var HvmNullBlockHash = make([]byte, 32)
+
+const zkMode = true
 
 func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 	syncInfo := TBCFullNode.Synced(MainCtx)
@@ -789,16 +822,16 @@ var PrecompiledContractsJovian = map[common.Address]PrecompiledContract{
 }
 
 var hvmContractsToAddress = map[reflect.Type][]byte{
-	reflect.TypeOf(&btcBalAddr{}):           {0x40},
-	reflect.TypeOf(&btcUtxosAddrList{}):     {0x41},
-	reflect.TypeOf(&btcTxByTxid{}):          {0x42},
-	reflect.TypeOf(&btcTxConfirmations{}):   {0x43},
-	reflect.TypeOf(&btcLastHeader{}):        {0x44},
-	reflect.TypeOf(&btcHeaderN{}):           {0x45},
-	reflect.TypeOf(&btcAddrToScript{}):      {0x46},
-	reflect.TypeOf(&btcInputByTxid{}):       {0x47},
-	reflect.TypeOf(&btcOutputByTxid{}):      {0x48},
-	reflect.TypeOf(&btcTxGetInputWitness{}): {0x49},
+	reflect.TypeOf(&btcBalAddr{}):           {btcBalAddrAddr},
+	reflect.TypeOf(&btcUtxosAddrList{}):     {btcUtxosAddrListAddr},
+	reflect.TypeOf(&btcTxByTxid{}):          {btcTxByTxidAddr},
+	reflect.TypeOf(&btcTxConfirmations{}):   {btcTxConfirmationsAddr},
+	reflect.TypeOf(&btcLastHeader{}):        {btcLastHeaderAddr},
+	reflect.TypeOf(&btcHeaderN{}):           {btcHeaderNAddr},
+	reflect.TypeOf(&btcAddrToScript{}):      {btcAddrToScriptAddr},
+	reflect.TypeOf(&btcInputByTxid{}):       {btcInputByTxidAddr},
+	reflect.TypeOf(&btcOutputByTxid{}):      {btcOutputByTxidAddr},
+	reflect.TypeOf(&btcTxGetInputWitness{}): {btcTxGetInputWitnessAddr},
 }
 
 var PrecompiledContractsHvm0 = map[common.Address]PrecompiledContract{
@@ -1016,6 +1049,8 @@ func addProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
 	proofs[key] = proof
 }
 
+var errPrecompileProofNotFound = errors.New("could not find precompile proof")
+
 func proofForPrecompileCall(precompile []byte, calldata []byte) ([]byte, error) {
 	key := proofKey(precompile, calldata)
 
@@ -1024,7 +1059,7 @@ func proofForPrecompileCall(precompile []byte, calldata []byte) ([]byte, error) 
 
 	foundProof := proofs[key]
 	if foundProof == nil {
-		return nil, errors.New("proof not found")
+		return nil, errPrecompileProofNotFound
 	}
 
 	if err := foundProof.Verify(); err != nil {
@@ -1048,6 +1083,10 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 		logger.OnGasChange(suppliedGas, suppliedGas-gasCost, tracing.GasChangeCallPrecompiledContract)
 	}
 	suppliedGas -= gasCost
+	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode && isHvmPrecompileCall(precompile) {
+		result, err := proofForPrecompileCall(precompile, input)
+		return result, suppliedGas, err
+	}
 	output, err := p.Run(input, common.Hash{})
 	return output, suppliedGas, err
 }
@@ -1066,17 +1105,6 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 	if input == nil || len(input) < MIN_BTC_ADDRESS_LENGTH {
 		log.Debug("btcBalAddr run called with nil or too small address as input", "input", input)
 		return nil, nil
-	}
-
-	precompileAddr := hvmContractsToAddress[reflect.TypeOf(c)]
-
-	vector, err := proofForPrecompileCall(precompileAddr, input)
-	if err != nil {
-		return nil, err
-	}
-
-	if vector != nil {
-		return vector, nil
 	}
 
 	if TBCFullNode == nil {
