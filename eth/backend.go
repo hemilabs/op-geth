@@ -256,12 +256,15 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 			TxLookupLimit:    int64(min(config.TransactionHistory, math.MaxInt64)),
 			VmConfig: vm.Config{
 				EnablePreimageRecording: config.EnablePreimageRecording,
+				EnableWitnessStats:      config.EnableWitnessStats,
+				StatelessSelfValidation: config.StatelessSelfValidation,
 			},
 			// Enables file journaling for the trie database. The journal files will be stored
 			// within the data directory. The corresponding paths will be either:
 			// - DATADIR/triedb/merkle.journal
 			// - DATADIR/triedb/verkle.journal
 			TrieJournalDirectory: stack.ResolvePath("triedb"),
+			StateSizeTracking:    config.EnableStateSizeTracking,
 		}
 	)
 	if config.VMTrace != "" {
@@ -279,6 +282,12 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	var overrides core.ChainOverrides
 	if config.OverrideOsaka != nil {
 		overrides.OverrideOsaka = config.OverrideOsaka
+	}
+	if config.OverrideBPO1 != nil {
+		overrides.OverrideBPO1 = config.OverrideBPO1
+	}
+	if config.OverrideBPO2 != nil {
+		overrides.OverrideBPO2 = config.OverrideBPO2
 	}
 	if config.OverrideVerkle != nil {
 		overrides.OverrideVerkle = config.OverrideVerkle

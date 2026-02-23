@@ -340,17 +340,6 @@ func (b *EthAPIBackend) SendTx(ctx context.Context, signedTx *types.Transaction)
 		if err := b.eth.seqRPCService.CallContext(ctx, nil, "eth_sendRawTransaction", hexutil.Encode(data)); err != nil {
 			return err
 		}
-		if b.disableTxPool {
-			return nil
-		}
-
-		log.Info("sending tx to txPool", "hash", signedTx.Hash())
-
-		// Retain tx in local tx pool after forwarding, for local RPC usage.
-		if err := b.eth.txPool.Add([]*types.Transaction{signedTx}, false)[0]; err != nil {
-			log.Warn("successfully sent tx to sequencer, but failed to persist in local tx pool", "err", err, "tx", signedTx.Hash())
-		}
-		return nil
 	}
 	if b.disableTxPool {
 		return nil
@@ -533,12 +522,12 @@ func (b *EthAPIBackend) StateAtTransaction(ctx context.Context, block *types.Blo
 	return b.eth.stateAtTransaction(ctx, block, txIndex, reexec)
 }
 
-func (b *EthAPIBackend) HistoricalRPCService() *rpc.Client {
-	return b.eth.historicalRPCService
+func (b *EthAPIBackend) RPCTxSyncDefaultTimeout() time.Duration {
+	return b.eth.config.TxSyncDefaultTimeout
 }
 
-func (b *EthAPIBackend) Genesis() *types.Block {
-	return b.eth.blockchain.Genesis()
+func (b *EthAPIBackend) RPCTxSyncMaxTimeout() time.Duration {
+	return b.eth.config.TxSyncMaxTimeout
 }
 
 func (b *EthAPIBackend) KeystoneFeed() *event.Feed {

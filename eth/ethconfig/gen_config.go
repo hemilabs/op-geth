@@ -44,44 +44,52 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		SnapshotCache                             int
 		Preimages                                 bool
 		FilterLogCacheSize                        int
+		LogQueryLimit                             int
 		Miner                                     miner.Config
 		TxPool                                    legacypool.Config
 		BlobPool                                  blobpool.Config
 		GPO                                       gasprice.Config
 		EnablePreimageRecording                   bool
+		EnableWitnessStats                        bool
+		StatelessSelfValidation                   bool
+		EnableStateSizeTracking                   bool
 		VMTrace                                   string
 		VMTraceJsonConfig                         string
 		RPCGasCap                                 uint64
 		RPCEVMTimeout                             time.Duration
 		RPCTxFeeCap                               float64
-		HvmEnabled                                bool    `toml:",omitempty"`
-		HvmGenesisHeader                          string  `toml:",omitempty"`
-		HvmGenesisHeight                          uint64  `toml:",omitempty"`
-		HvmHeaderDataDir                          string  `toml:",omitempty"`
-		DeucalionAddress                          string  `toml:",omitempty"`
-		OverrideOsaka                             *uint64 `toml:",omitempty"`
-		OverrideVerkle                            *uint64 `toml:",omitempty"`
-		OverrideOptimismCanyon                    *uint64 `toml:",omitempty"`
-		OverrideOptimismEcotone                   *uint64 `toml:",omitempty"`
-		OverrideOptimismFjord                     *uint64 `toml:",omitempty"`
-		OverrideOptimismGranite                   *uint64 `toml:",omitempty"`
-		OverrideOptimismHolocene                  *uint64 `toml:",omitempty"`
-		OverrideOptimismIsthmus                   *uint64 `toml:",omitempty"`
-		OverrideOptimismJovian                    *uint64 `toml:",omitempty"`
-		OverrideOptimismInterop                   *uint64 `toml:",omitempty"`
-		OverrideHemiHvm0                          *uint64 `toml:",omitempty"`
-		OverrideHvmEnabled                        bool    `toml:",omitempty"`
-		OverrideHvmGenesisHeader                  string  `toml:",omitempty"`
-		OverrideHvmGenesisHeight                  *uint64 `toml:",omitempty"`
-		OverrideHvmHeaderDataDir                  string  `toml:",omitempty"`
-		ApplySuperchainUpgrades                   bool    `toml:",omitempty"`
+		HvmEnabled                                bool          `toml:",omitempty"`
+		HvmGenesisHeader                          string        `toml:",omitempty"`
+		HvmGenesisHeight                          uint64        `toml:",omitempty"`
+		HvmHeaderDataDir                          string        `toml:",omitempty"`
+		DeucalionAddress                          string        `toml:",omitempty"`
+		OverrideOsaka                             *uint64       `toml:",omitempty"`
+		OverrideBPO1                              *uint64       `toml:",omitempty"`
+		OverrideBPO2                              *uint64       `toml:",omitempty"`
+		OverrideVerkle                            *uint64       `toml:",omitempty"`
+		TxSyncDefaultTimeout                      time.Duration `toml:",omitempty"`
+		TxSyncMaxTimeout                          time.Duration `toml:",omitempty"`
+		OverrideOptimismCanyon                    *uint64       `toml:",omitempty"`
+		OverrideOptimismEcotone                   *uint64       `toml:",omitempty"`
+		OverrideOptimismFjord                     *uint64       `toml:",omitempty"`
+		OverrideOptimismGranite                   *uint64       `toml:",omitempty"`
+		OverrideOptimismHolocene                  *uint64       `toml:",omitempty"`
+		OverrideOptimismIsthmus                   *uint64       `toml:",omitempty"`
+		OverrideOptimismJovian                    *uint64       `toml:",omitempty"`
+		OverrideOptimismInterop                   *uint64       `toml:",omitempty"`
+		OverrideHemiHvm0                          *uint64       `toml:",omitempty"`
+		OverrideHvmEnabled                        bool          `toml:",omitempty"`
+		OverrideHvmGenesisHeader                  string        `toml:",omitempty"`
+		OverrideHvmGenesisHeight                  *uint64       `toml:",omitempty"`
+		OverrideHvmHeaderDataDir                  string        `toml:",omitempty"`
+		ApplySuperchainUpgrades                   bool          `toml:",omitempty"`
 		RollupSequencerHTTP                       string
 		RollupSequencerTxConditionalEnabled       bool
 		RollupSequencerTxConditionalCostRateLimit int
 		RollupHistoricalRPC                       string
 		RollupHistoricalRPCTimeout                time.Duration
 		RollupDisableTxPoolGossip                 bool
-		RollupNetrestrictTxPoolGossip             string
+		RollupTxPoolNetrestrict                   string `toml:",omitempty"`
 		RollupTxPoolTrustedPeersOnly              bool
 		RollupDisableTxPoolAdmission              bool
 		RollupHaltOnIncompatibleProtocolVersion   string
@@ -116,11 +124,15 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.SnapshotCache = c.SnapshotCache
 	enc.Preimages = c.Preimages
 	enc.FilterLogCacheSize = c.FilterLogCacheSize
+	enc.LogQueryLimit = c.LogQueryLimit
 	enc.Miner = c.Miner
 	enc.TxPool = c.TxPool
 	enc.BlobPool = c.BlobPool
 	enc.GPO = c.GPO
 	enc.EnablePreimageRecording = c.EnablePreimageRecording
+	enc.EnableWitnessStats = c.EnableWitnessStats
+	enc.StatelessSelfValidation = c.StatelessSelfValidation
+	enc.EnableStateSizeTracking = c.EnableStateSizeTracking
 	enc.VMTrace = c.VMTrace
 	enc.VMTraceJsonConfig = c.VMTraceJsonConfig
 	enc.RPCGasCap = c.RPCGasCap
@@ -132,7 +144,11 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.HvmHeaderDataDir = c.HvmHeaderDataDir
 	enc.DeucalionAddress = c.DeucalionAddress
 	enc.OverrideOsaka = c.OverrideOsaka
+	enc.OverrideBPO1 = c.OverrideBPO1
+	enc.OverrideBPO2 = c.OverrideBPO2
 	enc.OverrideVerkle = c.OverrideVerkle
+	enc.TxSyncDefaultTimeout = c.TxSyncDefaultTimeout
+	enc.TxSyncMaxTimeout = c.TxSyncMaxTimeout
 	enc.OverrideOptimismCanyon = c.OverrideOptimismCanyon
 	enc.OverrideOptimismEcotone = c.OverrideOptimismEcotone
 	enc.OverrideOptimismFjord = c.OverrideOptimismFjord
@@ -153,7 +169,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.RollupHistoricalRPC = c.RollupHistoricalRPC
 	enc.RollupHistoricalRPCTimeout = c.RollupHistoricalRPCTimeout
 	enc.RollupDisableTxPoolGossip = c.RollupDisableTxPoolGossip
-	enc.RollupNetrestrictTxPoolGossip = c.RollupTxPoolNetrestrict
+	enc.RollupTxPoolNetrestrict = c.RollupTxPoolNetrestrict
 	enc.RollupTxPoolTrustedPeersOnly = c.RollupTxPoolTrustedPeersOnly
 	enc.RollupDisableTxPoolAdmission = c.RollupDisableTxPoolAdmission
 	enc.RollupHaltOnIncompatibleProtocolVersion = c.RollupHaltOnIncompatibleProtocolVersion
@@ -192,44 +208,52 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		SnapshotCache                             *int
 		Preimages                                 *bool
 		FilterLogCacheSize                        *int
+		LogQueryLimit                             *int
 		Miner                                     *miner.Config
 		TxPool                                    *legacypool.Config
 		BlobPool                                  *blobpool.Config
 		GPO                                       *gasprice.Config
 		EnablePreimageRecording                   *bool
+		EnableWitnessStats                        *bool
+		StatelessSelfValidation                   *bool
+		EnableStateSizeTracking                   *bool
 		VMTrace                                   *string
 		VMTraceJsonConfig                         *string
 		RPCGasCap                                 *uint64
 		RPCEVMTimeout                             *time.Duration
 		RPCTxFeeCap                               *float64
-		HvmEnabled                                *bool   `toml:",omitempty"`
-		HvmGenesisHeader                          *string `toml:",omitempty"`
-		HvmGenesisHeight                          *uint64 `toml:",omitempty"`
-		HvmHeaderDataDir                          *string `toml:",omitempty"`
-		DeucalionAddress                          *string `toml:",omitempty"`
-		OverrideOsaka                             *uint64 `toml:",omitempty"`
-		OverrideVerkle                            *uint64 `toml:",omitempty"`
-		OverrideOptimismCanyon                    *uint64 `toml:",omitempty"`
-		OverrideOptimismEcotone                   *uint64 `toml:",omitempty"`
-		OverrideOptimismFjord                     *uint64 `toml:",omitempty"`
-		OverrideOptimismGranite                   *uint64 `toml:",omitempty"`
-		OverrideOptimismHolocene                  *uint64 `toml:",omitempty"`
-		OverrideOptimismIsthmus                   *uint64 `toml:",omitempty"`
-		OverrideOptimismJovian                    *uint64 `toml:",omitempty"`
-		OverrideOptimismInterop                   *uint64 `toml:",omitempty"`
-		OverrideHemiHvm0                          *uint64 `toml:",omitempty"`
-		OverrideHvmEnabled                        *bool   `toml:",omitempty"`
-		OverrideHvmGenesisHeader                  *string `toml:",omitempty"`
-		OverrideHvmGenesisHeight                  *uint64 `toml:",omitempty"`
-		OverrideHvmHeaderDataDir                  *string `toml:",omitempty"`
-		ApplySuperchainUpgrades                   *bool   `toml:",omitempty"`
+		HvmEnabled                                *bool          `toml:",omitempty"`
+		HvmGenesisHeader                          *string        `toml:",omitempty"`
+		HvmGenesisHeight                          *uint64        `toml:",omitempty"`
+		HvmHeaderDataDir                          *string        `toml:",omitempty"`
+		DeucalionAddress                          *string        `toml:",omitempty"`
+		OverrideOsaka                             *uint64        `toml:",omitempty"`
+		OverrideBPO1                              *uint64        `toml:",omitempty"`
+		OverrideBPO2                              *uint64        `toml:",omitempty"`
+		OverrideVerkle                            *uint64        `toml:",omitempty"`
+		TxSyncDefaultTimeout                      *time.Duration `toml:",omitempty"`
+		TxSyncMaxTimeout                          *time.Duration `toml:",omitempty"`
+		OverrideOptimismCanyon                    *uint64        `toml:",omitempty"`
+		OverrideOptimismEcotone                   *uint64        `toml:",omitempty"`
+		OverrideOptimismFjord                     *uint64        `toml:",omitempty"`
+		OverrideOptimismGranite                   *uint64        `toml:",omitempty"`
+		OverrideOptimismHolocene                  *uint64        `toml:",omitempty"`
+		OverrideOptimismIsthmus                   *uint64        `toml:",omitempty"`
+		OverrideOptimismJovian                    *uint64        `toml:",omitempty"`
+		OverrideOptimismInterop                   *uint64        `toml:",omitempty"`
+		OverrideHemiHvm0                          *uint64        `toml:",omitempty"`
+		OverrideHvmEnabled                        *bool          `toml:",omitempty"`
+		OverrideHvmGenesisHeader                  *string        `toml:",omitempty"`
+		OverrideHvmGenesisHeight                  *uint64        `toml:",omitempty"`
+		OverrideHvmHeaderDataDir                  *string        `toml:",omitempty"`
+		ApplySuperchainUpgrades                   *bool          `toml:",omitempty"`
 		RollupSequencerHTTP                       *string
 		RollupSequencerTxConditionalEnabled       *bool
 		RollupSequencerTxConditionalCostRateLimit *int
 		RollupHistoricalRPC                       *string
 		RollupHistoricalRPCTimeout                *time.Duration
 		RollupDisableTxPoolGossip                 *bool
-		RollupNetrestrictTxPoolGossip             *string
+		RollupTxPoolNetrestrict                   *string `toml:",omitempty"`
 		RollupTxPoolTrustedPeersOnly              *bool
 		RollupDisableTxPoolAdmission              *bool
 		RollupHaltOnIncompatibleProtocolVersion   *string
@@ -321,6 +345,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.FilterLogCacheSize != nil {
 		c.FilterLogCacheSize = *dec.FilterLogCacheSize
 	}
+	if dec.LogQueryLimit != nil {
+		c.LogQueryLimit = *dec.LogQueryLimit
+	}
 	if dec.Miner != nil {
 		c.Miner = *dec.Miner
 	}
@@ -335,6 +362,15 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.EnablePreimageRecording != nil {
 		c.EnablePreimageRecording = *dec.EnablePreimageRecording
+	}
+	if dec.EnableWitnessStats != nil {
+		c.EnableWitnessStats = *dec.EnableWitnessStats
+	}
+	if dec.StatelessSelfValidation != nil {
+		c.StatelessSelfValidation = *dec.StatelessSelfValidation
+	}
+	if dec.EnableStateSizeTracking != nil {
+		c.EnableStateSizeTracking = *dec.EnableStateSizeTracking
 	}
 	if dec.VMTrace != nil {
 		c.VMTrace = *dec.VMTrace
@@ -369,8 +405,20 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.OverrideOsaka != nil {
 		c.OverrideOsaka = dec.OverrideOsaka
 	}
+	if dec.OverrideBPO1 != nil {
+		c.OverrideBPO1 = dec.OverrideBPO1
+	}
+	if dec.OverrideBPO2 != nil {
+		c.OverrideBPO2 = dec.OverrideBPO2
+	}
 	if dec.OverrideVerkle != nil {
 		c.OverrideVerkle = dec.OverrideVerkle
+	}
+	if dec.TxSyncDefaultTimeout != nil {
+		c.TxSyncDefaultTimeout = *dec.TxSyncDefaultTimeout
+	}
+	if dec.TxSyncMaxTimeout != nil {
+		c.TxSyncMaxTimeout = *dec.TxSyncMaxTimeout
 	}
 	if dec.OverrideOptimismCanyon != nil {
 		c.OverrideOptimismCanyon = dec.OverrideOptimismCanyon
@@ -432,8 +480,8 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	if dec.RollupDisableTxPoolGossip != nil {
 		c.RollupDisableTxPoolGossip = *dec.RollupDisableTxPoolGossip
 	}
-	if dec.RollupNetrestrictTxPoolGossip != nil {
-		c.RollupTxPoolNetrestrict = *dec.RollupNetrestrictTxPoolGossip
+	if dec.RollupTxPoolNetrestrict != nil {
+		c.RollupTxPoolNetrestrict = *dec.RollupTxPoolNetrestrict
 	}
 	if dec.RollupTxPoolTrustedPeersOnly != nil {
 		c.RollupTxPoolTrustedPeersOnly = *dec.RollupTxPoolTrustedPeersOnly

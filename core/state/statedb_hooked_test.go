@@ -114,7 +114,7 @@ func TestHooks(t *testing.T) {
 	sdb.AddBalance(common.Address{0xaa}, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
 	sdb.SubBalance(common.Address{0xaa}, uint256.NewInt(50), tracing.BalanceChangeTransfer)
 	sdb.SetNonce(common.Address{0xaa}, 1337, tracing.NonceChangeGenesis)
-	sdb.SetCode(common.Address{0xaa}, []byte{0x13, 37})
+	sdb.SetCode(common.Address{0xaa}, []byte{0x13, 37}, tracing.CodeChangeUnspecified)
 	sdb.SetState(common.Address{0xaa}, common.HexToHash("0x01"), common.HexToHash("0x11"))
 	sdb.SetState(common.Address{0xaa}, common.HexToHash("0x01"), common.HexToHash("0x22"))
 	sdb.SetTransientState(common.Address{0xaa}, common.HexToHash("0x02"), common.HexToHash("0x01"))
@@ -124,7 +124,7 @@ func TestHooks(t *testing.T) {
 	})
 	for i, want := range wants {
 		if have := result[i]; have != want {
-			t.Fatalf("error event %d, have\n%v\nwant%v\n", i, have, want)
+			t.Fatalf("error event %d, \n have %v\nwant %v\n", i, have, want)
 		}
 	}
 }

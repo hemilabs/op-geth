@@ -71,11 +71,12 @@ var Defaults = Config{
 	GPO:                FullNodeGPO,
 	RPCTxFeeCap:        1, // 1 ether
 	// TODO: Move hVM defaults somewhere else on a per-network basis
-	HvmEnabled:       true,
-	HvmGenesisHeader: "00000020715ae5bdcf3d4b3a27cecfc0db309ea522fddbe83946492d0f000000000000000f092c40dc00db9010da6452d0e0688056d5b1cbc287de4ffb6a5acff873cd4b0a3c4467ffff001d04dafc10",
-	HvmGenesisHeight: 3488421,
-	HvmHeaderDataDir: "~/.tbcdheaders", // TODO: put this in configured geth data directory
-
+	HvmEnabled:           true,
+	HvmGenesisHeader:     "00000020715ae5bdcf3d4b3a27cecfc0db309ea522fddbe83946492d0f000000000000000f092c40dc00db9010da6452d0e0688056d5b1cbc287de4ffb6a5acff873cd4b0a3c4467ffff001d04dafc10",
+	HvmGenesisHeight:     3488421,
+	HvmHeaderDataDir:     "~/.tbcdheaders", // TODO: put this in configured geth data directory
+	TxSyncDefaultTimeout: 20 * time.Second,
+	TxSyncMaxTimeout:     1 * time.Minute,
 }
 
 //go:generate go run github.com/fjl/gencodec -type Config -formats toml -out gen_config.go
@@ -138,6 +139,10 @@ type Config struct {
 	// This is the number of blocks for which logs will be cached in the filter system.
 	FilterLogCacheSize int
 
+	// This is the maximum number of addresses or topics allowed in filter criteria
+	// for eth_getLogs.
+	LogQueryLimit int
+
 	// Mining options
 	Miner miner.Config
 
@@ -150,6 +155,15 @@ type Config struct {
 
 	// Enables tracking of SHA3 preimages in the VM
 	EnablePreimageRecording bool
+
+	// Enables collection of witness trie access statistics
+	EnableWitnessStats bool
+
+	// Generate execution witnesses and self-check against them (testing purpose)
+	StatelessSelfValidation bool
+
+	// Enables tracking of state size
+	EnableStateSizeTracking bool
 
 	// Enables VM tracing
 	VMTrace           string
@@ -175,8 +189,18 @@ type Config struct {
 	// OverrideOsaka (TODO: remove after the fork)
 	OverrideOsaka *uint64 `toml:",omitempty"`
 
+	// OverrideBPO1 (TODO: remove after the fork)
+	OverrideBPO1 *uint64 `toml:",omitempty"`
+
+	// OverrideBPO2 (TODO: remove after the fork)
+	OverrideBPO2 *uint64 `toml:",omitempty"`
+
 	// OverrideVerkle (TODO: remove after the fork)
 	OverrideVerkle *uint64 `toml:",omitempty"`
+
+	// EIP-7966: eth_sendRawTransactionSync timeouts
+	TxSyncDefaultTimeout time.Duration `toml:",omitempty"`
+	TxSyncMaxTimeout     time.Duration `toml:",omitempty"`
 
 	OverrideOptimismCanyon *uint64 `toml:",omitempty"`
 

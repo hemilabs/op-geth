@@ -164,6 +164,11 @@ func (t *BlockTest) Run(snapshotter bool, scheme string, witness bool, tracer *t
 		},
 	}
 
+	if snapshotter {
+		options.SnapshotWait = true
+		options.SnapshotLimit = 1
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

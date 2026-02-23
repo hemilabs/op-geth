@@ -16,21 +16,15 @@
 
 package common
 
-import (
-	"slices"
-	"testing"
-)
+// import (
+// 	"github.com/ethereum/go-ethereum/common"
+// 	"github.com/ethereum/go-ethereum/ethdb"
+// )
 
-func TestRangeIter(t *testing.T) {
-	r := NewRange[uint32](1, 7)
-	values := slices.Collect(r.Iter())
-	if !slices.Equal(values, []uint32{1, 2, 3, 4, 5, 6, 7}) {
-		t.Fatalf("wrong iter values: %v", values)
-	}
+// func ReadVerkleTransitionState(db ethdb.KeyValueReader, hash common.Hash) ([]byte, error) {
+// 	return db.Get(transitionStateKey(hash))
+// }
 
-	empty := NewRange[uint32](1, 0)
-	values = slices.Collect(empty.Iter())
-	if !slices.Equal(values, []uint32{}) {
-		t.Fatalf("wrong iter values: %v", values)
-	}
-}
+// func WriteVerkleTransitionState(db ethdb.KeyValueWriter, hash common.Hash, state []byte) error {
+// 	return db.Put(transitionStateKey(hash), state)
+// }

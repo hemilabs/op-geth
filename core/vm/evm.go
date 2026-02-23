@@ -154,10 +154,6 @@ type EVM struct {
 	returnData []byte // Last CALL's return data for subsequent reuse
 }
 
-func (evm *EVM) SetExecutionContext(headerHash common.Hash) {
-	evm.blockExecutionContext = headerHash
-}
-
 // NewEVM constructs an EVM instance with the supplied block context, state
 // database and several configs. It meant to be used throughout the entire
 // state transition of a block, with the transaction context switched as
@@ -639,7 +635,9 @@ func (evm *EVM) initNewContract(contract *Contract, address common.Address) ([]b
 		}
 	}
 
-	evm.StateDB.SetCode(address, ret)
+	if len(ret) > 0 {
+		evm.StateDB.SetCode(address, ret, tracing.CodeChangeContractCreation)
+	}
 	return ret, nil
 }
 
