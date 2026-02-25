@@ -314,29 +314,35 @@ type AlwaysCorrectProof struct {
 	Proof []byte
 }
 
-func (a *AlwaysCorrectProof) Verify() bool {
-	return true
+func (a *AlwaysCorrectProof) Verify() error {
+	return nil
 }
 
 func (a *AlwaysCorrectProof) Result() []byte {
 	return []byte("correct")
 }
 
-func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
-	for _, proof := range payloadAttributes.ZKProofs {
-		precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
-		if precompiledContract == nil {
-			return engine.STATUS_INVALID, fmt.Errorf("could not find hvm0 precompiled contract at address %X", proof.PrecompiledContract)
-		}
+func (a *AlwaysCorrectProof) StateRoot() []byte {
+	return []byte("somestateroot")
+}
 
-		// Clayton note: given the precompile proof, create a proof verification
-		// implemenation. For now, just mock this out.  when we start to
-		// implement this ensure we fill this out with the correct
-		// implementation
-		vm.AddProof(proof.PrecompiledContract, proof.Calldata, &AlwaysCorrectProof{
-			Proof: proof.Proof,
-		})
-		defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
+func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
+	if payloadAttributes != nil {
+		for _, proof := range payloadAttributes.ZKProofs {
+			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
+			if precompiledContract == nil {
+				return engine.STATUS_INVALID, fmt.Errorf("could not find hvm0 precompiled contract at address %X", proof.PrecompiledContract)
+			}
+
+			// Clayton note: given the precompile proof, create a proof verification
+			// implemenation. For now, just mock this out.  when we start to
+			// implement this ensure we fill this out with the correct
+			// implementation
+			vm.AddProof(proof.PrecompiledContract, proof.Calldata, &AlwaysCorrectProof{
+				Proof: proof.Proof,
+			})
+			defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
+		}
 	}
 
 	api.forkchoiceLock.Lock()

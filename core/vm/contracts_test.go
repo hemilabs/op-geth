@@ -466,6 +466,10 @@ func (g *Groth16Proof) Result() []byte {
 	return b[:]
 }
 
+func (g *Groth16Proof) StateRoot() []byte {
+	return []byte("somestateroot")
+}
+
 func (g *Groth16Proof) Verify() error {
 	err := groth16.Verify(g.proof, g.verifyingKey, g.publicWitness)
 	if err != nil {

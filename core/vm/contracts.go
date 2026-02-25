@@ -1023,7 +1023,15 @@ func isValidBlock(blockContext common.Hash) bool {
 type ZKPrecompileProof interface {
 	Verify() error
 	Result() []byte
+	StateRoot() []byte
 }
+
+// check that Verify(), commit to StateRoot that is the correct state root
+// of zk trie at this point in the chain
+// StateRoot is in journal.  Verify() == correct journal outputs
+// when you run precompile, verify that state root is the same is the sta
+// mock zk trie
+// get state root from evm state, given current execution context
 
 var proofsMtx sync.Mutex
 var proofs map[string]ZKPrecompileProof = map[string]ZKPrecompileProof{}
