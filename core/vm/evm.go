@@ -18,6 +18,7 @@ package vm
 
 import (
 	"errors"
+	"fmt"
 	"math/big"
 	"sync/atomic"
 
@@ -290,6 +291,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 		return nil, gas, ErrInsufficientBalance
 	}
 	snapshot := evm.StateDB.Snapshot()
+	fmt.Printf("the address is %v\n", addr)
 	p, isPrecompile := evm.precompile(addr)
 
 	if !evm.StateDB.Exist(addr) {

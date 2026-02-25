@@ -29,8 +29,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/consensys/gnark-crypto/ecc"
+	"github.com/consensys/gnark/backend/groth16"
+	"github.com/consensys/gnark/backend/witness"
+	"github.com/consensys/gnark/frontend"
+	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/stretchr/testify/require"
 
+	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -1828,4 +1834,125 @@ func TestValidateRequests(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHvmPrecompilesViaZKProofsThroughAPI(t *testing.T) {
+	genesis, blocks := generateMergeChain(10, true)
+
+	// Set cancun time to last block + 5 seconds
+	time := blocks[len(blocks)-1].Time() + 5
+	genesis.Config.ShanghaiTime = &time
+	genesis.Config.CancunTime = &time
+	genesis.Config.BlobScheduleConfig = params.DefaultBlobSchedule
+
+	n, ethservice := startEthService(t, genesis, blocks)
+	defer n.Close()
+
+	api := NewConsensusAPI(ethservice)
+
+	var circuit MockCircuit
+	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	pk, _, err := groth16.Setup(ccs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert that any bitcoin address has a balance of 73 for this test
+	assignment := MockCircuit{
+		X: big.NewInt(1),
+		Y: big.NewInt(2),
+		Z: big.NewInt(73),
+	}
+	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
+	_, err = witness.Public()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = groth16.Prove(ccs, pk, witness)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	precompiledContract := common.BytesToAddress([]byte{0x40})
+
+	t.Logf("the precompiled address is %v", precompiledContract)
+
+	tx := &types.DynamicFeeTx{
+		To:   &precompiledContract,
+		Data: []byte("not real calldata"),
+	}
+
+	binTx, err := types.NewTx(tx).MarshalBinary()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("the tx to address is %v", tx.To)
+
+	// 11: Build Shanghai block with no withdrawals.
+	parent := ethservice.BlockChain().CurrentHeader()
+	blockParams := engine.PayloadAttributes{
+		Timestamp:   parent.Time + 5,
+		Withdrawals: make([]*types.Withdrawal, 0),
+		BeaconRoot:  &common.Hash{42},
+		ZKProofs: []engine.ZKProof{
+			engine.ZKProof{
+				PrecompiledContract: precompiledContract[:],
+				Calldata:            []byte("not real calldata"),
+				Proof:               []byte("fakeproof"),
+			},
+		},
+		Transactions: [][]byte{binTx},
+	}
+	fcState := engine.ForkchoiceStateV1{
+		HeadBlockHash: parent.Hash(),
+	}
+	resp, err := api.ForkchoiceUpdatedV3(fcState, &blockParams)
+	if err != nil {
+		t.Fatalf("error preparing payload, err=%v", err.(*engine.EngineAPIError).ErrorData())
+	}
+	if resp.PayloadStatus.Status != engine.VALID {
+		t.Fatalf("unexpected status (got: %s, want: %s)", resp.PayloadStatus.Status, engine.VALID)
+	}
+}
+
+type MockCircuit struct {
+	X frontend.Variable `gnark:",public"`
+	Y frontend.Variable `gnark:",public"`
+	Z frontend.Variable `gnark:",public"`
+}
+
+// Define declares the circuit constraints.
+func (circuit *MockCircuit) Define(api frontend.API) error {
+	// trivial
+	api.AssertIsDifferent(circuit.X, circuit.Y)
+	api.AssertIsDifferent(circuit.X, circuit.Z)
+	api.AssertIsDifferent(circuit.Z, circuit.Y)
+	return nil
+}
+
+type Groth16Proof struct {
+	verifyingKey  groth16.VerifyingKey
+	publicWitness witness.Witness
+	proof         groth16.Proof
+}
+
+func (g *Groth16Proof) Result() []byte {
+	vector := g.publicWitness.Vector().(fr_bn254.Vector)
+	b := vector[2].Bytes()
+	return b[:]
+}
+
+func (g *Groth16Proof) Verify() error {
+	err := groth16.Verify(g.proof, g.verifyingKey, g.publicWitness)
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
