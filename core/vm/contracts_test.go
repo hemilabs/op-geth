@@ -453,12 +453,12 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 			c := hvmContractsToAddress[reflect.TypeOf(testCase.precompile)]
 			calldata := []byte("this is not real calldata")
 
-			addProof(c, calldata, &Groth16Proof{
+			addProof(common.BytesToAddress(c), calldata, &Groth16Proof{
 				publicWitness: publicWitness,
 				verifyingKey:  vk,
 				proof:         proof,
 			})
-			defer removeProof(c, calldata)
+			defer removeProof(common.BytesToAddress(c), calldata)
 
 			runAndExpectPrecompiledContract(t, testCase.precompile, calldata)
 		})

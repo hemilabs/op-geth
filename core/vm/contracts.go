@@ -72,24 +72,19 @@ const (
 	btcTxGetInputWitnessAddr = byte(0x49)
 )
 
-func isHvmPrecompileCall(precompile []byte) bool {
-	// all hvm precompile addresses are 1 byte as of now
-	if len(precompile) != 1 {
-		return false
-	}
-
-	return slices.Contains([]byte{
-		btcBalAddrAddr,
-		btcUtxosAddrListAddr,
-		btcTxByTxidAddr,
-		btcTxConfirmationsAddr,
-		btcLastHeaderAddr,
-		btcHeaderNAddr,
-		btcAddrToScriptAddr,
-		btcInputByTxidAddr,
-		btcOutputByTxidAddr,
-		btcTxGetInputWitnessAddr,
-	}, precompile[0])
+func isHvmPrecompileCall(precompile common.Address) bool {
+	return slices.Contains([]common.Address{
+		common.BytesToAddress([]byte{btcBalAddrAddr}),
+		common.BytesToAddress([]byte{btcUtxosAddrListAddr}),
+		common.BytesToAddress([]byte{btcTxByTxidAddr}),
+		common.BytesToAddress([]byte{btcTxConfirmationsAddr}),
+		common.BytesToAddress([]byte{btcLastHeaderAddr}),
+		common.BytesToAddress([]byte{btcHeaderNAddr}),
+		common.BytesToAddress([]byte{btcAddrToScriptAddr}),
+		common.BytesToAddress([]byte{btcInputByTxidAddr}),
+		common.BytesToAddress([]byte{btcOutputByTxidAddr}),
+		common.BytesToAddress([]byte{btcTxGetInputWitnessAddr}),
+	}, precompile)
 }
 
 // PrecompiledContract is the basic interface for native Go contracts. The implementation
@@ -1032,11 +1027,11 @@ type ZKPrecompileProof interface {
 var proofsMtx sync.Mutex
 var proofs map[string]ZKPrecompileProof = map[string]ZKPrecompileProof{}
 
-func proofKey(precompile []byte, calldata []byte) string {
+func proofKey(precompile common.Address, calldata []byte) string {
 	return fmt.Sprintf("%X-%X", precompile, calldata)
 }
 
-func removeProof(precompile []byte, calldata []byte) {
+func removeProof(precompile common.Address, calldata []byte) {
 	fmt.Printf("removing proof %v:%v\n", precompile, calldata)
 	key := proofKey(precompile, calldata)
 
@@ -1046,15 +1041,15 @@ func removeProof(precompile []byte, calldata []byte) {
 	delete(proofs, key)
 }
 
-func RemoveProof(precompile []byte, calldata []byte) {
+func RemoveProof(precompile common.Address, calldata []byte) {
 	removeProof(precompile, calldata)
 }
 
-func AddProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
+func AddProof(precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
 	addProof(precompile, calldata, proof)
 }
 
-func addProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
+func addProof(precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
 	fmt.Printf("adding proof %v:%v\n", precompile, calldata)
 	key := proofKey(precompile, calldata)
 
@@ -1064,9 +1059,13 @@ func addProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
 	proofs[key] = proof
 }
 
-var errPrecompileProofNotFound = errors.New("could not find precompile proof")
+var ErrPrecompileProofNotFound = errors.New("could not find precompile proof")
 
-func proofForPrecompileCall(precompile []byte, calldata []byte) ([]byte, error) {
+func ProofForPrecompileCall(precompile common.Address, calldata []byte) ([]byte, error) {
+	return proofForPrecompileCall(precompile, calldata)
+}
+
+func proofForPrecompileCall(precompile common.Address, calldata []byte) ([]byte, error) {
 	fmt.Printf("getting proof %v:%v\n", precompile, calldata)
 	key := proofKey(precompile, calldata)
 
@@ -1075,7 +1074,7 @@ func proofForPrecompileCall(precompile []byte, calldata []byte) ([]byte, error) 
 
 	foundProof := proofs[key]
 	if foundProof == nil {
-		return nil, errPrecompileProofNotFound
+		return nil, ErrPrecompileProofNotFound
 	}
 
 	if err := foundProof.Verify(); err != nil {
@@ -1093,19 +1092,14 @@ func proofForPrecompileCall(precompile []byte, calldata []byte) ([]byte, error) 
 func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
-		panic(ErrOutOfGas)
 		return nil, 0, ErrOutOfGas
 	}
 	if logger != nil && logger.OnGasChange != nil {
 		logger.OnGasChange(suppliedGas, suppliedGas-gasCost, tracing.GasChangeCallPrecompiledContract)
 	}
 	suppliedGas -= gasCost
-	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode && isHvmPrecompileCall(precompile) {
-		precompileAddr := common.BytesToAddress(precompile)
-		result, err := proofForPrecompileCall(precompileAddr[:], input)
-		if err != nil {
-			panic(err)
-		}
+	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode && isHvmPrecompileCall(common.BytesToAddress(precompile)) {
+		result, err := proofForPrecompileCall(common.BytesToAddress(precompile), input)
 		return result, suppliedGas, err
 	}
 	output, err := p.Run(input, common.Hash{})
