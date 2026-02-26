@@ -2110,6 +2110,8 @@ func TestGetBlobsV2(t *testing.T) {
 }
 func TestHvmPrecompilesViaZKProofsThroughAPI(t *testing.T) {
 	genesis, blocks := generateMergeChain(10, true)
+	blah := uint64(1)
+	genesis.Config.Hvm0Time = &blah
 
 	// Set cancun time to last block + 5 seconds
 	time := blocks[len(blocks)-1].Time() + 5
@@ -2154,17 +2156,25 @@ func TestHvmPrecompilesViaZKProofsThroughAPI(t *testing.T) {
 
 	t.Logf("the precompiled address is %v", precompiledContract)
 
-	tx := &types.DynamicFeeTx{
-		To:   &precompiledContract,
-		Data: []byte("not real calldata"),
+	signer := types.LatestSigner(ethservice.BlockChain().Config())
+
+	dftx := &types.DynamicFeeTx{
+		To:        &precompiledContract,
+		Data:      []byte("not real calldata"),
+		ChainID:   big.NewInt(1337),
+		Nonce:     10,
+		GasFeeCap: big.NewInt(233138867),
+		Gas:       300000,
 	}
 
-	binTx, err := types.NewTx(tx).MarshalBinary()
+	tx := types.MustSignNewTx(testKey, signer, dftx)
+
+	binTx, err := tx.MarshalBinary()
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	t.Logf("the tx to address is %v", tx.To)
+	t.Logf("the tx to address is %v", tx.To())
 
 	// 11: Build Shanghai block with no withdrawals.
 	parent := ethservice.BlockChain().CurrentHeader()

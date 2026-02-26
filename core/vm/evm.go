@@ -270,6 +270,7 @@ func isSystemCall(caller common.Address) bool {
 // the necessary steps to create accounts and reverses the state in case of an
 // execution error or failed value transfer.
 func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, gas uint64, value *uint256.Int) (ret []byte, leftOverGas uint64, err error) {
+	fmt.Printf("Call %v\n", addr)
 	caller = evm.maybeOverrideCaller(caller)
 	// Capture the tracer start/end events in debug mode
 	if evm.Config.Tracer != nil {
@@ -287,8 +288,8 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 		return nil, gas, ErrInsufficientBalance
 	}
 	snapshot := evm.StateDB.Snapshot()
-	fmt.Printf("the address is %v\n", addr)
 	p, isPrecompile := evm.precompile(addr)
+	fmt.Printf("the address is %v, precompile? = %t\n", addr, isPrecompile)
 
 	if !evm.StateDB.Exist(addr) {
 		if !isPrecompile && evm.chainRules.IsEIP4762 && !isSystemCall(caller) {
