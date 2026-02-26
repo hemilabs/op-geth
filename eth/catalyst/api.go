@@ -342,7 +342,10 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			vm.AddProof(proof.PrecompiledContract, proof.Calldata, &AlwaysCorrectProof{
 				Proof: proof.Proof,
 			})
-			defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
+
+			// Clayton note: find out the correct way to remove the proof once
+			// finished with it
+			// defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
 		}
 	}
 

@@ -1037,6 +1037,7 @@ func proofKey(precompile []byte, calldata []byte) string {
 }
 
 func removeProof(precompile []byte, calldata []byte) {
+	fmt.Printf("removing proof %v:%v\n", precompile, calldata)
 	key := proofKey(precompile, calldata)
 
 	proofsMtx.Lock()
@@ -1054,6 +1055,7 @@ func AddProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
 }
 
 func addProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
+	fmt.Printf("adding proof %v:%v\n", precompile, calldata)
 	key := proofKey(precompile, calldata)
 
 	proofsMtx.Lock()
@@ -1065,6 +1067,7 @@ func addProof(precompile []byte, calldata []byte, proof ZKPrecompileProof) {
 var errPrecompileProofNotFound = errors.New("could not find precompile proof")
 
 func proofForPrecompileCall(precompile []byte, calldata []byte) ([]byte, error) {
+	fmt.Printf("getting proof %v:%v\n", precompile, calldata)
 	key := proofKey(precompile, calldata)
 
 	proofsMtx.Lock()
@@ -1090,6 +1093,7 @@ func proofForPrecompileCall(precompile []byte, calldata []byte) ([]byte, error) 
 func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
+		panic(ErrOutOfGas)
 		return nil, 0, ErrOutOfGas
 	}
 	if logger != nil && logger.OnGasChange != nil {
@@ -1097,7 +1101,11 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 	}
 	suppliedGas -= gasCost
 	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode && isHvmPrecompileCall(precompile) {
-		result, err := proofForPrecompileCall(precompile, input)
+		precompileAddr := common.BytesToAddress(precompile)
+		result, err := proofForPrecompileCall(precompileAddr[:], input)
+		if err != nil {
+			panic(err)
+		}
 		return result, suppliedGas, err
 	}
 	output, err := p.Run(input, common.Hash{})

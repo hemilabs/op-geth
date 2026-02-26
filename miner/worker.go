@@ -142,6 +142,9 @@ type generateParams struct {
 
 // generateWork generates a sealing block based on the given parameters.
 func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPayloadResult {
+	for _, tx := range genParam.txs {
+		fmt.Printf("generateWork to: %v\n", tx.To())
+	}
 	work, err := miner.prepareWork(genParam, witness)
 	if err != nil {
 		return &newPayloadResult{err: err}
@@ -458,6 +461,7 @@ func (miner *Miner) makeEnv(parent *types.Header, header *types.Header, coinbase
 }
 
 func (miner *Miner) commitTransaction(env *environment, tx *types.Transaction) error {
+	fmt.Printf("commitTransaction %v\n", tx.To())
 	// OP-Stack addition
 	interopAccessList := interoptypes.TxToInteropAccessList(tx)
 	if len(interopAccessList) > 0 {
