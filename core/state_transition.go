@@ -469,7 +469,6 @@ func (st *stateTransition) preCheck() error {
 // However if any consensus issue encountered, return the error directly with
 // nil evm execution result.
 func (st *stateTransition) execute() (*ExecutionResult, error) {
-	fmt.Printf("execute %v\n", st.msg.To)
 	if mint := st.msg.Mint; mint != nil {
 		mintU256, overflow := uint256.FromBig(mint)
 		if overflow {
@@ -509,7 +508,6 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 }
 
 func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
-	fmt.Printf("innerExecute %v\n", st.msg.To)
 	// First check this message satisfies all consensus rules before
 	// applying the message. The rules include these clauses
 	//
@@ -532,17 +530,13 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		floorDataGas     uint64
 	)
 
-	fmt.Println("checking IntrinsticGas")
-
 	// Check clauses 4-5, subtract intrinsic gas if everything is correct
 	gas, err := IntrinsicGas(msg.Data, msg.AccessList, msg.SetCodeAuthorizations, contractCreation, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai)
 	if err != nil {
 		return nil, err
 	}
 	if st.gasRemaining < gas {
-		err = fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining, gas)
-		panic(err)
-		return nil, err
+		return nil, fmt.Errorf("%w: have %d, want %d", ErrIntrinsicGas, st.gasRemaining, gas)
 	}
 	// Gas limit suffices for the floor data cost (EIP-7623)
 	if rules.IsPrague {
@@ -589,8 +583,6 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 	// - prepare accessList(post-berlin)
 	// - reset transient storage(eip 1153)
 	st.state.Prepare(rules, msg.From, st.evm.Context.Coinbase, msg.To, vm.ActivePrecompiles(rules), msg.AccessList)
-
-	fmt.Println("checking if contract creation")
 
 	var (
 		ret   []byte
