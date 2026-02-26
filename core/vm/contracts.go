@@ -1049,6 +1049,12 @@ func AddProof(precompile common.Address, calldata []byte, proof ZKPrecompileProo
 	addProof(precompile, calldata, proof)
 }
 
+func ClearProofsWithInvalidStateRoots() {
+	// Clayton note: implement me
+	prootsMtx.Lock()
+	defer prootsMtx.Unlock()
+}
+
 func addProof(precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
 	fmt.Printf("adding proof %v:%v\n", precompile, calldata)
 	key := proofKey(precompile, calldata)
@@ -1099,6 +1105,7 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 	}
 	suppliedGas -= gasCost
 	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode && isHvmPrecompileCall(common.BytesToAddress(precompile)) {
+		ClearProofsWithInvalidStateRoots()
 		result, err := proofForPrecompileCall(common.BytesToAddress(precompile), input)
 		return result, suppliedGas, err
 	}
