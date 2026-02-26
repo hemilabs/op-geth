@@ -1051,8 +1051,8 @@ func AddProof(precompile common.Address, calldata []byte, proof ZKPrecompileProo
 
 func ClearProofsWithInvalidStateRoots() {
 	// Clayton note: implement me
-	prootsMtx.Lock()
-	defer prootsMtx.Unlock()
+	proofsMtx.Lock()
+	defer proofsMtx.Unlock()
 }
 
 func addProof(precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
