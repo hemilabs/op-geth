@@ -315,7 +315,10 @@ type AlwaysCorrectProof struct {
 }
 
 func (a *AlwaysCorrectProof) Verify() error {
-	return nil
+	if bytes.Equal(a.Proof, []byte("validproof")) {
+		return nil
+	}
+	return errors.New("invalid proof")
 }
 
 func (a *AlwaysCorrectProof) Result() []byte {
@@ -338,13 +341,15 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			// implemenation. For now, just mock this out.  when we start to
 			// implement this ensure we fill this out with the correct
 			// implementation
-			vm.AddProof(proof.PrecompiledContract, proof.Calldata, &AlwaysCorrectProof{
+			acp := &AlwaysCorrectProof{
 				Proof: proof.Proof,
-			})
+			}
 
-			// Clayton note: find out the correct way to remove the proof once
-			// finished with it
-			// defer vm.RemoveProof(proof.PrecompiledContract, proof.Calldata)
+			if err := acp.Verify(); err != nil {
+				return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(err)
+			}
+
+			vm.AddProof(proof.PrecompiledContract, proof.Calldata, acp)
 		}
 	}
 

@@ -522,7 +522,6 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 
 	// Check clauses 1-3, buy gas if everything is correct
 	if err := st.preCheck(); err != nil {
-		panic(err)
 		return nil, err
 	}
 

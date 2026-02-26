@@ -31,14 +31,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/consensys/gnark-crypto/ecc"
-	"github.com/consensys/gnark/backend/groth16"
-	"github.com/consensys/gnark/backend/witness"
-	"github.com/consensys/gnark/frontend"
-	"github.com/consensys/gnark/frontend/cs/r1cs"
 	"github.com/stretchr/testify/require"
 
-	fr_bn254 "github.com/consensys/gnark-crypto/ecc/bn254/fr"
 	"github.com/ethereum/go-ethereum/beacon/engine"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -46,6 +40,7 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/eth"
@@ -2108,15 +2103,16 @@ func TestGetBlobsV2(t *testing.T) {
 		}
 	}
 }
-func TestHvmPrecompilesViaZKProofsThroughAPI(t *testing.T) {
+
+func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
 	genesis, blocks := generateMergeChain(10, true)
 	blah := uint64(1)
 	genesis.Config.Hvm0Time = &blah
 
 	// Set cancun time to last block + 5 seconds
-	time := blocks[len(blocks)-1].Time() + 5
-	genesis.Config.ShanghaiTime = &time
-	genesis.Config.CancunTime = &time
+	_time := blocks[len(blocks)-1].Time() + 5
+	genesis.Config.ShanghaiTime = &_time
+	genesis.Config.CancunTime = &_time
 	genesis.Config.BlobScheduleConfig = params.DefaultBlobSchedule
 
 	n, ethservice := startEthService(t, genesis, blocks)
@@ -2124,57 +2120,8 @@ func TestHvmPrecompilesViaZKProofsThroughAPI(t *testing.T) {
 
 	api := NewConsensusAPI(ethservice)
 
-	var circuit MockCircuit
-	ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	pk, _, err := groth16.Setup(ccs)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// assert that any bitcoin address has a balance of 73 for this test
-	assignment := MockCircuit{
-		X: big.NewInt(1),
-		Y: big.NewInt(2),
-		Z: big.NewInt(73),
-	}
-	witness, _ := frontend.NewWitness(&assignment, ecc.BN254.ScalarField())
-	_, err = witness.Public()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, err = groth16.Prove(ccs, pk, witness)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	precompiledContract := common.BytesToAddress([]byte{0x40})
-
-	t.Logf("the precompiled address is %v", precompiledContract)
-
-	signer := types.LatestSigner(ethservice.BlockChain().Config())
-
-	dftx := &types.DynamicFeeTx{
-		To:        &precompiledContract,
-		Data:      []byte("not real calldata"),
-		ChainID:   big.NewInt(1337),
-		Nonce:     10,
-		GasFeeCap: big.NewInt(233138867),
-		Gas:       300000,
-	}
-
-	tx := types.MustSignNewTx(testKey, signer, dftx)
-
-	binTx, err := tx.MarshalBinary()
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Logf("the tx to address is %v", tx.To())
+	calldata := []byte("not real calldata")
 
 	// 11: Build Shanghai block with no withdrawals.
 	parent := ethservice.BlockChain().CurrentHeader()
@@ -2184,12 +2131,11 @@ func TestHvmPrecompilesViaZKProofsThroughAPI(t *testing.T) {
 		BeaconRoot:  &common.Hash{42},
 		ZKProofs: []engine.ZKProof{
 			engine.ZKProof{
-				PrecompiledContract: precompiledContract[:],
-				Calldata:            []byte("not real calldata"),
-				Proof:               []byte("fakeproof"),
+				PrecompiledContract: precompiledContract,
+				Calldata:            calldata,
+				Proof:               []byte("validproof"),
 			},
 		},
-		Transactions: [][]byte{binTx},
 	}
 	fcState := engine.ForkchoiceStateV1{
 		HeadBlockHash: parent.Hash(),
@@ -2201,40 +2147,61 @@ func TestHvmPrecompilesViaZKProofsThroughAPI(t *testing.T) {
 	if resp.PayloadStatus.Status != engine.VALID {
 		t.Fatalf("unexpected status (got: %s, want: %s)", resp.PayloadStatus.Status, engine.VALID)
 	}
-}
 
-type MockCircuit struct {
-	X frontend.Variable `gnark:",public"`
-	Y frontend.Variable `gnark:",public"`
-	Z frontend.Variable `gnark:",public"`
-}
-
-// Define declares the circuit constraints.
-func (circuit *MockCircuit) Define(api frontend.API) error {
-	// trivial
-	api.AssertIsDifferent(circuit.X, circuit.Y)
-	api.AssertIsDifferent(circuit.X, circuit.Z)
-	api.AssertIsDifferent(circuit.Z, circuit.Y)
-	return nil
-}
-
-type Groth16Proof struct {
-	verifyingKey  groth16.VerifyingKey
-	publicWitness witness.Witness
-	proof         groth16.Proof
-}
-
-func (g *Groth16Proof) Result() []byte {
-	vector := g.publicWitness.Vector().(fr_bn254.Vector)
-	b := vector[2].Bytes()
-	return b[:]
-}
-
-func (g *Groth16Proof) Verify() error {
-	err := groth16.Verify(g.proof, g.verifyingKey, g.publicWitness)
-	if err != nil {
-		return err
+	// assert that the proof is stored for future use
+	storedProof, err := vm.ProofForPrecompileCall(precompiledContract, calldata)
+	if storedProof == nil || err != nil {
+		t.Fatalf("proof for precompile call should be stored: storedProof=%v, err=%v", storedProof, err)
 	}
 
-	return nil
+	// assert that we don't query for a different proof on accident
+	storedProof, err = vm.ProofForPrecompileCall(precompiledContract, append(calldata, byte(1)))
+	if storedProof != nil || err == nil {
+		t.Fatal("should not have been able to find proof")
+	}
+}
+
+func TestProofVerifyFails(t *testing.T) {
+	genesis, blocks := generateMergeChain(10, true)
+	blah := uint64(1)
+	genesis.Config.Hvm0Time = &blah
+
+	// Set cancun time to last block + 5 seconds
+	_time := blocks[len(blocks)-1].Time() + 5
+	genesis.Config.ShanghaiTime = &_time
+	genesis.Config.CancunTime = &_time
+	genesis.Config.BlobScheduleConfig = params.DefaultBlobSchedule
+
+	n, ethservice := startEthService(t, genesis, blocks)
+	defer n.Close()
+
+	api := NewConsensusAPI(ethservice)
+
+	precompiledContract := common.BytesToAddress([]byte{0x40})
+	calldata := []byte("not real calldata")
+
+	// 11: Build Shanghai block with no withdrawals.
+	parent := ethservice.BlockChain().CurrentHeader()
+	blockParams := engine.PayloadAttributes{
+		Timestamp:   parent.Time + 5,
+		Withdrawals: make([]*types.Withdrawal, 0),
+		BeaconRoot:  &common.Hash{42},
+		ZKProofs: []engine.ZKProof{
+			engine.ZKProof{
+				PrecompiledContract: precompiledContract,
+				Calldata:            calldata,
+				Proof:               []byte("validproof...NOT!"),
+			},
+		},
+	}
+	fcState := engine.ForkchoiceStateV1{
+		HeadBlockHash: parent.Hash(),
+	}
+	resp, err := api.ForkchoiceUpdatedV3(fcState, &blockParams)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if resp.PayloadStatus.Status != engine.INVALID {
+		t.Fatalf("unexpected status (got: %s, want: %s)", resp.PayloadStatus.Status, engine.INVALID)
+	}
 }

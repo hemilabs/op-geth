@@ -59,9 +59,9 @@ var (
 // will be required to have a proof assocated with the exact call
 // (contract address + calldata)
 type ZKProof struct {
-	PrecompiledContract []byte `json:"precompiled_contract"`
-	Calldata            []byte `json:"calldata"`
-	Proof               []byte `json:"proof"`
+	PrecompiledContract common.Address `json:"precompiled_contract"`
+	Calldata            []byte         `json:"calldata"`
+	Proof               []byte         `json:"proof"`
 }
 
 // PayloadAttributes describes the environment context in which a block should
