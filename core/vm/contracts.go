@@ -1031,37 +1031,13 @@ type ZKPrecompileProof interface {
 var proofsMtx sync.Mutex
 var proofs map[string]ZKPrecompileProof = map[string]ZKPrecompileProof{}
 
-func proofKey(precompile common.Address, calldata []byte) string {
+func proofKey(precompile common.Address, calldata []byte, stateRoot []byte) string {
 	return fmt.Sprintf("%X-%X", precompile, calldata)
 }
 
-func removeProof(precompile common.Address, calldata []byte) {
-	fmt.Printf("removing proof %v:%v\n", precompile, calldata)
-	key := proofKey(precompile, calldata)
-
-	proofsMtx.Lock()
-	defer proofsMtx.Unlock()
-
-	delete(proofs, key)
-}
-
-func RemoveProof(precompile common.Address, calldata []byte) {
-	removeProof(precompile, calldata)
-}
-
 func AddProof(precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
-	addProof(precompile, calldata, proof)
-}
-
-func ClearProofsWithInvalidStateRoots() {
-	// Clayton note: implement me
-	proofsMtx.Lock()
-	defer proofsMtx.Unlock()
-}
-
-func addProof(precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
 	fmt.Printf("adding proof %v:%v\n", precompile, calldata)
-	key := proofKey(precompile, calldata)
+	key := proofKey(precompile, calldata, proof.StateRoot())
 
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
@@ -1069,15 +1045,22 @@ func addProof(precompile common.Address, calldata []byte, proof ZKPrecompileProo
 	proofs[key] = proof
 }
 
-var ErrPrecompileProofNotFound = errors.New("could not find precompile proof")
+func ClearProofsWithOtherStateRoots(stateRootToKeep []byte) {
+	proofsMtx.Lock()
+	defer proofsMtx.Unlock()
 
-func ProofForPrecompileCall(precompile common.Address, calldata []byte) ([]byte, error) {
-	return proofForPrecompileCall(precompile, calldata)
+	for k, p := range proofs {
+		if !bytes.Equal(p.StateRoot(), stateRootToKeep) {
+			delete(proofs, k)
+		}
+	}
 }
 
-func proofForPrecompileCall(precompile common.Address, calldata []byte) ([]byte, error) {
-	fmt.Printf("getting proof %v:%v\n", precompile, calldata)
-	key := proofKey(precompile, calldata)
+var ErrPrecompileProofNotFound = errors.New("could not find precompile proof")
+
+func ProofForPrecompileCall(precompile common.Address, calldata []byte, stateRoot []byte) ([]byte, error) {
+	fmt.Printf("getting proof %v:%v:%v\n", precompile, calldata, stateRoot)
+	key := proofKey(precompile, calldata, stateRoot)
 
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
@@ -1109,8 +1092,9 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 	}
 	suppliedGas -= gasCost
 	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode && isHvmPrecompileCall(common.BytesToAddress(precompile)) {
-		ClearProofsWithInvalidStateRoots()
-		result, err := proofForPrecompileCall(common.BytesToAddress(precompile), input)
+		// Clayton note: get btc state root and clear other proofs
+		// ClearProofsWithOtherStateRoots()
+		result, err := ProofForPrecompileCall(common.BytesToAddress(precompile), input, []byte{})
 		return result, suppliedGas, err
 	}
 	output, err := p.Run(input, common.Hash{})

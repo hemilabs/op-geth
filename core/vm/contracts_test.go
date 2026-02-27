@@ -528,7 +528,6 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 
 	for _, testCase := range testTable {
 		t.Run(testCase.precompile.Name(), func(t *testing.T) {
-			t.Parallel()
 			var circuit MockCircuit
 			ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 			if err != nil {
@@ -560,12 +559,12 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 			c := hvmContractsToAddress[reflect.TypeOf(testCase.precompile)]
 			calldata := []byte("this is not real calldata")
 
-			addProof(common.BytesToAddress(c), calldata, &Groth16Proof{
+			AddProof(common.BytesToAddress(c), calldata, &Groth16Proof{
 				publicWitness: publicWitness,
 				verifyingKey:  vk,
 				proof:         proof,
 			})
-			defer removeProof(common.BytesToAddress(c), calldata)
+			defer ClearProofsWithOtherStateRoots([]byte{})
 
 			runAndExpectPrecompiledContract(t, testCase.precompile, calldata)
 		})

@@ -2149,13 +2149,13 @@ func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
 	}
 
 	// assert that the proof is stored for future use
-	storedProof, err := vm.ProofForPrecompileCall(precompiledContract, calldata)
+	storedProof, err := vm.ProofForPrecompileCall(precompiledContract, calldata, []byte{})
 	if storedProof == nil || err != nil {
 		t.Fatalf("proof for precompile call should be stored: storedProof=%v, err=%v", storedProof, err)
 	}
 
 	// assert that we don't query for a different proof on accident
-	storedProof, err = vm.ProofForPrecompileCall(precompiledContract, append(calldata, byte(1)))
+	storedProof, err = vm.ProofForPrecompileCall(precompiledContract, append(calldata, byte(1)), []byte{})
 	if storedProof != nil || err == nil {
 		t.Fatal("should not have been able to find proof")
 	}
