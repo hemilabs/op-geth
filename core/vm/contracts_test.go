@@ -528,6 +528,8 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 
 	for _, testCase := range testTable {
 		t.Run(testCase.precompile.Name(), func(t *testing.T) {
+			t.Setenv("TMP_ZKMODE", "true")
+			defer t.Setenv("TMP_ZKMODE", "")
 			var circuit MockCircuit
 			ccs, err := frontend.Compile(ecc.BN254.ScalarField(), r1cs.NewBuilder, &circuit)
 			if err != nil {

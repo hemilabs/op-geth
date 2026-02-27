@@ -27,6 +27,7 @@ import (
 	"math"
 	"math/big"
 	"math/bits"
+	"os"
 	"reflect"
 	"sync"
 	"time"
@@ -122,7 +123,9 @@ var hvmQueryMap = make(map[hVMQueryKey][]byte)
 var HvmNullBlockHash = make([]byte, 32)
 
 // Clayton note: update me
-var zkMode = true
+func zkMode() bool {
+	return os.Getenv("TMP_ZKMODE") == "true"
+}
 
 func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 	syncInfo := TBCFullNode.Synced(MainCtx)
@@ -1091,7 +1094,7 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 		logger.OnGasChange(suppliedGas, suppliedGas-gasCost, tracing.GasChangeCallPrecompiledContract)
 	}
 	suppliedGas -= gasCost
-	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode && isHvmPrecompileCall(common.BytesToAddress(precompile)) {
+	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode() && isHvmPrecompileCall(common.BytesToAddress(precompile)) {
 		// Clayton note: get btc state root and clear other proofs
 		// ClearProofsWithOtherStateRoots()
 		result, err := ProofForPrecompileCall(common.BytesToAddress(precompile), input, []byte{})

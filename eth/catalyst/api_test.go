@@ -2105,6 +2105,8 @@ func TestGetBlobsV2(t *testing.T) {
 }
 
 func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
+	t.Setenv("TMP_ZKMODE", "true")
+	defer t.Setenv("TMP_ZKMODE", "")
 	genesis, blocks := generateMergeChain(10, true)
 	blah := uint64(1)
 	genesis.Config.Hvm0Time = &blah
@@ -2162,6 +2164,8 @@ func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
 }
 
 func TestProofVerifyFails(t *testing.T) {
+	t.Setenv("TMP_ZKMODE", "true")
+	defer t.Setenv("TMP_ZKMODE", "")
 	genesis, blocks := generateMergeChain(10, true)
 	blah := uint64(1)
 	genesis.Config.Hvm0Time = &blah
