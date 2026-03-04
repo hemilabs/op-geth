@@ -123,6 +123,10 @@ var hvmQueryMap = make(map[hVMQueryKey][]byte)
 var HvmNullBlockHash = make([]byte, 32)
 
 // Clayton note: update me
+func ZKMode() bool {
+	return zkMode()
+}
+
 func zkMode() bool {
 	return os.Getenv("TMP_ZKMODE") == "true"
 }
@@ -1097,7 +1101,16 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode() && isHvmPrecompileCall(common.BytesToAddress(precompile)) {
 		// Clayton note: get btc state root and clear other proofs
 		// ClearProofsWithOtherStateRoots()
+		// in forkChoiceUpdated, map block execution payload --> proofs
+
+		// add back in block context
+		// update map to be mapping of block execution context hash --> proofs for that execution
+		// at the end of execution (should be the function where it's created, double-check), we can delete it from the map based on the hash
+		// in this precompile function, panic()
 		result, err := ProofForPrecompileCall(common.BytesToAddress(precompile), input, []byte{})
+		if errors.Is(err, ErrPrecompileProofNotFound) {
+			panic(err)
+		}
 		return result, suppliedGas, err
 	}
 	output, err := p.Run(input, common.Hash{})

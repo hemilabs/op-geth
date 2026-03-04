@@ -330,7 +330,7 @@ func (a *AlwaysCorrectProof) StateRoot() []byte {
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
-	if payloadAttributes != nil {
+	if payloadAttributes != nil && vm.ZKMode() {
 		for _, proof := range payloadAttributes.ZKProofs {
 			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
 			if precompiledContract == nil {
