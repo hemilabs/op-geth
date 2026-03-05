@@ -330,6 +330,7 @@ func (a *AlwaysCorrectProof) StateRoot() []byte {
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
+	log.Info("forkchoiceUpdated called", "update.HeadBlockHash", update.HeadBlockHash)
 	if payloadAttributes != nil && vm.ZKMode() {
 		for _, proof := range payloadAttributes.ZKProofs {
 			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
@@ -349,7 +350,6 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 				return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(err)
 			}
 
-			log.Info("adding proof for block hash", "block hash", update.HeadBlockHash)
 			vm.AddProof(update.HeadBlockHash, proof.PrecompiledContract, proof.Calldata, acp)
 		}
 	}

@@ -1048,6 +1048,8 @@ func AddProof(blockExecutionContextHash common.Hash, precompile common.Address, 
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
 
+	log.Info("adding proofs for block hash", "block hash", blockExecutionContextHash.Hex())
+
 	if proofs[blockExecutionContextHash.Hex()] == nil {
 		proofs[blockExecutionContextHash.Hex()] = map[string]ZKPrecompileProof{}
 	}
@@ -1077,10 +1079,10 @@ func RemoveProofsForBlockHash(h common.Hash) {
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
 
-	log.Info("proofs: removing for block hash %s", h.Hex())
+	log.Info("proofs: removing for block hash", "block hash", h.Hex())
 
-	// Clayton note: verify this is the correct spot, then delete
-	// delete(proofs, h.Hex())
+	// Clayton note: verify this is the correct spot
+	delete(proofs, h.Hex())
 }
 
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
