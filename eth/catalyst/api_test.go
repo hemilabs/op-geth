@@ -2158,8 +2158,8 @@ func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
 	precompiledContract := common.BytesToAddress([]byte{0x40})
 	calldata := []byte("not real calldata")
 
-	execData.ExecutionPayload.ZKProofs = []engine.ZKProof{
-		engine.ZKProof{
+	execData.ExecutionPayload.HVMZKProofs = []engine.HVMZKProof{
+		engine.HVMZKProof{
 			PrecompiledContract: precompiledContract,
 			Calldata:            calldata,
 			Proof:               []byte("validproof"),
@@ -2249,8 +2249,8 @@ func TestProofVerifyFails(t *testing.T) {
 	precompiledContract := common.BytesToAddress([]byte{0x40})
 	calldata := []byte("not real calldata")
 
-	execData.ExecutionPayload.ZKProofs = []engine.ZKProof{
-		engine.ZKProof{
+	execData.ExecutionPayload.HVMZKProofs = []engine.HVMZKProof{
+		engine.HVMZKProof{
 			PrecompiledContract: precompiledContract,
 			Calldata:            calldata,
 			Proof:               []byte("validproof...NOT!"),

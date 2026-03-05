@@ -479,7 +479,7 @@ func (g *Groth16Proof) Verify() error {
 	return nil
 }
 
-func TestHvmPrecompilesViaZKProofs(t *testing.T) {
+func TestHvmPrecompilesViaHVMZKProofs(t *testing.T) {
 	type testTableItem struct {
 		precompile PrecompiledContract
 	}

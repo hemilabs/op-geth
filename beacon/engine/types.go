@@ -54,11 +54,11 @@ var (
 
 //go:generate go run github.com/fjl/gencodec -type PayloadAttributes -field-override payloadAttributesMarshaling -out gen_blockparams.go
 
-// ZKProof represents an association between a precompiled contract call
+// HVMZKProof represents an association between a precompiled contract call
 // and proof of its answer.  When running in "ZK Mode", hvm precompile calls
 // will be required to have a proof assocated with the exact call
 // (contract address + calldata)
-type ZKProof struct {
+type HVMZKProof struct {
 	PrecompiledContract common.Address `json:"precompiled_contract"`
 	Calldata            []byte         `json:"calldata"`
 	Proof               []byte         `json:"proof"`
@@ -126,7 +126,7 @@ type ExecutableData struct {
 	// The "withdrawals" list attribute must be non-nil but empty.
 	WithdrawalsRoot *common.Hash `json:"withdrawalsRoot,omitempty"`
 
-	ZKProofs []ZKProof `json:"zk_proofs,omitempty" gencodec:"optional"`
+	HVMZKProofs []HVMZKProof `json:"hvm_zk_proofs,omitempty" gencodec:"optional"`
 }
 
 // JSON type overrides for executableData.

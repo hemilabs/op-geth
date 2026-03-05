@@ -853,7 +853,7 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 	defer api.newPayloadLock.Unlock()
 
 	if vm.ZKMode() {
-		for _, proof := range params.ZKProofs {
+		for _, proof := range params.HVMZKProofs {
 			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
 			if precompiledContract == nil {
 				return engine.PayloadStatusV1{Status: engine.INVALID}, fmt.Errorf("could not find hvm0 precompiled contract at address %X", proof.PrecompiledContract)
