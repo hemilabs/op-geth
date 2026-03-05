@@ -4327,7 +4327,7 @@ func (bpr *blockProcessingResult) Witness() *stateless.Witness {
 // it writes the block and associated state to database.
 func (bc *BlockChain) ProcessBlock(parentRoot common.Hash, block *types.Block, setHead bool, makeWitness bool) (_ *blockProcessingResult, blockEndErr error) {
 	defer func() {
-		vm.RemoveProofsForBlockHash(block.Hash())
+		vm.RemoveProofsForBlockHash(block.ParentHash())
 	}()
 
 	var (
