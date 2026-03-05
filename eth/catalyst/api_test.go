@@ -2166,11 +2166,25 @@ func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
 		},
 	}
 
+	// add parent's proof; this should be deleted
+	acp := &AlwaysCorrectProof{}
+	vm.AddProof(parent.Hash(), precompiledContract, []byte("othercalldata"), acp)
+	_, err = vm.ProofForPrecompileCall(precompiledContract, []byte("othercalldata"), acp.StateRoot())
+	if err != nil {
+		t.Fatalf("unexpected error: %s", err)
+	}
+
 	// 11: verify locally built block
 	if status, err := api.NewPayloadV3(*execData.ExecutionPayload, []common.Hash{}, &common.Hash{42}); err != nil {
 		t.Fatalf("error validating payload: %v", err)
 	} else if status.Status != engine.VALID {
 		t.Fatalf("invalid payload")
+	}
+
+	// assert parent should be deleted
+	_, err = vm.ProofForPrecompileCall(precompiledContract, []byte("othercalldata"), acp.StateRoot())
+	if !errors.Is(err, vm.ErrPrecompileProofNotFound) {
+		t.Fatalf("unexpected error: %s", err)
 	}
 
 	fcState.HeadBlockHash = execData.ExecutionPayload.BlockHash

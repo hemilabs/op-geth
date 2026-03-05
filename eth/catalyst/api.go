@@ -849,7 +849,11 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 		}
 	}
 
+	api.newPayloadLock.Lock()
+	defer api.newPayloadLock.Unlock()
+
 	if vm.ZKMode() {
+		vm.RemoveProofsForBlockHash(params.ParentHash)
 		for _, proof := range params.ZKProofs {
 			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
 			if precompiledContract == nil {
@@ -871,9 +875,6 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 			vm.AddProof(params.BlockHash, proof.PrecompiledContract, proof.Calldata, acp)
 		}
 	}
-
-	api.newPayloadLock.Lock()
-	defer api.newPayloadLock.Unlock()
 
 	log.Trace("Engine API request received", "method", "NewPayload", "number", params.Number, "hash", params.BlockHash)
 	block, err := engine.ExecutableDataToBlock(params, versionedHashes, beaconRoot, requests, api.eth.BlockChain().Config())
