@@ -87,8 +87,6 @@ type PayloadAttributes struct {
 	// MinBaseFee is a field for rollups implementing the minimum base fee feature.
 	// See https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#minimum-base-fee-in-payloadattributesv3
 	MinBaseFee *uint64 `json:"minBaseFee,omitempty" gencodec:"optional"`
-
-	ZKProofs []ZKProof `json:"zk_proofs,omitempty" gencodec:"optional"`
 }
 
 // JSON type overrides for PayloadAttributes.
@@ -127,6 +125,8 @@ type ExecutableData struct {
 	// instead of computing the root from a withdrawals list, set it directly.
 	// The "withdrawals" list attribute must be non-nil but empty.
 	WithdrawalsRoot *common.Hash `json:"withdrawalsRoot,omitempty"`
+
+	ZKProofs []ZKProof `json:"zk_proofs,omitempty" gencodec:"optional"`
 }
 
 // JSON type overrides for executableData.

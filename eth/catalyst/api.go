@@ -333,29 +333,6 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 	api.forkchoiceLock.Lock()
 	defer api.forkchoiceLock.Unlock()
 
-	if payloadAttributes != nil && vm.ZKMode() {
-		for _, proof := range payloadAttributes.ZKProofs {
-			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
-			if precompiledContract == nil {
-				return engine.STATUS_INVALID, fmt.Errorf("could not find hvm0 precompiled contract at address %X", proof.PrecompiledContract)
-			}
-
-			// Clayton note: given the precompile proof, create a proof verification
-			// implemenation. For now, just mock this out.  when we start to
-			// implement this ensure we fill this out with the correct
-			// implementation
-			acp := &AlwaysCorrectProof{
-				Proof: proof.Proof,
-			}
-
-			if err := acp.Verify(); err != nil {
-				return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(err)
-			}
-
-			vm.AddProof(update.HeadBlockHash, proof.PrecompiledContract, proof.Calldata, acp)
-		}
-	}
-
 	if payloadAttributes != nil {
 		if payloadAttributes.Transactions != nil {
 			log.Info(fmt.Sprintf("Forkchoice update contains %d transactions", len(payloadAttributes.Transactions)))
@@ -869,6 +846,29 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 	if cfg := api.eth.BlockChain().Config(); cfg.IsOptimism() {
 		if err := checkOptimismPayload(params, cfg); err != nil {
 			return api.invalid(err, nil), nil
+		}
+	}
+
+	if vm.ZKMode() {
+		for _, proof := range params.ZKProofs {
+			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
+			if precompiledContract == nil {
+				return engine.PayloadStatusV1{Status: engine.INVALID}, fmt.Errorf("could not find hvm0 precompiled contract at address %X", proof.PrecompiledContract)
+			}
+
+			// Clayton note: given the precompile proof, create a proof verification
+			// implemenation. For now, just mock this out.  when we start to
+			// implement this ensure we fill this out with the correct
+			// implementation
+			acp := &AlwaysCorrectProof{
+				Proof: proof.Proof,
+			}
+
+			if err := acp.Verify(); err != nil {
+				return engine.PayloadStatusV1{Status: engine.INVALID}, engine.InvalidPayloadAttributes.With(err)
+			}
+
+			vm.AddProof(params.BlockHash, proof.PrecompiledContract, proof.Calldata, acp)
 		}
 	}
 

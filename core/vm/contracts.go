@@ -1043,12 +1043,12 @@ func proofKey(precompile common.Address, calldata []byte, stateRoot []byte) stri
 }
 
 func AddProof(blockExecutionContextHash common.Hash, precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
+	log.Info("adding proofs for block hash", "block hash", blockExecutionContextHash.Hex())
+
 	key := proofKey(precompile, calldata, proof.StateRoot())
 
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
-
-	log.Info("adding proofs for block hash", "block hash", blockExecutionContextHash.Hex())
 
 	if proofs[blockExecutionContextHash.Hex()] == nil {
 		proofs[blockExecutionContextHash.Hex()] = map[string]ZKPrecompileProof{}
@@ -1076,10 +1076,10 @@ func ProofForPrecompileCall(precompile common.Address, calldata []byte, stateRoo
 }
 
 func RemoveProofsForBlockHash(h common.Hash) {
+	log.Info("proofs: removing for block hash", "block hash", h.Hex())
+
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
-
-	log.Info("proofs: removing for block hash", "block hash", h.Hex())
 
 	// Clayton note: verify this is the correct spot
 	delete(proofs, h.Hex())

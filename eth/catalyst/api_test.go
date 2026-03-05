@@ -2108,22 +2108,17 @@ func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
 	t.Setenv("TMP_ZKMODE", "true")
 	defer t.Setenv("TMP_ZKMODE", "")
 	genesis, blocks := generateMergeChain(10, true)
-	blah := uint64(1)
-	genesis.Config.Hvm0Time = &blah
 
 	// Set cancun time to last block + 5 seconds
-	_time := blocks[len(blocks)-1].Time() + 5
-	genesis.Config.ShanghaiTime = &_time
-	genesis.Config.CancunTime = &_time
+	time := blocks[len(blocks)-1].Time() + 5
+	genesis.Config.ShanghaiTime = &time
+	genesis.Config.CancunTime = &time
 	genesis.Config.BlobScheduleConfig = params.DefaultBlobSchedule
 
 	n, ethservice := startEthService(t, genesis, blocks)
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice)
-
-	precompiledContract := common.BytesToAddress([]byte{0x40})
-	calldata := []byte("not real calldata")
+	api := newConsensusAPIWithoutHeartbeat(ethservice)
 
 	// 11: Build Shanghai block with no withdrawals.
 	parent := ethservice.BlockChain().CurrentHeader()
@@ -2131,18 +2126,55 @@ func TestHvmPrecompilesVerifiedAndStored(t *testing.T) {
 		Timestamp:   parent.Time + 5,
 		Withdrawals: make([]*types.Withdrawal, 0),
 		BeaconRoot:  &common.Hash{42},
-		ZKProofs: []engine.ZKProof{
-			engine.ZKProof{
-				PrecompiledContract: precompiledContract,
-				Calldata:            calldata,
-				Proof:               []byte("validproof"),
-			},
-		},
 	}
 	fcState := engine.ForkchoiceStateV1{
 		HeadBlockHash: parent.Hash(),
 	}
 	resp, err := api.ForkchoiceUpdatedV3(fcState, &blockParams)
+	if err != nil {
+		t.Fatalf("error preparing payload, err=%v", err.(*engine.EngineAPIError).ErrorData())
+	}
+	if resp.PayloadStatus.Status != engine.VALID {
+		t.Fatalf("unexpected status (got: %s, want: %s)", resp.PayloadStatus.Status, engine.VALID)
+	}
+
+	// 11: verify state root is the same as parent
+	payloadID := (&miner.BuildPayloadArgs{
+		Parent:       fcState.HeadBlockHash,
+		Timestamp:    blockParams.Timestamp,
+		FeeRecipient: blockParams.SuggestedFeeRecipient,
+		Random:       blockParams.Random,
+		Withdrawals:  blockParams.Withdrawals,
+		BeaconRoot:   blockParams.BeaconRoot,
+		Version:      engine.PayloadV3,
+	}).Id()
+	require.Equal(t, payloadID, *resp.PayloadID)
+	require.NoError(t, waitForApiPayloadToBuild(api, *resp.PayloadID))
+	execData, err := api.GetPayloadV3(payloadID)
+	if err != nil {
+		t.Fatalf("error getting payload, err=%v", err)
+	}
+
+	precompiledContract := common.BytesToAddress([]byte{0x40})
+	calldata := []byte("not real calldata")
+
+	execData.ExecutionPayload.ZKProofs = []engine.ZKProof{
+		engine.ZKProof{
+			PrecompiledContract: precompiledContract,
+			Calldata:            calldata,
+			Proof:               []byte("validproof"),
+		},
+	}
+
+	// 11: verify locally built block
+	if status, err := api.NewPayloadV3(*execData.ExecutionPayload, []common.Hash{}, &common.Hash{42}); err != nil {
+		t.Fatalf("error validating payload: %v", err)
+	} else if status.Status != engine.VALID {
+		t.Fatalf("invalid payload")
+	}
+
+	fcState.HeadBlockHash = execData.ExecutionPayload.BlockHash
+	resp, err = api.ForkchoiceUpdatedV3(fcState, nil)
 	if err != nil {
 		t.Fatalf("error preparing payload, err=%v", err.(*engine.EngineAPIError).ErrorData())
 	}
@@ -2167,22 +2199,17 @@ func TestProofVerifyFails(t *testing.T) {
 	t.Setenv("TMP_ZKMODE", "true")
 	defer t.Setenv("TMP_ZKMODE", "")
 	genesis, blocks := generateMergeChain(10, true)
-	blah := uint64(1)
-	genesis.Config.Hvm0Time = &blah
 
 	// Set cancun time to last block + 5 seconds
-	_time := blocks[len(blocks)-1].Time() + 5
-	genesis.Config.ShanghaiTime = &_time
-	genesis.Config.CancunTime = &_time
+	time := blocks[len(blocks)-1].Time() + 5
+	genesis.Config.ShanghaiTime = &time
+	genesis.Config.CancunTime = &time
 	genesis.Config.BlobScheduleConfig = params.DefaultBlobSchedule
 
 	n, ethservice := startEthService(t, genesis, blocks)
 	defer n.Close()
 
-	api := NewConsensusAPI(ethservice)
-
-	precompiledContract := common.BytesToAddress([]byte{0x40})
-	calldata := []byte("not real calldata")
+	api := newConsensusAPIWithoutHeartbeat(ethservice)
 
 	// 11: Build Shanghai block with no withdrawals.
 	parent := ethservice.BlockChain().CurrentHeader()
@@ -2190,22 +2217,52 @@ func TestProofVerifyFails(t *testing.T) {
 		Timestamp:   parent.Time + 5,
 		Withdrawals: make([]*types.Withdrawal, 0),
 		BeaconRoot:  &common.Hash{42},
-		ZKProofs: []engine.ZKProof{
-			engine.ZKProof{
-				PrecompiledContract: precompiledContract,
-				Calldata:            calldata,
-				Proof:               []byte("validproof...NOT!"),
-			},
-		},
 	}
 	fcState := engine.ForkchoiceStateV1{
 		HeadBlockHash: parent.Hash(),
 	}
 	resp, err := api.ForkchoiceUpdatedV3(fcState, &blockParams)
+	if err != nil {
+		t.Fatalf("error preparing payload, err=%v", err.(*engine.EngineAPIError).ErrorData())
+	}
+	if resp.PayloadStatus.Status != engine.VALID {
+		t.Fatalf("unexpected status (got: %s, want: %s)", resp.PayloadStatus.Status, engine.VALID)
+	}
+
+	// 11: verify state root is the same as parent
+	payloadID := (&miner.BuildPayloadArgs{
+		Parent:       fcState.HeadBlockHash,
+		Timestamp:    blockParams.Timestamp,
+		FeeRecipient: blockParams.SuggestedFeeRecipient,
+		Random:       blockParams.Random,
+		Withdrawals:  blockParams.Withdrawals,
+		BeaconRoot:   blockParams.BeaconRoot,
+		Version:      engine.PayloadV3,
+	}).Id()
+	require.Equal(t, payloadID, *resp.PayloadID)
+	require.NoError(t, waitForApiPayloadToBuild(api, *resp.PayloadID))
+	execData, err := api.GetPayloadV3(payloadID)
+	if err != nil {
+		t.Fatalf("error getting payload, err=%v", err)
+	}
+
+	precompiledContract := common.BytesToAddress([]byte{0x40})
+	calldata := []byte("not real calldata")
+
+	execData.ExecutionPayload.ZKProofs = []engine.ZKProof{
+		engine.ZKProof{
+			PrecompiledContract: precompiledContract,
+			Calldata:            calldata,
+			Proof:               []byte("validproof...NOT!"),
+		},
+	}
+
+	// 11: verify locally built block
+	status, err := api.NewPayloadV3(*execData.ExecutionPayload, []common.Hash{}, &common.Hash{42})
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	if resp.PayloadStatus.Status != engine.INVALID {
+	if status.Status != engine.INVALID {
 		t.Fatalf("unexpected status (got: %s, want: %s)", resp.PayloadStatus.Status, engine.INVALID)
 	}
 }
