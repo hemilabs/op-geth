@@ -349,7 +349,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 				return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(err)
 			}
 
-			vm.AddProof(proof.PrecompiledContract, proof.Calldata, acp)
+			vm.AddProof(update.HeadBlockHash, proof.PrecompiledContract, proof.Calldata, acp)
 		}
 	}
 

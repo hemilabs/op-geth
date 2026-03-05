@@ -121,7 +121,7 @@ func testPrecompiled(addr string, test precompiledTest, t *testing.T) {
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.Name, gas), func(t *testing.T) {
-		if res, _, err := RunPrecompiledContract(p, in, gas, nil); err != nil {
+		if res, _, err := RunPrecompiledContract(p, in, gas, nil, nil); err != nil {
 			t.Error(err)
 		} else if common.Bytes2Hex(res) != test.Expected {
 			t.Errorf("Expected %v, got %v", test.Expected, common.Bytes2Hex(res))
@@ -143,7 +143,7 @@ func testPrecompiledOOG(addr string, test precompiledTest, t *testing.T) {
 	gas := test.Gas - 1
 
 	t.Run(fmt.Sprintf("%s-Gas=%d", test.Name, gas), func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(p, in, gas, nil)
+		_, _, err := RunPrecompiledContract(p, in, gas, nil, nil)
 		if err.Error() != "out of gas" {
 			t.Errorf("Expected error [out of gas], got [%v]", err)
 		}
@@ -160,7 +160,7 @@ func testPrecompiledFailure(addr string, test precompiledFailureTest, t *testing
 	in := common.Hex2Bytes(test.Input)
 	gas := p.RequiredGas(in)
 	t.Run(test.Name, func(t *testing.T) {
-		_, _, err := RunPrecompiledContract(p, in, gas, nil)
+		_, _, err := RunPrecompiledContract(p, in, gas, nil, nil)
 		if err.Error() != test.ExpectedError {
 			t.Errorf("Expected error [%v], got [%v]", test.ExpectedError, err)
 		}
@@ -191,7 +191,7 @@ func benchmarkPrecompiled(addr string, test precompiledTest, bench *testing.B) {
 		start := time.Now()
 		for bench.Loop() {
 			copy(data, in)
-			res, _, err = RunPrecompiledContract(p, data, reqGas, nil)
+			res, _, err = RunPrecompiledContract(p, data, reqGas, nil, nil)
 		}
 		elapsed := uint64(time.Since(start))
 		if elapsed < 1 {
@@ -561,12 +561,11 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 			c := hvmContractsToAddress[reflect.TypeOf(testCase.precompile)]
 			calldata := []byte("this is not real calldata")
 
-			AddProof(common.BytesToAddress(c), calldata, &Groth16Proof{
+			AddProof(common.Hash{}, common.BytesToAddress(c), calldata, &Groth16Proof{
 				publicWitness: publicWitness,
 				verifyingKey:  vk,
 				proof:         proof,
 			})
-			defer ClearProofsWithOtherStateRoots([]byte{})
 
 			runAndExpectPrecompiledContract(t, testCase.precompile, calldata)
 		})
@@ -574,7 +573,7 @@ func TestHvmPrecompilesViaZKProofs(t *testing.T) {
 }
 
 func runAndExpectPrecompiledContract(t *testing.T, precompiledAddress PrecompiledContract, calldata []byte) {
-	result, _, err := RunPrecompiledContract(precompiledAddress, calldata, math.MaxUint64, nil)
+	result, _, err := RunPrecompiledContract(precompiledAddress, calldata, math.MaxUint64, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

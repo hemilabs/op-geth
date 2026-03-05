@@ -1036,52 +1036,51 @@ type ZKPrecompileProof interface {
 // get state root from evm state, given current execution context
 
 var proofsMtx sync.Mutex
-var proofs map[string]ZKPrecompileProof = map[string]ZKPrecompileProof{}
+var proofs map[string]map[string]ZKPrecompileProof = map[string]map[string]ZKPrecompileProof{}
 
 func proofKey(precompile common.Address, calldata []byte, stateRoot []byte) string {
 	return fmt.Sprintf("%X-%X", precompile, calldata)
 }
 
-func AddProof(precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
-	fmt.Printf("adding proof %v:%v\n", precompile, calldata)
+func AddProof(blockExecutionContextHash common.Hash, precompile common.Address, calldata []byte, proof ZKPrecompileProof) {
 	key := proofKey(precompile, calldata, proof.StateRoot())
 
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
 
-	proofs[key] = proof
-}
-
-func ClearProofsWithOtherStateRoots(stateRootToKeep []byte) {
-	proofsMtx.Lock()
-	defer proofsMtx.Unlock()
-
-	for k, p := range proofs {
-		if !bytes.Equal(p.StateRoot(), stateRootToKeep) {
-			delete(proofs, k)
-		}
+	if proofs[blockExecutionContextHash.Hex()] == nil {
+		proofs[blockExecutionContextHash.Hex()] = map[string]ZKPrecompileProof{}
 	}
+
+	proofs[blockExecutionContextHash.Hex()][key] = proof
 }
 
 var ErrPrecompileProofNotFound = errors.New("could not find precompile proof")
 
-func ProofForPrecompileCall(precompile common.Address, calldata []byte, stateRoot []byte) ([]byte, error) {
-	fmt.Printf("getting proof %v:%v:%v\n", precompile, calldata, stateRoot)
+func ProofForPrecompileCall(precompile common.Address, calldata []byte, stateRoot []byte) (ZKPrecompileProof, error) {
 	key := proofKey(precompile, calldata, stateRoot)
 
 	proofsMtx.Lock()
 	defer proofsMtx.Unlock()
 
-	foundProof := proofs[key]
-	if foundProof == nil {
-		return nil, ErrPrecompileProofNotFound
+	for _, v := range proofs {
+		foundProof := v[key]
+		if foundProof != nil {
+			return foundProof, nil
+		}
 	}
 
-	if err := foundProof.Verify(); err != nil {
-		return nil, err
-	}
+	return nil, ErrPrecompileProofNotFound
+}
 
-	return foundProof.Result(), nil
+func RemoveProofsForBlockHash(h common.Hash) {
+	proofsMtx.Lock()
+	defer proofsMtx.Unlock()
+
+	log.Info("proofs: removing for block hash %s", h.Hex())
+
+	// Clayton note: verify this is the correct spot, then delete
+	// delete(proofs, h.Hex())
 }
 
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
@@ -1089,7 +1088,7 @@ func ProofForPrecompileCall(precompile common.Address, calldata []byte, stateRoo
 // - the returned bytes,
 // - the _remaining_ gas,
 // - any error that occurred
-func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
+func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, blockContext *common.Hash, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas
@@ -1099,10 +1098,6 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 	}
 	suppliedGas -= gasCost
 	if precompile := hvmContractsToAddress[reflect.TypeOf(p)]; precompile != nil && zkMode() && isHvmPrecompileCall(common.BytesToAddress(precompile)) {
-		// Clayton note: get btc state root and clear other proofs
-		// ClearProofsWithOtherStateRoots()
-		// in forkChoiceUpdated, map block execution payload --> proofs
-
 		// add back in block context
 		// update map to be mapping of block execution context hash --> proofs for that execution
 		// at the end of execution (should be the function where it's created, double-check), we can delete it from the map based on the hash
@@ -1111,7 +1106,15 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 		if errors.Is(err, ErrPrecompileProofNotFound) {
 			panic(err)
 		}
-		return result, suppliedGas, err
+
+		if err := result.Verify(); err != nil {
+			panic(err) // should not happen, as we call Verify() upon insertion
+		}
+
+		// Clayton note: check result.StateRoot() here
+		// if !bytes.Equal(result.StateRoot(), something) ... error!
+
+		return result.Result(), suppliedGas, err
 	}
 	output, err := p.Run(input, common.Hash{})
 	return output, suppliedGas, err
