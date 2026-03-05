@@ -1059,7 +1059,7 @@ func AddProof(blockExecutionContextHash common.Hash, precompile common.Address, 
 
 var ErrPrecompileProofNotFound = errors.New("could not find precompile proof")
 
-func ProofForPrecompileCall(precompile common.Address, calldata []byte, stateRoot []byte) (ZKPrecompileProof, error) {
+func HVMZKProofForPrecompileCall(precompile common.Address, calldata []byte, stateRoot []byte) (ZKPrecompileProof, error) {
 	key := proofKey(precompile, calldata, stateRoot)
 
 	proofsMtx.Lock()
@@ -1104,7 +1104,7 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 		// update map to be mapping of block execution context hash --> proofs for that execution
 		// at the end of execution (should be the function where it's created, double-check), we can delete it from the map based on the hash
 		// in this precompile function, panic()
-		result, err := ProofForPrecompileCall(common.BytesToAddress(precompile), input, []byte{})
+		result, err := HVMZKProofForPrecompileCall(common.BytesToAddress(precompile), input, []byte{})
 		if errors.Is(err, ErrPrecompileProofNotFound) {
 			panic(err)
 		}
