@@ -330,6 +330,9 @@ func (a *AlwaysCorrectProof) StateRoot() []byte {
 }
 
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
+	api.forkchoiceLock.Lock()
+	defer api.forkchoiceLock.Unlock()
+
 	if payloadAttributes != nil && vm.ZKMode() {
 		for _, proof := range payloadAttributes.ZKProofs {
 			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
@@ -352,9 +355,6 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			vm.AddProof(update.HeadBlockHash, proof.PrecompiledContract, proof.Calldata, acp)
 		}
 	}
-
-	api.forkchoiceLock.Lock()
-	defer api.forkchoiceLock.Unlock()
 
 	if payloadAttributes != nil {
 		if payloadAttributes.Transactions != nil {
