@@ -853,7 +853,6 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 	defer api.newPayloadLock.Unlock()
 
 	if vm.ZKMode() {
-		vm.RemoveProofsForBlockHash(params.ParentHash)
 		for _, proof := range params.ZKProofs {
 			precompiledContract := vm.PrecompiledContractsHvm0[common.Address(proof.PrecompiledContract)]
 			if precompiledContract == nil {
