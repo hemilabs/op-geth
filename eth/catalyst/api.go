@@ -349,6 +349,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 				return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(err)
 			}
 
+			log.Info("adding proof for block hash", "block hash", update.HeadBlockHash)
 			vm.AddProof(update.HeadBlockHash, proof.PrecompiledContract, proof.Calldata, acp)
 		}
 	}

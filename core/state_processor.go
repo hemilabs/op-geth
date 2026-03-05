@@ -58,10 +58,6 @@ func (p *StateProcessor) chainConfig() *params.ChainConfig {
 // returns the amount of gas that was used in the process. If any of the
 // transactions failed to execute due to insufficient gas it will return an error.
 func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg vm.Config) (*ProcessResult, error) {
-	defer func() {
-		vm.RemoveProofsForBlockHash(block.Hash())
-	}()
-
 	var (
 		config      = p.chainConfig()
 		receipts    types.Receipts
