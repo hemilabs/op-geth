@@ -21,7 +21,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -1087,24 +1086,6 @@ func RemoveProofsForBlockHash(h common.Hash) {
 	delete(proofs, h.Hex())
 }
 
-func HVMZKProofBitcoinStateRoot() []byte {
-	proofsMtx.Lock()
-	defer proofsMtx.Unlock()
-
-	ret := make([]byte, len(proofsStateRoot))
-	copy(ret, proofsStateRoot)
-
-	return ret
-}
-
-func SetHVMZKProofBitcoinStateRoot(stateRoot []byte) {
-	proofsMtx.Lock()
-	defer proofsMtx.Unlock()
-
-	proofsStateRoot = make([]byte, len(stateRoot))
-	copy(proofsStateRoot, stateRoot)
-}
-
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
 // It returns
 // - the returned bytes,
@@ -1131,11 +1112,6 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 
 		if err := result.Verify(); err != nil {
 			panic(err) // should not happen, as we call Verify() upon insertion
-		}
-
-		sr := HVMZKProofBitcoinStateRoot()
-		if !bytes.Equal(result.StateRoot(), sr) {
-			panic(fmt.Sprintf("state roots not equal: 0x%s != 0x%s", hex.EncodeToString(result.StateRoot()), hex.EncodeToString(sr)))
 		}
 
 		return result.Result(), suppliedGas, err

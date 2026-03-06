@@ -567,8 +567,6 @@ func TestHvmPrecompilesViaHVMZKProofs(t *testing.T) {
 				proof:         proof,
 			})
 
-			SetHVMZKProofBitcoinStateRoot([]byte("somestateroot"))
-			defer SetHVMZKProofBitcoinStateRoot(nil)
 			runAndExpectPrecompiledContract(t, testCase.precompile, calldata)
 		})
 	}
