@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"maps"
@@ -1036,6 +1037,7 @@ type ZKPrecompileProof interface {
 // get state root from evm state, given current execution context
 
 var proofsMtx sync.Mutex
+var proofsStateRoot []byte
 var proofs map[string]map[string]ZKPrecompileProof = map[string]map[string]ZKPrecompileProof{}
 
 func proofKey(precompile common.Address, calldata []byte, stateRoot []byte) string {
@@ -1085,12 +1087,30 @@ func RemoveProofsForBlockHash(h common.Hash) {
 	delete(proofs, h.Hex())
 }
 
+func HVMZKProofBitcoinStateRoot() []byte {
+	proofsMtx.Lock()
+	defer proofsMtx.Unlock()
+
+	ret := make([]byte, len(proofsStateRoot))
+	copy(ret, proofsStateRoot)
+
+	return ret
+}
+
+func SetHVMZKProofBitcoinStateRoot(stateRoot []byte) {
+	proofsMtx.Lock()
+	defer proofsMtx.Unlock()
+
+	proofsStateRoot = make([]byte, len(stateRoot))
+	copy(proofsStateRoot, stateRoot)
+}
+
 // RunPrecompiledContract runs and evaluates the output of a precompiled contract.
 // It returns
 // - the returned bytes,
 // - the _remaining_ gas,
 // - any error that occurred
-func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, blockContext *common.Hash, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
+func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas
@@ -1113,8 +1133,10 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 			panic(err) // should not happen, as we call Verify() upon insertion
 		}
 
-		// Clayton note: check result.StateRoot() here
-		// if !bytes.Equal(result.StateRoot(), something) ... error!
+		sr := HVMZKProofBitcoinStateRoot()
+		if !bytes.Equal(result.StateRoot(), sr) {
+			panic(fmt.Sprintf("state roots not equal: 0x%s != 0x%s", hex.EncodeToString(result.StateRoot()), hex.EncodeToString(sr)))
+		}
 
 		return result.Result(), suppliedGas, err
 	}
