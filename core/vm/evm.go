@@ -19,6 +19,7 @@ package vm
 import (
 	"errors"
 	"math/big"
+	"os"
 	"sync"
 	"sync/atomic"
 
@@ -139,10 +140,7 @@ type EVM struct {
 	// applied in opCall*.
 	callGasTemp uint64
 
-	// TODO: Decide whether to move to Context
-	// The Hemi header hash this EVM is executed within. Required for making sure hVM calls return the correct state.
-	blockExecutionContext common.Hash
-	mtx                   sync.Mutex
+	mtx sync.Mutex
 
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
@@ -155,6 +153,8 @@ type EVM struct {
 
 	readOnly   bool   // Whether to throw on stateful modifications
 	returnData []byte // Last CALL's return data for subsequent reuse
+
+	bitcoinStateRoot []byte
 }
 
 // NewEVM constructs an EVM instance with the supplied block context, state
@@ -220,6 +220,22 @@ func NewEVM(blockCtx BlockContext, statedb StateDB, chainConfig *params.ChainCon
 		}
 	}
 	evm.Config.ExtraEips = extraEips
+
+	// Clayton note: get this via a config or something similar
+	addr := os.Getenv("TMP_BITCOIN_CONTRACT_ADDRESS")
+	stor := os.Getenv("TMP_BITCOIN_CONTRACT_STORAGE_SLOT")
+	if addr != "" && stor != "" {
+		_, bitcoinStateRoot := statedb.GetStateAndCommittedState(
+			common.HexToAddress(addr),
+			common.HexToHash(stor),
+		)
+		evm.bitcoinStateRoot = bitcoinStateRoot.Bytes()
+	}
+
+	if ZKMode() && evm.bitcoinStateRoot == nil {
+		log.Warn("zk mode is enabled but EVM Bitcoin State Root not set")
+	}
+
 	return evm
 }
 
@@ -317,7 +333,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 	evm.Context.Transfer(evm.StateDB, caller, addr, value)
 
 	if isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer, evm.bitcoinStateRoot)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		code := evm.resolveCode(addr)
@@ -382,7 +398,7 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer, evm.bitcoinStateRoot)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -426,7 +442,7 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer, evm.bitcoinStateRoot)
 	} else {
 		// Initialise a new contract and make initialise the delegate values
 		//
@@ -479,7 +495,7 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 	evm.StateDB.AddBalance(addr, new(uint256.Int), tracing.BalanceChangeTouchAccount)
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer)
+		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.Config.Tracer, evm.bitcoinStateRoot)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.

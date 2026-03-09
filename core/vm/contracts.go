@@ -1091,7 +1091,7 @@ func RemoveProofsForBlockHash(h common.Hash) {
 // - the returned bytes,
 // - the _remaining_ gas,
 // - any error that occurred
-func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks) (ret []byte, remainingGas uint64, err error) {
+func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uint64, logger *tracing.Hooks, bitcoinStateRoot []byte) (ret []byte, remainingGas uint64, err error) {
 	gasCost := p.RequiredGas(input)
 	if suppliedGas < gasCost {
 		return nil, 0, ErrOutOfGas
@@ -1112,6 +1112,10 @@ func RunPrecompiledContract(p PrecompiledContract, input []byte, suppliedGas uin
 
 		if err := result.Verify(); err != nil {
 			panic(err) // should not happen, as we call Verify() upon insertion
+		}
+
+		if !bytes.Equal(result.StateRoot(), bitcoinStateRoot) {
+			panic(fmt.Sprintf("state root mismatch hvm zk proof state root (%s) != evm state root (%s)", result.StateRoot(), bitcoinStateRoot))
 		}
 
 		return result.Result(), suppliedGas, err
