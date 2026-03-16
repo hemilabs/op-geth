@@ -463,8 +463,11 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 
 	missingFullBlocks := make([]wire.BlockHeader, 0)
 
-	log.Info(fmt.Sprintf("TBCBlocksAvailableToHeader called with endingHeader=%s, UTXOs synced to: "+
-		"%s and Txs synced to: %s", endingHeader.BlockHash().String(), utxoSync.Hash.String(), txSync.Hash.String()))
+	log.Trace("TBCBlocksAvailableToHeader called with",
+		"endingHeader", endingHeader.BlockHash().String(),
+		"UTXOS Synced to", utxoSync.Hash.String(),
+		"Txs synced to", txSync.Hash.String(),
+	)
 
 	// When both indexers are at the same header, this will be that header.
 	// If the indexers are at different positions, this will be the common
