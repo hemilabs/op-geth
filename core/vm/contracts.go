@@ -849,7 +849,6 @@ func init() {
 	for k := range PrecompiledContractsHvm0 {
 		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
 	}
-
 	for k := range PrecompiledContractsPrague {
 		PrecompiledAddressesPrague = append(PrecompiledAddressesPrague, k)
 	}
@@ -952,9 +951,6 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 
 	switch {
 	case rules.IsHvm0:
-		if rules.IsPrague && !rules.IsOptimismJovian {
-			return append([]common.Address{}, PrecompiledAddressesHvm0...)
-		}
 		return append(nonHvmPrecompiles, PrecompiledAddressesHvm0...)
 	default:
 		return nonHvmPrecompiles
