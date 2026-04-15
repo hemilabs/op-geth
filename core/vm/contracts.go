@@ -849,24 +849,6 @@ func init() {
 	for k := range PrecompiledContractsHvm0 {
 		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
 	}
-	for k := range PrecompiledContractsPrague {
-		PrecompiledAddressesPrague = append(PrecompiledAddressesPrague, k)
-	}
-	for k := range PrecompiledContractsOsaka {
-		PrecompiledAddressesOsaka = append(PrecompiledAddressesOsaka, k)
-	}
-	for k := range PrecompiledContractsFjord {
-		PrecompiledAddressesFjord = append(PrecompiledAddressesFjord, k)
-	}
-	for k := range PrecompiledContractsGranite {
-		PrecompiledAddressesGranite = append(PrecompiledAddressesGranite, k)
-	}
-	for k := range PrecompiledContractsIsthmus {
-		PrecompiledAddressesIsthmus = append(PrecompiledAddressesIsthmus, k)
-	}
-	for k := range PrecompiledContractsJovian {
-		PrecompiledAddressesJovian = append(PrecompiledAddressesJovian, k)
-	}
 }
 
 func activePrecompiledContracts(rules params.Rules) PrecompiledContracts {
