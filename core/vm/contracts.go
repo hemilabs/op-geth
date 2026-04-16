@@ -436,19 +436,20 @@ func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 
 func TBCMustSucceedBlockRefetch(ctx context.Context, header *wire.BlockHeader) error {
 	for {
+		_, err := hashHeightForHeader(ctx, header)
+		if err != nil && !errors.Is(err, &database.ErrNotFound) {
+			return err
+		}
+
+		if err == nil {
+			return nil
+		}
+
 		TBCAttemptBlockRefetch(ctx, header)
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-time.After(1 * time.Second): 
-			_, err := hashHeightForHeader(ctx, header)
-			if err != nil && errors.Is(err, &database.ErrNotFound) {
-				return err
-			}
-
-			if err == nil {
-				return nil
-			}
 		}
 	}
 }
