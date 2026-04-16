@@ -1866,6 +1866,10 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		}
 
 		if attemptPrefetch {
+			if err := vm.TBCMustSucceedBlockRefetch(bc.ctx, cbhWire); err != nil {
+				return err
+			}
+
 			_, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(bc.ctx, cbhWire)
 			if err != nil {
 				log.Error(fmt.Sprintf("unable to proactively check for full TBC node containing blocks to tip %s",
@@ -4193,6 +4197,28 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 	for ; block != nil && err == nil || errors.Is(err, ErrKnownBlock); block, err = it.next() {
 		// Add this block to temporary holding pen so hVM consensus update functions have access
 		// to it.
+		log.Info("holding pen lengths", "tempBlocks", len(bc.tempBlocks), "tempHeaders", len(bc.tempHeaders))
+		const holdingPenMaxLen = 25
+		if len(bc.tempBlocks) >= holdingPenMaxLen {
+			var lowestKey *string 
+			for key := range bc.tempBlocks {
+				if lowestKey == nil || bc.tempBlocks[key].Header().Number.Uint64() < bc.tempBlocks[*lowestKey].Header().Number.Uint64() {
+					lowestKey = &key
+				}
+			}
+
+			delete(bc.tempBlocks, *lowestKey)
+		}
+		if len(bc.tempHeaders) >= holdingPenMaxLen {
+			var lowestKey *string 
+			for key := range bc.tempHeaders {
+				if lowestKey == nil || bc.tempHeaders[key].Number.Uint64() < bc.tempHeaders[*lowestKey].Number.Uint64() {
+					lowestKey = &key
+				}
+			}
+
+			delete(bc.tempHeaders, *lowestKey)
+		}
 		bc.tempBlocks[block.Hash().String()] = block
 		bc.tempHeaders[block.Hash().String()] = block.Header()
 

@@ -434,6 +434,25 @@ func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 
 }
 
+func TBCMustSucceedBlockRefetch(ctx context.Context, header *wire.BlockHeader) error {
+	for {
+		TBCAttemptBlockRefetch(ctx, header)
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(1 * time.Second): 
+			_, err := hashHeightForHeader(ctx, header)
+			if err != nil && errors.Is(err, &database.ErrNotFound) {
+				return err
+			}
+
+			if err == nil {
+				return nil
+			}
+		}
+	}
+}
+
 // TBCBlocksAvailableToHeader Checks whether the TBC full node has all of the blocks required to index to the
 // specified header from its current location.
 //
