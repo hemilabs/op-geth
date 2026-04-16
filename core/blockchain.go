@@ -1866,9 +1866,14 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		}
 
 		if attemptPrefetch {
-			if err := vm.TBCMustSucceedBlockRefetch(bc.ctx, cbhWire); err != nil {
-				return err
-			}
+			go func() {
+				ctx, cancel := context.WithTimeout(bc.ctx, 1 * time.Minute)
+				defer cancel()
+				
+				if err := vm.TBCMustSucceedBlockRefetch(bc.ctx, cbhWire); err != nil {
+					log.Error(err)
+				}
+			}()
 
 			_, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(bc.ctx, cbhWire)
 			if err != nil {
