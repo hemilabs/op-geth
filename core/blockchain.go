@@ -1870,7 +1870,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 				ctx, cancel := context.WithTimeout(bc.ctx, 1 * time.Minute)
 				defer cancel()
 				
-				if err := vm.TBCMustSucceedBlockRefetch(bc.ctx, cbhWire); err != nil {
+				if err := vm.TBCMustSucceedBlockRefetch(ctx, cbhWire); err != nil {
 					log.Error("error getting block during refetch", "error", err)
 				}
 			}()
