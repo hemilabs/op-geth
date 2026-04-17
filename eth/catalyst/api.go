@@ -326,8 +326,8 @@ func ensureBtcHeadersAvailable(txs types.Transactions) error {
 			log.Error("error deserializing bitcoin header", "error", err)
 			return err
 		}
-		wh := &wireHeader
 
+		wh := &wireHeader
 		
 		for {
 			ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
@@ -340,14 +340,18 @@ func ensureBtcHeadersAvailable(txs types.Transactions) error {
 			}
 
 			if !found {
-				vm.TBCAttemptBlockRefetch(ctx, wh)
-			} else if blocksMissing != nil && len(*blocksMissing) > 0 {
-				for _, missing := range *blocksMissing {
-					vm.TBCAttemptBlockRefetch(ctx, &missing)
-				}
-			} else {
-				break
+				go vm.TBCAttemptBlockRefetch(ctx, wh)
 			}
+			
+			if blocksMissing != nil && len(*blocksMissing) > 0 {
+				for _, missing := range *blocksMissing {
+					go vm.TBCAttemptBlockRefetch(ctx, &missing)
+				}
+			}
+
+			if found && (blocksMissing == nil || len(blocksMissing) == 0) {
+				break
+			} 
 
 			<-ctx.Done()
 		}
