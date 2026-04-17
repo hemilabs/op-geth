@@ -349,7 +349,7 @@ func ensureBtcHeadersAvailable(txs types.Transactions) error {
 				}
 			}
 
-			if found && (blocksMissing == nil || len(blocksMissing) == 0) {
+			if found && (blocksMissing == nil || len(*blocksMissing) == 0) {
 				break
 			} 
 
