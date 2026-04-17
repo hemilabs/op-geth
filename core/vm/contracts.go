@@ -421,7 +421,7 @@ func TBCAttemptBlockRefetch(ctx context.Context, header *wire.BlockHeader) {
 	bh := header.BlockHash()
 	log.Info(fmt.Sprintf("Attempting to refetch block %s for TBC full node over P2P", bh.String()))
 
-	block, err := TBCFullNode.DownloadBlockFromRandomPeers(ctx, bh, 8)
+	block, err := TBCFullNode.DownloadBlockFromRandomPeers(ctx, bh, 100)
 	if err != nil {
 		log.Error(fmt.Sprintf("Encountered error attempting to refetch block %s", bh.String()), "err", err)
 	}
