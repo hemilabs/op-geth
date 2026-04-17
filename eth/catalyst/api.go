@@ -328,10 +328,11 @@ func ensureBtcHeadersAvailable(txs types.Transactions) error {
 		}
 		wh := &wireHeader
 
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-
+		
 		for {
+			ctx, cancel := context.WithTimeout(context.Background(), 10 * time.Second)
+			defer cancel()
+
 			found, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(ctx, wh)
 			if err != nil {
 				log.Error("error occurred check tbc blocks to header", "error", err)
@@ -348,11 +349,7 @@ func ensureBtcHeadersAvailable(txs types.Transactions) error {
 				break
 			}
 
-			select {
-			case <-time.After(5 * time.Second):
-			case <-ctx.Done():
-				return ctx.Err()
-			}
+			<-ctx.Done()
 		}
 	}
 
