@@ -320,6 +320,10 @@ func ensureBtcHeadersAvailable(txs types.Transactions) error {
 		panic(fmt.Sprintf("error checking for bitcoin data in tx: %s", err))
 	}
 
+	if data == nil {
+		return nil
+	}
+
 	for _, header := range data.Headers {
 		var wireHeader wire.BlockHeader
 		if err := wireHeader.Deserialize(bytes.NewReader(header[:])); err != nil {
