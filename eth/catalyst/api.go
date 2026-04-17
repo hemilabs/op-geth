@@ -390,17 +390,19 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 		}
 	}
 
-	txs := make(types.Transactions, len(payloadAttributes.Transactions))
-	for i, otx := range payloadAttributes.Transactions {
-		var tx types.Transaction
-		if err := tx.UnmarshalBinary(otx); err != nil {
-			return engine.STATUS_INVALID, fmt.Errorf("transaction %d is not valid: %v", i, err)
+	if payloadAttributes != nil {
+		txs := make(types.Transactions, len(payloadAttributes.Transactions))
+		for i, otx := range payloadAttributes.Transactions {
+			var tx types.Transaction
+			if err := tx.UnmarshalBinary(otx); err != nil {
+				return engine.STATUS_INVALID, fmt.Errorf("transaction %d is not valid: %v", i, err)
+			}
+			txs[i] = &tx
 		}
-		txs[i] = &tx
-	}
-
-	if err := ensureBtcHeadersAvailable(txs); err != nil {
-		return engine.STATUS_INVALID, nil
+	
+		if err := ensureBtcHeadersAvailable(txs); err != nil {
+			return engine.STATUS_INVALID, nil
+		}
 	}
 
 	// Stash away the last update to warn the user if the beacon client goes offline
