@@ -346,7 +346,7 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 			fullNodeTbcCfg.Seeds = ctx.StringSlice(utils.TBCSeeds.Name)
 		}
 
-		fullNodeTbcCfg.PeersWanted = 16
+		fullNodeTbcCfg.PeersWanted = 100
 
 		logLevel := "INFO"  // Anything 0-3 (silent to info) maps to "INFO" for TBC
 		if verbosity == 4 { // Geth debug = TBC TRACE
