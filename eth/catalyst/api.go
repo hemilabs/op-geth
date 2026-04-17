@@ -310,6 +310,55 @@ func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash c
 	return popPayouts, nil
 }
 
+func ensureBtcHeadersAvailable(txs types.Transactions) error {
+	if txs == nil {
+		return nil
+	}
+
+	data, err := txs.ExtractBtcAttrData()
+	if err != nil {
+		panic(fmt.Sprintf("error checking for bitcoin data in tx: %s", err))
+	}
+
+	for _, header := range data.Headers {
+		var wireHeader wire.BlockHeader
+		if err := wireHeader.Deserialize(bytes.NewReader(header[:])); err != nil {
+			log.Error("error deserializing bitcoin header", "error", err)
+			return err
+		}
+		wh := &wireHeader
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		for {
+			found, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(ctx, wh)
+			if err != nil {
+				log.Error("error occurred check tbc blocks to header", "error", err)
+				return err
+			}
+
+			if !found {
+				vm.TBCAttemptBlockRefetch(ctx, wh)
+			} else if blocksMissing != nil && len(*blocksMissing) > 0 {
+				for _, missing := range *blocksMissing {
+					vm.TBCAttemptBlockRefetch(ctx, &missing)
+				}
+			} else {
+				break
+			}
+
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+	}
+
+	return nil
+}
+
 func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payloadAttributes *engine.PayloadAttributes, payloadVersion engine.PayloadVersion, payloadWitness bool) (engine.ForkChoiceResponse, error) {
 	api.forkchoiceLock.Lock()
 	defer api.forkchoiceLock.Unlock()
@@ -338,6 +387,19 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 		if err := checkOptimismPayloadAttributes(payloadAttributes, cfg); err != nil {
 			return engine.STATUS_INVALID, engine.InvalidPayloadAttributes.With(err)
 		}
+	}
+
+	txs := make(types.Transactions, len(payloadAttributes.Transactions))
+	for i, otx := range payloadAttributes.Transactions {
+		var tx types.Transaction
+		if err := tx.UnmarshalBinary(otx); err != nil {
+			return engine.STATUS_INVALID, fmt.Errorf("transaction %d is not valid: %v", i, err)
+		}
+		txs[i] = &tx
+	}
+
+	if err := ensureBtcHeadersAvailable(txs); err != nil {
+		return engine.STATUS_INVALID, nil
 	}
 
 	// Stash away the last update to warn the user if the beacon client goes offline
