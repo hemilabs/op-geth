@@ -1955,6 +1955,9 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 }
 
 func (bc *BlockChain) GetMissingBtcBlocks() []common.Hash {
+	bc.chainmu.Lock()
+	defer bc.chainmu.Unlock()
+
 	if bc == nil || bc.tbcHeaderNode == nil {
 		log.Warn("GetMissingBtcBlocks() does not have tbcHeaderNode active yet")
 		return nil
