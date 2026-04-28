@@ -26,7 +26,7 @@ all:
 
 #? test: Run the tests.
 test: all
-	$(GORUN) build/ci.go test
+	$(GORUN) build/ci.go test -v
 
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.

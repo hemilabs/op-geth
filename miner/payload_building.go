@@ -217,7 +217,15 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 func (payload *Payload) WaitFull() {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
-	payload.cond.Wait()
+	for payload.full == nil {
+		select {
+		case <-payload.rpcCtx.Done():
+			return
+		default:
+		}
+
+		payload.cond.Wait()
+	}
 }
 
 func (payload *Payload) resolve(onlyFull bool) *engine.ExecutionPayloadEnvelope {
