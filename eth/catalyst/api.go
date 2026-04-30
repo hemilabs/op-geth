@@ -475,6 +475,41 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 				return engine.STATUS_INVALID, fmt.Errorf("transaction %d is not valid: %v", i, err)
 			}
 			transactions = append(transactions, &tx)
+
+			hashesToRequest := []common.Hash{}
+
+			if tx.Type() == types.BtcAttributesDepositedTxType {
+				var btcDepData types.BtcAttributesDepositData
+				if err := btcDepData.UnmarshalBinary(tx.Data()); err != nil {
+					return engine.STATUS_INVALID, engine.InvalidForkChoiceState.With(errors.New("invalid canonical tip BtcAttributesDepositData"))
+				} else {
+					canonicalTip := common.Hash(btcDepData.CanonicalTip)
+					log.Trace("Requesting Bitcoin block from peers", "hash", canonicalTip)
+					hashesToRequest = append(hashesToRequest, canonicalTip)
+					for _, headerBytes := range btcDepData.Headers {
+						var blockHeader wire.BlockHeader
+						if err := blockHeader.Deserialize(bytes.NewReader(headerBytes[:])); err != nil {
+							return engine.STATUS_INVALID, engine.InvalidForkChoiceState.With(errors.New("invalid headers in BtcAttributesDepositData"))
+						}
+						blockHash := common.Hash(blockHeader.BlockHash())
+						log.Trace("Requesting Bitcoin block from peers (from header)", "hash", blockHash)
+						hashesToRequest = append(hashesToRequest, blockHash)
+					}
+				}
+			}
+
+			retryNeeded := false
+			for _, hash := range hashesToRequest {
+				alreadyKnown := api.eth.RequestBitcoinBlocksFromPeers(hash)
+				if !alreadyKnown {
+					retryNeeded = true
+				}
+			}
+
+			if retryNeeded {
+				return engine.STATUS_INVALID, engine.GenericServerError.With(errors.New("missing blocks in forkchoiceupdated, will try to fetch"))
+			}
+
 		}
 		args := &miner.BuildPayloadArgs{
 			Parent:        update.HeadBlockHash,
