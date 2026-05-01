@@ -237,7 +237,7 @@ type BlockChain interface {
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
-func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func()) *Downloader {
+func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func(), requestBtcBlocksFunc func(hash common.Hash)) *Downloader {
 	hVMSnapFunc := func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
 		log.Info("hVM Snap Sync Func called")
 		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader)
@@ -254,7 +254,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer 
 		dropPeer:          dropPeer,
 		headerProcCh:      make(chan *headerTask, 1),
 		quitCh:            make(chan struct{}),
-		SnapSyncer:        snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
+		SnapSyncer:        snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc, requestBtcBlocksFunc),
 		stateSyncStart:    make(chan *stateSync),
 		syncStartBlock:    chain.CurrentSnapBlock().Number.Uint64(),
 	}

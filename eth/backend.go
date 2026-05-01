@@ -28,7 +28,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"github.com/holiman/uint256"
@@ -527,17 +526,7 @@ func (e *Ethereum) SendRequestForHashToAllPeers(hash common.Hash) {
 }
 
 func (e *Ethereum) RequestBitcoinBlocksFromPeers(hash common.Hash) bool {
-	var ch chainhash.Hash
-	if err := ch.SetBytes(hash.Bytes()); err != nil {
-		// should not happen, fail loudly if it does
-		log.Crit("Failed to convert hash for TBC lookup", "hash", hash, "err", err)
-	}
-	available, err := vm.TBCFullNode.FullBlockAvailable(vm.MainCtx, ch)
-	if err != nil {
-		// also should not happen, fail loudly if it does
-		log.Crit("Failed to check BTC block availability before peer request", "hash", hash, "err", err)
-	} else if available {
-		log.Trace("BTC block already in TBC, skipping peer request", "hash", hash)
+	if available := vm.BlockAvailableByCommonHash(hash); available {
 		return true
 	}
 

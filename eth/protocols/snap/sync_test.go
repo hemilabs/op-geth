@@ -630,7 +630,7 @@ func testSyncBloatedProof(t *testing.T, scheme string) {
 
 func setupSyncer(scheme string, peers ...*testPeer) *Syncer {
 	stateDb := rawdb.NewMemoryDatabase()
-	syncer := NewSyncer(stateDb, scheme, nil)
+	syncer := NewSyncer(stateDb, scheme, nil, nil)
 	for _, peer := range peers {
 		syncer.Register(peer)
 		peer.remote = syncer
