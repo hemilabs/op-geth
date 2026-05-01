@@ -210,6 +210,10 @@ func newHandler(config *handlerConfig) (*handler, error) {
 	}
 	// Construct the downloader (long sync)
 	requestBtcBlocksFromPeers := func(hash common.Hash) {
+		if available := vm.BlockAvailableByCommonHash(hash); available {
+			return
+		}
+
 		for _, peer := range h.peers.all() {
 			if err := peer.RequestBtcBlocks([]common.Hash{hash}); err != nil {
 				log.Error("Failed to request BTC block from peer during snap sync", "peer", peer.ID(), "hash", hash, "err", err)
