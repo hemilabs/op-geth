@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/dchest/siphash"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
