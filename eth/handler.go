@@ -209,7 +209,14 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return nil, errors.New("snap sync not supported with snapshots disabled")
 	}
 	// Construct the downloader (long sync)
-	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, h.removePeer, h.enableSyncedFeatures)
+	requestBtcBlocksFromPeers := func(hash common.Hash) {
+		for _, peer := range h.peers.all() {
+			if err := peer.RequestBtcBlocks([]common.Hash{hash}); err != nil {
+				log.Error("Failed to request BTC block from peer during snap sync", "peer", peer.ID(), "hash", hash, "err", err)
+			}
+		}
+	}
+	h.downloader = downloader.New(config.Database, h.eventMux, h.chain, h.removePeer, h.enableSyncedFeatures, requestBtcBlocksFromPeers)
 
 	fetchTx := func(peer string, hashes []common.Hash) error {
 		p := h.peers.peer(peer)
