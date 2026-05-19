@@ -45,6 +45,9 @@ import (
 	_ "github.com/ethereum/go-ethereum/eth/tracers/native"
 
 	"github.com/urfave/cli/v2"
+
+	"runtime"
+	"runtime/pprof"
 )
 
 const (
@@ -324,6 +327,23 @@ func init() {
 }
 
 func main() {
+	go func() {
+		f, err := os.Create("/tmp/memprofile.prof")
+		if err != nil {
+			panic(err)
+		}
+
+		defer f.Close()
+
+		time.Sleep(5 * time.Minute)
+		
+		runtime.GC()
+
+		if err := pprof.Lookup("allocs").WriteTo(f, 0); err != nil {
+            panic(fmt.Sprintf("could not write memory profile: ", err))
+        }
+	}()
+
 	if err := app.Run(os.Args); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
