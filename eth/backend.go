@@ -346,7 +346,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		tbcCfg.BlockCacheSize = "0"
 		tbcCfg.AutoIndex = false
 		tbcCfg.BlockSanity = true
-		tbcCfg.MaxCachedTxs = 0
+		tbcCfg.MaxCachedTxs = 1
 		tbcCfg.MempoolEnabled = false
 
 		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
