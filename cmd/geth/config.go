@@ -30,8 +30,8 @@ import (
 	"unicode"
 
 	"github.com/ethereum/go-ethereum/core/vm"
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/hemilabs/heminetwork/v2/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/v2/service/tbc"
 
 	"github.com/ethereum/go-ethereum/accounts"
 	"github.com/ethereum/go-ethereum/accounts/external"

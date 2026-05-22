@@ -28,8 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
-	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/hemilabs/heminetwork/v2/cmd/btctool/bdf"
+	"github.com/hemilabs/heminetwork/v2/service/tbc"
 	"github.com/holiman/uint256"
 	"golang.org/x/time/rate"
 
@@ -341,7 +341,6 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 		tbcCfg.EffectiveGenesisBlock = genesisHeader
 		tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
 		tbcCfg.LevelDBHome = config.HvmHeaderDataDir
-		tbcCfg.BlockheaderCacheSize = "0"
 		tbcCfg.BlockCacheSize = "0"
 		tbcCfg.AutoIndex = false
 		tbcCfg.BlockSanity = true
