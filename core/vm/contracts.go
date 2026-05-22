@@ -33,7 +33,7 @@ import (
 	"github.com/btcsuite/btcd/btcutil"
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/v2/database"
 	"github.com/holiman/uint256"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
@@ -53,7 +53,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/secp256r1"
 	"github.com/ethereum/go-ethereum/log"
 	"github.com/ethereum/go-ethereum/params"
-	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/hemilabs/heminetwork/v2/service/tbc"
 	"golang.org/x/crypto/ripemd160"
 	"golang.org/x/exp/slices"
 )
@@ -267,35 +267,32 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 
 	targetHash := targetHH.Hash
 
+	
 	// Already checked for (and fixed if required) indexer desync so if we got here UTXO and Tx indexes are the same,
 	// and we can use one of them for the rest of this function
-	tIndexInfo, err := TBCFullNode.TxIndexHash(MainCtx)
-	if err != nil {
-		// Critical error as this is likely a downstream bug or data corruption with full TBC node
-		log.Crit(fmt.Sprintf("Unable to move TBC full node indexers to block %s @ %d; unable to get TxIndexHash",
-			targetHH.Hash.String(), targetHH.Height), "err", err)
-	}
+	syncInfo := TBCFullNode.Synced(MainCtx)
 
-	if hashEquals(tIndexInfo.Hash, targetHash) {
+
+	if hashEquals(syncInfo.Tx.Hash, targetHash) {
 		// already done
 		return nil
 	}
 
-	ancestor, _, missingHeader, isFork, err := FindCommonAncestor(tIndexInfo, targetHH)
+	ancestor, _, missingHeader, isFork, err := FindCommonAncestor(&syncInfo.Tx, targetHH)
 	if err != nil {
 		if missingHeader != nil {
 			// This function should only be called after upstream caller ensures that TBC full node has the correct
 			// information to perform the requested indexer update, but return an error so upstream can decide how
 			// to handle.
 			log.Error(fmt.Sprintf("Unable to find common ancestor between indexers tip %s @ %d and best header"+
-				" %s @ %d, encountered a missing header %s", tIndexInfo.Hash.String(), tIndexInfo.Height,
+				" %s @ %d, encountered a missing header %s", syncInfo.Tx.Hash.String(), syncInfo.Tx.Height,
 				targetHH.Hash.String(), targetHH.Height, missingHeader.String()), "err", err)
 			panic("Clayton change me")
 			// return consensus.ErrFullTBCMissingBTCHeader
 		} else {
 			// An error without a missing header indicated, fail with crit
 			log.Crit(fmt.Sprintf("Unable to find common ancestor between indexers tip %s @ %d and best header"+
-				" %s @ %d, but no missing header in the path identified", tIndexInfo.Hash.String(), tIndexInfo.Height,
+				" %s @ %d, but no missing header in the path identified", syncInfo.Tx.Hash.String(), syncInfo.Tx.Height,
 				targetHH.Hash.String(), targetHH.Height), "err", err)
 		}
 	}
@@ -321,14 +318,14 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 	} else {
 		// Indexers need to first unwind to the ancestor, and then wind to the requested target
 		log.Debug(fmt.Sprintf("Moving full TBC indexers backward from %s @ %d to %s",
-			tIndexInfo.Hash.String(), tIndexInfo.Height, ancestor.BlockHash().String()))
+			syncInfo.Tx.Hash.String(), syncInfo.Tx.Height, ancestor.BlockHash().String()))
 
 		err = TBCFullNode.SyncIndexersToHash(MainCtx, ancestorHash)
 		if err != nil {
 			// Being unable to unwind the indexers to a previous point in the chain should never happen as all
 			// data should be available, so this indicates either a bug or data corruption.
 			log.Crit(fmt.Sprintf("While indexing over a fork, unable to unwind indexers from current hash "+
-				"%s to requested hash %s", tIndexInfo.Hash.String(), ancestor.BlockHash().String()), "err", err)
+				"%s to requested hash %s", syncInfo.Tx.Hash.String(), ancestor.BlockHash().String()), "err", err)
 			return err
 		}
 
@@ -341,21 +338,21 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 			//restore indexers to their original state
 			log.Error(fmt.Sprintf("While indexing over a fork, unable to wind indexers forward from common "+
 				"ancestor %s to requested tip %s, attempting to restore TBC full node indexers to previous state "+
-				"%s @ %d", ancestor.BlockHash().String(), targetHH.Hash.String(), tIndexInfo.Hash.String(),
-				tIndexInfo.Height), "err", err)
+				"%s @ %d", ancestor.BlockHash().String(), targetHH.Hash.String(), syncInfo.Tx.Hash.String(),
+				syncInfo.Tx.Height), "err", err)
 
-			errDuringFix := TBCFullNode.SyncIndexersToHash(MainCtx, tIndexInfo.Hash)
+			errDuringFix := TBCFullNode.SyncIndexersToHash(MainCtx, syncInfo.Tx.Hash)
 			if errDuringFix != nil {
 				// Unable to undo our previous unwind, this should never happen as all data should be available
 				// so this indicates either a bug or data corruption
 				log.Crit(fmt.Sprintf("While indexing over a fork, encountered an error indexing forward from "+
 					"common ancestor %s, and was unable to restore previous state by undoing unwind by indexing back "+
-					"to original tip %s @ %d", ancestor.BlockHash().String(), tIndexInfo.Hash.String(),
-					tIndexInfo.Height))
+					"to original tip %s @ %d", ancestor.BlockHash().String(), syncInfo.Tx.Hash.String(),
+					syncInfo.Tx.Height))
 			}
 
 			log.Error(fmt.Sprintf("Restored indexer to original state at tip %s @ %d after encoutering error "+
-				" winding indexers forward to requested tip %s @ %d", tIndexInfo.Hash.String(), tIndexInfo.Height,
+				" winding indexers forward to requested tip %s @ %d", syncInfo.Tx.Hash.String(), syncInfo.Tx.Height,
 				targetHH.Hash.String(), targetHH.Height))
 
 			// Upstream caller should have checked that the TBC full node had the required block information to perform
@@ -375,22 +372,13 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 // FixMismatchedIndexesIfRequired moves both utxo and tx index to the utxo
 // index's hash
 func FixMismatchedIndexesIfRequired(ctx context.Context) {
-	uIndexInfo, err := TBCFullNode.UtxoIndexHash(ctx)
-	if err != nil {
-		log.Crit("Unable to get UtxoIndexHash", "err", err)
-	}
+	syncInfo := TBCFullNode.Synced(ctx)
 
-	log.Info("going to sync indexers to utxo hash")
-	err = TBCFullNode.SyncIndexersToHash(ctx, uIndexInfo.Hash)
+	err := TBCFullNode.SyncIndexersToHash(ctx, syncInfo.Utxo.Hash)
 	if err != nil {
-		tIndexInfo, err := TBCFullNode.TxIndexHash(ctx)
-		if err != nil {
-			log.Crit("Unable to get TxIndexHash", "err", err)
-		}
-
 		log.Crit(fmt.Sprintf("Unable to move tx indexer up to utxo indexer "+
-			"utxo: %s @ %d, tx: %s @ %d", uIndexInfo.Hash.String(),
-			uIndexInfo.Height, tIndexInfo.Hash.String(), tIndexInfo.Height), "err", err)
+			"utxo: %s @ %d, tx: %s @ %d", syncInfo.Utxo.Hash.String(),
+			syncInfo.Utxo.Height, syncInfo.Tx.Hash.String(), syncInfo.Tx.Height), "err", err)
 	}
 }
 
@@ -1251,14 +1239,10 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 		}
 	}
 
-	// Assumes UTXO and Tx indexers are in sync when hVM precompile calls are performed
-	utxoIndex, err := TBCFullNode.UtxoIndexHash(MainCtx)
-	if err != nil {
-		log.Error("hVM precompile unable to get UTXO indexer status", "err", err)
-	}
+	syncInfo := TBCFullNode.Synced(MainCtx)
 
 	// Get header and height that UTXO indexer (and assumed Tx indexer) is synced to
-	bestHeader, height, err := TBCFullNode.BlockHeaderByHash(MainCtx, utxoIndex.Hash)
+	bestHeader, height, err := TBCFullNode.BlockHeaderByHash(MainCtx, syncInfo.Utxo.Hash)
 
 	if err != nil {
 		log.Error("Unable to lookup best header!")
