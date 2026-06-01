@@ -5,7 +5,8 @@
 # GitHub Actions workflow to publish Docker images.
 name: "Docker"
 on:
-  workflow_dispatch
+  push:
+  workflow_dispatch:
 
 concurrency:
   group: "docker-${{ github.workflow }}-${{ github.event.number || github.ref }}"
