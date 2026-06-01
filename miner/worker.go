@@ -51,6 +51,12 @@ const (
 var (
 	errTxConditionalInvalid = errors.New("transaction conditional failed")
 
+	// errHVMInvalidPrecompileInput is used to drop a regular (non-deposit) pool
+	// transaction from a block being built when it invoked an hVM precompile with
+	// invalid input. Force-included / deposit transactions are exempt and remain
+	// deterministically included (as a no-op) to keep derivation consistent.
+	errHVMInvalidPrecompileInput = errors.New("transaction invoked hVM precompile with invalid input")
+
 	errBlockInterruptedByNewHead  = errors.New("new head arrived while building block")
 	errBlockInterruptedByRecommit = errors.New("recommit interrupt while building block")
 	errBlockInterruptedByTimeout  = errors.New("timeout while building block")
@@ -531,7 +537,19 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Gas()
 	)
+	env.evm.ResetHVMInvalidInput()
 	receipt, err := core.ApplyTransaction(env.evm, env.gasPool, env.state, env.header, tx, &env.header.GasUsed)
+	// Build-only rejection: if this transaction invoked an hVM precompile with
+	// invalid input, refuse to sequence it so it never lands in a block. Deposit /
+	// force-included transactions are exempt — they must be deterministically
+	// included (as a no-op) or derivation would diverge across nodes; their bad
+	// precompile call has already been normalized to an empty return. This check
+	// only runs while building (applyTransaction is miner-only); block validation
+	// via core.ApplyTransaction is unaffected.
+	if err == nil && env.evm.HVMInvalidInput() &&
+		!tx.IsDepositTx() && !tx.IsBtcAttributesDepositedTx() && !tx.IsPopPayoutTx() {
+		err = errHVMInvalidPrecompileInput
+	}
 	if err != nil {
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.SetGas(gp)
@@ -706,6 +724,14 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			// mark as rejected so that it can be ejected from the mempool
 			tx.SetRejected()
 			log.Warn("Skipping account, transaction with failed conditional", "sender", from, "hash", ltx.Hash, "err", err)
+			txs.Pop()
+
+		case errors.Is(err, errHVMInvalidPrecompileInput):
+			// Tx invoked an hVM precompile with invalid input. Drop it from the block
+			// and mark it rejected so the pool ejects it rather than reselecting it
+			// on every build.
+			tx.SetRejected()
+			log.Warn("Skipping transaction that invoked hVM precompile with invalid input", "sender", from, "hash", ltx.Hash)
 			txs.Pop()
 
 		case env.rpcCtx != nil && env.rpcCtx.Err() != nil && errors.Is(err, env.rpcCtx.Err()):

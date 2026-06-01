@@ -141,6 +141,14 @@ type EVM struct {
 	// TODO: Decide whether to move to Context
 	// The Hemi header hash this EVM is executed within. Required for making sure hVM calls return the correct state.
 	blockExecutionContext common.Hash
+
+	// hvmInvalidInput is raised when an hVM precompile is invoked with malformed
+	// input during this EVM's execution. It does not affect execution/consensus
+	// (the precompile call is normalized to an empty successful return); it exists
+	// purely so the block builder can refuse to sequence the offending mempool
+	// transaction. Reset per transaction by the miner. See miner.applyTransaction.
+	hvmInvalidInput bool
+
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
 
@@ -157,6 +165,31 @@ type EVM struct {
 func (evm *EVM) SetExecutionContext(headerHash common.Hash) {
 	evm.blockExecutionContext = headerHash
 }
+
+// runPrecompile dispatches a precompiled contract and normalizes the hVM
+// "invalid input" sentinel. When an hVM precompile reports malformed input we
+// must keep execution/consensus byte-for-byte identical to the historical no-op
+// behavior (empty successful return, only the fixed RequiredGas consumed), so
+// the sentinel is swallowed here. We additionally raise evm.hvmInvalidInput so
+// the block builder can choose to reject the transaction at sequencing time
+// without affecting block validation. See miner.applyTransaction.
+func (evm *EVM) runPrecompile(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
+	ret, remainingGas, err := RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+	if errors.Is(err, ErrHVMInvalidPrecompileInput) {
+		evm.hvmInvalidInput = true
+		return nil, remainingGas, nil
+	}
+	return ret, remainingGas, err
+}
+
+// HVMInvalidInput reports whether an hVM precompile was invoked with invalid
+// input during the most recent execution. Used by the block builder; reset with
+// ResetHVMInvalidInput between transactions.
+func (evm *EVM) HVMInvalidInput() bool { return evm.hvmInvalidInput }
+
+// ResetHVMInvalidInput clears the invalid-input flag. The miner calls this
+// before applying each candidate transaction.
+func (evm *EVM) ResetHVMInvalidInput() { evm.hvmInvalidInput = false }
 
 // NewEVM constructs an EVM instance with the supplied block context, state
 // database and several configs. It meant to be used throughout the entire
@@ -318,7 +351,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 	evm.Context.Transfer(evm.StateDB, caller, addr, value)
 
 	if isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		code := evm.resolveCode(addr)
@@ -383,7 +416,7 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -427,7 +460,7 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and make initialise the delegate values
 		//
@@ -480,7 +513,7 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 	evm.StateDB.AddBalance(addr, new(uint256.Int), tracing.BalanceChangeTouchAccount)
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
