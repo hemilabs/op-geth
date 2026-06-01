@@ -1046,6 +1046,7 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 	if input == nil || len(input) != BTC_TXID_LENGTH_BYTES {
 		log.Debug("btcTxConfirmations run called with nil or input that is not the length of a BTC TxId",
 			"input", fmt.Sprintf("%x", input))
+		return nil, nil
 	}
 
 	log.Debug("btcTxConfirmations called", "txid", input)
