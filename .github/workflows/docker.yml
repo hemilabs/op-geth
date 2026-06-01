@@ -5,8 +5,7 @@
 # GitHub Actions workflow to publish Docker images.
 name: "Docker"
 on:
-  push:
-#    branches: [ "hemi" ]
+  workflow_dispatch
 
 concurrency:
   group: "docker-${{ github.workflow }}-${{ github.event.number || github.ref }}"
