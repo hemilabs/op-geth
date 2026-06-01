@@ -921,7 +921,7 @@ func (c *btcBalAddr) RequiredGas(input []byte) uint64 {
 func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) < MIN_BTC_ADDRESS_LENGTH {
 		log.Debug("btcBalAddr run called with nil or too small address as input", "input", input)
-		return nil, nil
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
@@ -973,6 +973,11 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 	if input == nil || len(input) != BTC_TXID_LENGTH_BYTES {
 		log.Debug("btcTxConfirmations run called with nil or input that is not the length of a BTC TxId",
 			"input", fmt.Sprintf("%x", input))
+		// Signal invalid input. The EVM precompile dispatch (EVM.runPrecompile)
+		// normalizes this to an empty successful return so execution semantics are
+		// unchanged, while flagging the call so the sequencer can reject the tx at
+		// block-building time instead of including a no-op. See miner.applyTransaction.
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	log.Debug("btcTxConfirmations called", "txid", input)
@@ -1049,7 +1054,7 @@ func (c *btcAddrToScript) RequiredGas(input []byte) uint64 {
 func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) < MIN_BTC_ADDRESS_LENGTH {
 		log.Debug("btcAddrToScript run called with nil or too small input", "input", fmt.Sprintf("%x", input))
-		return nil, nil
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
@@ -1180,7 +1185,7 @@ func (c *btcHeaderN) RequiredGas(input []byte) uint64 {
 func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if input == nil || len(input) != 4 {
 		log.Debug("btcHeaderN run called with nil or != 4 input", "input", fmt.Sprintf("%x", input))
-		return nil, fmt.Errorf("btcHeaderN called with nill or != 4 input")
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
@@ -1286,7 +1291,7 @@ func (c *btcUtxosAddrList) RequiredGas(input []byte) uint64 {
 func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	// Must be an address plus 4 bytes for pagination info
 	if len(input) < MIN_BTC_ADDRESS_LENGTH+4 {
-		return nil, nil
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
@@ -1363,7 +1368,7 @@ func (c *btcInputByTxid) RequiredGas(input []byte) uint64 {
 
 func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) != BTC_TXID_LENGTH_BYTES+4 { // 32 bytes txid, 2 bytes for input index
-		return nil, nil
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
@@ -1391,11 +1396,11 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 	slices.Reverse(txid)
 
 	txidEnd := len(input) - 4
-	inputIdx := (uint32(input[txidEnd+1]&0xFF) << 8) |
-		uint32(input[txidEnd+2]&0xFF)
+	inputIdx := (uint32(input[txidEnd]&0xFF) << 8) |
+		uint32(input[txidEnd+1]&0xFF)
 
-	maxInputScriptSigSize := (uint32(input[txidEnd+3]&0xFF) << 8) |
-		uint32(input[txidEnd+4]&0xFF)
+	maxInputScriptSigSize := (uint32(input[txidEnd+2]&0xFF) << 8) |
+		uint32(input[txidEnd+3]&0xFF)
 
 	log.Debug(fmt.Sprintf("Looking up input %d for txid %x", inputIdx, txid))
 
@@ -1490,7 +1495,7 @@ func (c *btcOutputByTxid) RequiredGas(input []byte) uint64 {
 
 func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) != BTC_TXID_LENGTH_BYTES+4 { // 32 bytes txid, 2 bytes for output index
-		return nil, nil
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
@@ -1518,10 +1523,10 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 	slices.Reverse(txid)
 
 	txidEnd := len(input) - 4
-	outputIdx := (uint32(input[txidEnd+1]&0xFF) << 8) |
-		uint32(input[txidEnd+2]&0xFF)
-	maxOutputScriptSize := (uint32(input[txidEnd+3]&0xFF) << 8) |
-		uint32(input[txidEnd+4]&0xFF)
+	outputIdx := (uint32(input[txidEnd]&0xFF) << 8) |
+		uint32(input[txidEnd+1]&0xFF)
+	maxOutputScriptSize := (uint32(input[txidEnd+2]&0xFF) << 8) |
+		uint32(input[txidEnd+3]&0xFF)
 
 	log.Info(fmt.Sprintf("Looking up output %d for txid %x", outputIdx, txid))
 
@@ -1590,7 +1595,7 @@ func (c *btcTxGetInputWitness) RequiredGas(input []byte) uint64 {
 
 func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) != BTC_TXID_LENGTH_BYTES+6 { // 32 bytes txid, 2 bytes for output index
-		return nil, nil
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
@@ -1618,12 +1623,12 @@ func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]by
 	slices.Reverse(txid)
 
 	txidEnd := len(input) - 6
-	inputIdx := (uint32(input[txidEnd+1]&0xFF) << 8) |
-		uint32(input[txidEnd+2]&0xFF)
-	inputWitnessIndex := (uint32(input[txidEnd+3]&0xFF) << 8) |
-		uint32(input[txidEnd+4]&0xFF)
-	maxWitnessLength := (uint32(input[txidEnd+5]&0xFF) << 8) |
-		uint32(input[txidEnd+6]&0xFF)
+	inputIdx := (uint32(input[txidEnd]&0xFF) << 8) |
+		uint32(input[txidEnd+1]&0xFF)
+	inputWitnessIndex := (uint32(input[txidEnd+2]&0xFF) << 8) |
+		uint32(input[txidEnd+3]&0xFF)
+	maxWitnessLength := (uint32(input[txidEnd+4]&0xFF) << 8) |
+		uint32(input[txidEnd+5]&0xFF)
 
 	log.Debug(fmt.Sprintf("Looking up witness %d for input %d in txid %x", inputWitnessIndex, inputIdx, txid))
 
@@ -1686,7 +1691,7 @@ func (c *btcTxByTxid) RequiredGas(input []byte) uint64 {
 
 func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error) {
 	if len(input) != BTC_TXID_LENGTH_BYTES+4 { // 4 bytes bitflag, 32 bytes txid. TODO: Allow 32-byte input (just TxID) and assume some default bitflag values?
-		return nil, nil
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	if TBCFullNode == nil {
