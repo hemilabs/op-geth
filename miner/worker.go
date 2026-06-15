@@ -51,12 +51,6 @@ const (
 var (
 	errTxConditionalInvalid = errors.New("transaction conditional failed")
 
-	// errHVMInvalidPrecompileInput is used to drop a regular (non-deposit) pool
-	// transaction from a block being built when it invoked an hVM precompile with
-	// invalid input. Force-included / deposit transactions are exempt and remain
-	// deterministically included (as a no-op) to keep derivation consistent.
-	errHVMInvalidPrecompileInput = errors.New("transaction invoked hVM precompile with invalid input")
-
 	errBlockInterruptedByNewHead  = errors.New("new head arrived while building block")
 	errBlockInterruptedByRecommit = errors.New("recommit interrupt while building block")
 	errBlockInterruptedByTimeout  = errors.New("timeout while building block")
@@ -146,6 +140,15 @@ type generateParams struct {
 	rpcCtx context.Context // context to control block-building RPC work. No RPC allowed if nil.
 }
 
+// shouldFillFromMempool reports whether generateWork should pull transactions from the mempool to fill the
+// block. A block is filled from the mempool unless it is explicitly a no-tx (empty/derived) block, or it
+// carries a Bitcoin Attributes Deposited tx — BtcAttr blocks deliberately exclude mempool txs so they never
+// mix BTC-view-advancing system state with user transactions. Kept as a named predicate so this exclusion
+// invariant is unit-testable without standing up a live TBC node (which generating a real BtcAttr requires).
+func shouldFillFromMempool(noTxs, containsBtcAttrDepTx bool) bool {
+	return !noTxs && !containsBtcAttrDepTx
+}
+
 // generateWork generates a sealing block based on the given parameters.
 func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPayloadResult {
 	work, err := miner.prepareWork(genParam, witness)
@@ -193,8 +196,8 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 
 	containsBtcAttrDepTx := false
 	if !genParam.noTxs && len(genParam.txs) < 2 {
-		// First, check whether a new Bitcoin Attributes Deposited tx should be included.
-		// This is a redundant check since GetBitcoinAttributesForNextBlock will return nil with no error if hVM is not enabled/activated.
+		// Check whether a new Bitcoin Attributes Deposited tx should be included. The IsHvmEnabled/IsHvm0
+		// gate is redundant: GetBitcoinAttributesForNextBlock returns nil with no error when hVM is off.
 		if miner.backend.BlockChain().IsHvmEnabled() && miner.chainConfig.IsHvm0(genParam.timestamp) {
 			btcAttrDepTx, err := miner.backend.BlockChain().GetBitcoinAttributesForNextBlock(work.header.Time)
 			if err != nil {
@@ -210,29 +213,17 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 				}
 				work.tcount++
 				containsBtcAttrDepTx = true
+				log.Info("Block contains BTC Attributes Deposited transaction, not adding mempool transactions")
 			}
 		} else {
 			log.Info("worker not generating a Bitcoin Attributes Deposited transaction")
 		}
-
-		// use shared interrupt if present
-		interrupt := genParam.interrupt
-		if interrupt == nil {
-			interrupt = new(atomic.Int32)
-		}
-
-		if !containsBtcAttrDepTx {
-			log.Info("Not including BTC Attributes Deposited transaction, so adding mempool transactions")
-			err = miner.fillTransactions(interrupt, work)
-			if errors.Is(err, errBlockInterruptedByResolve) {
-				log.Info("Block building got interrupted by payload resolution")
-			}
-		} else {
-			log.Info("Block contains BTC Attributes Deposited transaction, not adding mempool transactions")
-		}
 	}
 
-	if !genParam.noTxs && !containsBtcAttrDepTx {
+	// Fill the block from the mempool unless it is a no-tx (empty/derived) block or it carries a Bitcoin
+	// Attributes Deposited tx (BtcAttr blocks deliberately exclude mempool txs). A single fill covers both
+	// the no-BtcAttr len<2 case and the >=2-force-tx case, under the standard recommit slot-time bound.
+	if shouldFillFromMempool(genParam.noTxs, containsBtcAttrDepTx) {
 		// use shared interrupt if present
 		interrupt := genParam.interrupt
 		if interrupt == nil {
@@ -537,20 +528,17 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Gas()
 	)
-	env.evm.ResetHVMInvalidInput()
+	// A transaction that invokes an hVM precompile with invalid input is NOT
+	// rejected here: EVM.runPrecompile normalizes the invalid-input sentinel to an
+	// empty successful return, so the tx is included as a no-op — identical to how
+	// every validator applies it on import. (Build-time rejection used to live here
+	// but was removed: it tried to RevertToSnapshot after core.ApplyTransaction had
+	// already Finalised the state, which panics, and it left header.GasUsed inflated.)
 	receipt, err := core.ApplyTransaction(env.evm, env.gasPool, env.state, env.header, tx, &env.header.GasUsed)
-	// Build-only rejection: if this transaction invoked an hVM precompile with
-	// invalid input, refuse to sequence it so it never lands in a block. Deposit /
-	// force-included transactions are exempt — they must be deterministically
-	// included (as a no-op) or derivation would diverge across nodes; their bad
-	// precompile call has already been normalized to an empty return. This check
-	// only runs while building (applyTransaction is miner-only); block validation
-	// via core.ApplyTransaction is unaffected.
-	if err == nil && env.evm.HVMInvalidInput() &&
-		!tx.IsDepositTx() && !tx.IsBtcAttributesDepositedTx() && !tx.IsPopPayoutTx() {
-		err = errHVMInvalidPrecompileInput
-	}
 	if err != nil {
+		// core.ApplyTransaction only returns an error before it Finalises/charges
+		// gas, so reverting state and the gas pool fully undoes the attempt and the
+		// snapshot is still valid; header.GasUsed was never incremented.
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.SetGas(gp)
 	}
@@ -724,14 +712,6 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			// mark as rejected so that it can be ejected from the mempool
 			tx.SetRejected()
 			log.Warn("Skipping account, transaction with failed conditional", "sender", from, "hash", ltx.Hash, "err", err)
-			txs.Pop()
-
-		case errors.Is(err, errHVMInvalidPrecompileInput):
-			// Tx invoked an hVM precompile with invalid input. Drop it from the block
-			// and mark it rejected so the pool ejects it rather than reselecting it
-			// on every build.
-			tx.SetRejected()
-			log.Warn("Skipping transaction that invoked hVM precompile with invalid input", "sender", from, "hash", ltx.Hash)
 			txs.Pop()
 
 		case env.rpcCtx != nil && env.rpcCtx.Err() != nil && errors.Is(err, env.rpcCtx.Err()):

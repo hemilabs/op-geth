@@ -237,7 +237,7 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 	}
 	// Validate Optimism extraData format
 	if chain.Config().IsOptimism() {
-		if err := eip1559.ValidateOptimismExtraData(chain.Config(), header.Time, header.Extra); err != nil {
+		if err := eip1559.ValidateOptimismExtraData(chain.Config(), header.Time, header.Extra, header.GasLimit); err != nil {
 			return fmt.Errorf("invalid optimism extraData: %w", err)
 		}
 	}

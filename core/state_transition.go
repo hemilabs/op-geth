@@ -687,7 +687,12 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 
 		// Check that we are post bedrock to enable op-geth to be able to create pseudo pre-bedrock blocks (these are pre-bedrock, but don't follow l2 geth rules)
 		// Note optimismConfig will not be nil if rules.IsOptimismBedrock is true
-		if optimismConfig := st.evm.ChainConfig().Optimism; optimismConfig != nil && rules.IsOptimismBedrock && !st.msg.IsDepositTx {
+		//
+		// PoP payout (0x7D) and BTC Attributes Deposited (0x7C) are excluded alongside deposits: they pay
+		// no base/L1/operator fee. The Regolith-partitioned deposit-class early-returns above already
+		// return for them, so this guard is a no-op today, but it keeps the L1CostFunc(RollupCostData)
+		// charge from applying if those early-returns are later refactored.
+		if optimismConfig := st.evm.ChainConfig().Optimism; optimismConfig != nil && rules.IsOptimismBedrock && !st.msg.IsDepositTx && !st.msg.IsPopPayoutTx && !st.msg.IsBtcAttributesDepositedTx {
 			gasCost := new(big.Int).Mul(new(big.Int).SetUint64(st.gasUsed()), st.evm.Context.BaseFee)
 			amtU256, overflow := uint256.FromBig(gasCost)
 			if overflow {

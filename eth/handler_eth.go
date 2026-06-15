@@ -116,8 +116,6 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
 	case *eth.BTCBlocksPacket:
-		// TODO remove, for debugging
-		fmt.Sprintf("ethHandler.Handle() called with a BTCBlocksPacket")
 		return nil
 
 	default:

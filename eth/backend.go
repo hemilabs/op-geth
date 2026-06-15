@@ -145,6 +145,38 @@ type Ethereum struct {
 	nodeCloser func() error
 }
 
+// buildHvmHeaderNodeConfig assembles the ExternalHeaderMode hVM consensus header-node TBC config from
+// the node's hVM settings. Extracted from New so a test can assert the resulting (Network,
+// GenesisHeightOffset, EffectiveGenesisBlock) triple is a canonical pairing: a backend-only change to
+// the network literal or field mapping would otherwise brick the fleet at startup (initHvmHeaderNode
+// refuses a non-canonical pair) while tests stay green. See TestProductionHvmHeaderConfigIsCanonical.
+func buildHvmHeaderNodeConfig(config *ethconfig.Config) *tbc.Config {
+	tbcCfg := tbc.NewDefaultConfig()
+
+	genesisHeader, err := bdf.Hex2Header(config.HvmGenesisHeader)
+	if err != nil {
+		log.Crit("Unable to deserialize hVM Genesis Header", "header", config.HvmGenesisHeader, "err", err)
+	}
+
+	tbcCfg.ExternalHeaderMode = true
+	tbcCfg.EffectiveGenesisBlock = genesisHeader
+	tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
+	tbcCfg.LevelDBHome = config.HvmHeaderDataDir
+	tbcCfg.BlockheaderCacheSize = "0"
+	tbcCfg.BlockCacheSize = "0"
+	tbcCfg.AutoIndex = false
+	tbcCfg.BlockSanity = true
+	tbcCfg.MaxCachedTxs = 0
+	tbcCfg.MempoolEnabled = false
+
+	// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net.
+	// This literal is consensus-coupled: it must remain a network for which hvmGenesisCheckpoints pins the
+	// (HvmGenesisHeader, HvmGenesisHeight) pair, or initHvmHeaderNode's genesis-pairing guard refuses to start.
+	tbcCfg.Network = "testnet3"
+
+	return tbcCfg
+}
+
 // New creates a new Ethereum object (including the
 // initialisation of the common Ethereum object)
 func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethereum, error) {
@@ -330,26 +362,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, &overrides, eth.engine, options, nil, &config.TransactionHistory, ctx)
 
 	if config.HvmEnabled {
-		tbcCfg := tbc.NewDefaultConfig()
-
-		genesisHeader, err := bdf.Hex2Header(config.HvmGenesisHeader)
-		if err != nil {
-			log.Crit("Unable to deserialize hVM Genesis Header", "header", config.HvmGenesisHeader, "err", err)
-		}
-
-		tbcCfg.ExternalHeaderMode = true
-		tbcCfg.EffectiveGenesisBlock = genesisHeader
-		tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
-		tbcCfg.LevelDBHome = config.HvmHeaderDataDir
-		tbcCfg.BlockheaderCacheSize = "0"
-		tbcCfg.BlockCacheSize = "0"
-		tbcCfg.AutoIndex = false
-		tbcCfg.BlockSanity = true
-		tbcCfg.MaxCachedTxs = 0
-		tbcCfg.MempoolEnabled = false
-
-		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
-		tbcCfg.Network = "testnet3"
+		tbcCfg := buildHvmHeaderNodeConfig(config)
 
 		log.Info(fmt.Sprintf("Setting up hVM Header node with effectiveGenesisBlock=%s, genesisHeightOffset=%d, levelDBHome=%s, network=%s",
 			tbcCfg.EffectiveGenesisBlock.BlockHash().String(), tbcCfg.GenesisHeightOffset, tbcCfg.LevelDBHome, tbcCfg.Network))

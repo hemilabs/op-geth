@@ -304,3 +304,98 @@ func TestCalcBaseFeeJovian(t *testing.T) {
 		})
 	}
 }
+
+// TestCalcBaseFeeInnerGasTargetBoundary pins both sides of the parentGasTarget boundary the guard
+// protects: target==0 (elasticity > gasLimit) must not panic and must return parent.BaseFee unchanged (a
+// copy); target==1 (elasticity == gasLimit, smallest valid target) must be computed normally, not
+// swallowed into the fallback. target==1 kills an off-by-one mutation from `== 0` to `<= 1` that would
+// freeze the base fee for the smallest valid target (wrong base fee => split). Removing the guard panics
+// the two target==0 subcases.
+func TestCalcBaseFeeInnerGasTargetBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name         string
+		cfg          *params.ChainConfig
+		parent       *types.Header
+		elasticity   uint64
+		wantFallback bool // true => the guard fires and returns parent.BaseFee unchanged
+	}{
+		{
+			name: "target 0 non-jovian (guard returns parent base fee)",
+			cfg:  config(),
+			// GasUsed > 0 so the pre-guard code would reach num.Div(num, parentGasTarget=0). A non-round
+			// base fee proves the fallback tracks parent.BaseFee, not a hardcoded constant.
+			parent:       &types.Header{GasLimit: 5, GasUsed: 10, BaseFee: big.NewInt(7_000_000_013), Time: 0},
+			elasticity:   10, // > GasLimit -> target 0
+			wantFallback: true,
+		},
+		{
+			name: "target 0 jovian (guard precedes the nil-BlobGasUsed check)",
+			cfg:  opConfig(),
+			// Jovian active and BlobGasUsed left nil: without the guard this panics at the divide or at the
+			// "Jovian parent block has nil BlobGasUsed" check.
+			parent:       &types.Header{GasLimit: 5, GasUsed: 10, BaseFee: big.NewInt(3_000_000_017), Time: testJovianTime},
+			elasticity:   10,
+			wantFallback: true,
+		},
+		{
+			name: "target 1 (elasticity == gasLimit) computes a real base fee, not the fallback",
+			cfg:  config(),
+			// parentGasTarget = 5/5 = 1; GasUsed 10 > target 1 -> the base fee must INCREASE, not freeze.
+			parent:       &types.Header{GasLimit: 5, GasUsed: 10, BaseFee: big.NewInt(1_000_000_000), Time: 0},
+			elasticity:   5, // == GasLimit -> target 1 (smallest valid target)
+			wantFallback: false,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var got *big.Int
+			require.NotPanics(t, func() {
+				got = calcBaseFeeInner(tc.cfg, tc.parent, tc.elasticity, 250)
+			}, "calcBaseFeeInner must not panic")
+			if tc.wantFallback {
+				require.Zero(t, got.Cmp(tc.parent.BaseFee), "guard must return the parent base fee unchanged, got %s", got)
+				require.NotSame(t, tc.parent.BaseFee, got, "must return a copy, not the parent.BaseFee pointer")
+			} else {
+				require.Positive(t, got.Cmp(tc.parent.BaseFee),
+					"target==1 with GasUsed>target must compute a real (increased) base fee, not the parent.BaseFee fallback; got %s", got)
+			}
+		})
+	}
+}
+
+// TestCalcBaseFeeNoPanicEndToEnd drives the public CalcBaseFee through the real decode seam
+// (DecodeOptimismExtraData(parent.Extra) -> calcBaseFeeInner) with a parent whose extraData encodes
+// elasticity > GasLimit, confirming the guard is reached via the production path, not just the inner.
+// Such headers are rejected by ValidateOptimismExtraData; the guard must still prevent a panic on any
+// path that bypasses validation. Covers Holocene and Jovian (nil and non-nil BlobGasUsed; the guard
+// precedes the Jovian nil-BlobGasUsed check).
+func TestCalcBaseFeeNoPanicEndToEnd(t *testing.T) {
+	const elasticity = uint64(10) // > the GasLimit below -> parentGasTarget 0
+	zeroBlob := uint64(0)
+	for _, tc := range []struct {
+		name        string
+		time        uint64
+		extra       []byte
+		blobGasUsed *uint64
+	}{
+		{name: "holocene", time: testHoloceneTime, extra: EncodeHoloceneExtraData(250, elasticity)},
+		{name: "jovian nil BlobGasUsed", time: testJovianTime, extra: EncodeJovianExtraData(250, elasticity, 0), blobGasUsed: nil},
+		{name: "jovian non-nil BlobGasUsed", time: testJovianTime, extra: EncodeJovianExtraData(250, elasticity, 0), blobGasUsed: &zeroBlob},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			parent := &types.Header{
+				Number:      common.Big32,
+				GasLimit:    5, // < elasticity -> parentGasTarget 0 after decode
+				GasUsed:     10,
+				BaseFee:     big.NewInt(1_000_000_000),
+				Time:        tc.time,
+				Extra:       tc.extra,
+				BlobGasUsed: tc.blobGasUsed,
+			}
+			var got *big.Int
+			require.NotPanics(t, func() {
+				got = CalcBaseFee(opConfig(), parent, parent.Time+2)
+			}, "CalcBaseFee must not panic when the decoded elasticity exceeds the gas limit")
+			require.Zero(t, got.Cmp(parent.BaseFee), "must fall back to the parent base fee, got %s", got)
+		})
+	}
+}

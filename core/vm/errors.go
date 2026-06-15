@@ -39,12 +39,9 @@ var (
 	ErrInvalidCode              = errors.New("invalid code: must not begin with 0xef")
 	ErrNonceUintOverflow        = errors.New("nonce uint64 overflow")
 
-	// ErrHVMInvalidPrecompileInput is returned by an hVM precompile when it is
-	// invoked with malformed input (e.g. a TxID query that is not 32 bytes).
-	// It is normalized to an empty successful return inside the EVM precompile
-	// dispatch (see EVM.runPrecompile) so execution/consensus semantics are
-	// unchanged, while a flag is raised so the block builder can refuse to
-	// sequence the offending mempool transaction. See miner.applyTransaction.
+	// ErrHVMInvalidPrecompileInput is returned by an hVM precompile when invoked with malformed
+	// input (e.g. a TxID query that is not 32 bytes). EVM.runPrecompile normalizes it to an empty
+	// successful return, so the transaction is included as a no-op identically on builders and validators.
 	ErrHVMInvalidPrecompileInput = errors.New("hVM precompile called with invalid input")
 
 	// errStopToken is an internal token indicating interpreter loop termination,

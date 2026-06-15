@@ -325,13 +325,17 @@ func (p *TxPool) Add(txs []*types.Transaction, sync bool) []error {
 	splits := make([]int, len(txs))
 
 	for i, tx := range txs {
+		// Mark this transaction as belonging to no subpool. Must be set before the
+		// custom-type early-out below: a skipped BtcAttributesDeposited / PopPayout tx
+		// left at splits[i]==0 (the make() zero value) would be misread by the error
+		// reassembly loop as "handled by subpool 0", over-consuming errsets[0] and
+		// panicking with index-out-of-range. -1 makes them resolve to ErrTxTypeNotSupported.
+		splits[i] = -1
+
 		if tx.IsBtcAttributesDepositedTx() || tx.IsPopPayoutTx() {
 			// Should never happen, but extra protection
 			continue
 		}
-
-		// Mark this transaction belonging to no-subpool
-		splits[i] = -1
 
 		// Try to find a subpool that accepts the transaction
 		for j, subpool := range p.subpools {

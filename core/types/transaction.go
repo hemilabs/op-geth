@@ -387,6 +387,14 @@ func (tx *Transaction) IsBtcAttributesDepositedTx() bool {
 	return tx.Type() == BtcAttributesDepositedTxType
 }
 
+// IsZeroDAFootprintTx reports whether the tx is a system tx (deposit, PoP payout, or BTC Attributes
+// Deposited) that is not posted to L1 data availability and so must be excluded from the block's DA
+// footprint. The builder (CalcDAFootprint) and the receipt derivation (deriveOPStackFields) must use
+// this same set, or they would disagree on BlobGasUsed.
+func (tx *Transaction) IsZeroDAFootprintTx() bool {
+	return tx.IsDepositTx() || tx.IsPopPayoutTx() || tx.IsBtcAttributesDepositedTx()
+}
+
 // IsSystemTx returns true for deposits that are system transactions. These transactions
 // are executed in an unmetered environment & do not contribute to the block gas limit.
 func (tx *Transaction) IsSystemTx() bool {

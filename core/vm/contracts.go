@@ -52,6 +52,7 @@ import (
 	"github.com/ethereum/go-ethereum/crypto/kzg4844"
 	"github.com/ethereum/go-ethereum/crypto/secp256r1"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"golang.org/x/crypto/ripemd160"
@@ -86,12 +87,22 @@ var TBCUpstreamTip *wire.BlockHeader
 // TODO: Refactor all exported TBC methods to always use this context instead of allowing one to be passed in?
 var MainCtx context.Context
 
+// hvmQueryMap is a per-block precompile-result cache. It is currently DEAD: isValidBlock is always false
+// because evm.blockExecutionContext is never assigned, so every cache branch is unreachable. The
+// machinery is kept as scaffolding for wiring block-scoped execution context (which would also make the
+// build path read a pinned TBC view); reviving it must fix the shadowed-k write bug in the precompiles
+// (the read uses an inner k, the write the outer zero-valued k) and include the indexer position in the key.
 // TODO: Eventually store this on-disk so old transaction execution can be simulated if required.
-// Does not affect transaction execution validity, only useful for performance improvements on repeated calls
-// and re-computation of hVM calls in historical transactions in already processed blocks.
 var hvmQueryMap = make(map[hVMQueryKey][]byte)
 
 var HvmNullBlockHash = make([]byte, 32)
+
+// hvmPrecompileInvalidDataCounter counts hVM precompile calls that hit the runPrecompileGuarded boundary
+// — the load-bearing safety valve that contains an invalid-data fault from the embedded Bitcoin node as a
+// deterministic no-op. A sustained non-zero rate means malformed or inconsistent indexed Bitcoin data is
+// reaching the precompiles fleet-wide; alert on it. Distinct from the benign deterministic malformed-input
+// no-op, which does NOT increment this counter.
+var hvmPrecompileInvalidDataCounter = metrics.NewRegisteredCounter("vm/hvm/precompile/invalid_data", nil)
 
 func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 	syncInfo := TBCFullNode.Synced(MainCtx)
@@ -107,24 +118,78 @@ func RestartTBCFullNode(ctx context.Context) error {
 	return err
 }
 
-// SetupTBCFullNode Sets up the TBC full node that will be available for hVM precompiles
+// validateTBCFullNodeConfig enforces the required configuration for the embedded Bitcoin full node.
+// The node must run with AutoIndex=false so its indexers are driven only to a lagging consensus target,
+// never to the live P2P best tip; AutoIndex=true is not a supported configuration. Returns a non-nil
+// error describing the violation; the caller treats it as fatal.
+func validateTBCFullNodeConfig(cfg *tbc.Config) error {
+	if cfg.AutoIndex {
+		return errors.New("TBC full node must run with AutoIndex=false; AutoIndex=true is not a supported configuration")
+	}
+	return nil
+}
+
+// paramsForNetwork maps a TBC network name to its Bitcoin chain params.
+//
+// Lockstep invariant: this mapping must stay byte-identical to the TBC node's own network→params
+// mapping, which sets the full node's effective chainParams from the same cfg.Network string.
+// tbcChainParams is what the enforced contextual-difficulty validator (ValidateBTCHeaderContext) computes
+// expected difficulty against; if this side ever mapped a network differently from the node's side, every
+// honest retarget header would compute the wrong expected difficulty and, under enforcement, be dropped.
+// The node's chainParams field is unexported, so the two cannot be cross-checked at runtime; keep them in
+// sync by hand (TestParamsForNetwork regression-locks this side), and prefer a genesis-hash cross-check
+// once contextual-difficulty enforcement wires validation past guaranteed-inserted genesis. Fails closed
+// on any unknown network rather than silently leaving tbcChainParams nil.
+func paramsForNetwork(network string) (*chaincfg.Params, error) {
+	switch network {
+	case "mainnet":
+		return &chaincfg.MainNetParams, nil
+	case "testnet3", "upgradetest":
+		// The TBC node maps both "testnet3" and "upgradetest" to TestNet3Params; they must map
+		// identically here, in lockstep with that mapping.
+		// Forward-safety: the consensus-binding lightweight node currently hardcodes Network="testnet3"
+		// (eth/backend.go), so today the upgradetest alias only affects the full-node path (it now
+		// resolves rather than log.Crit-ing). It prevents a deterministic ErrCorruptHVMHeaderOnlyModeState
+		// restore livelock if the eth/backend.go network is ever forwarded from config to this node.
+		return &chaincfg.TestNet3Params, nil
+	case "localnet":
+		return &chaincfg.RegressionNetParams, nil
+	default:
+		return nil, fmt.Errorf("unknown TBC network: %q", network)
+	}
+}
+
+// SupportsBTCNetwork reports whether the given TBC network name resolves to btcd chaincfg params, i.e.
+// whether the contextual-difficulty / proof-of-work validators can be parameterized for it. It is
+// the chaincfg-membership oracle for the chaincfg<->genesis lockstep cross-check: the consensus node's
+// genesis-pairing network (core: hvmGenesisCheckpoints) must also be a network this returns true for,
+// else contextual-difficulty validation cannot run and every block would wedge into a recoverable-corrupt restore loop.
+// Dedicated (rather than reusing BTCFloorClearanceForNetwork) so the startup guard's chaincfg-membership
+// semantics are decoupled from the floor-clearance helper and cannot drift if that helper is refactored.
+func SupportsBTCNetwork(network string) bool {
+	_, err := paramsForNetwork(network)
+	return err == nil
+}
+
+// SetupTBCFullNode sets up the TBC full node that backs the hVM precompiles.
 func SetupTBCFullNode(ctx context.Context, cfg *tbc.Config) error {
 	cfg.HemiIndex = true
+
+	// This is the single construction choke point for the full node; assert here so the
+	// invariant cannot be silently broken by any caller (cmd/geth, RestartTBCFullNode, tests).
+	if err := validateTBCFullNodeConfig(cfg); err != nil {
+		log.Crit("Refusing to start TBC full node", "err", err)
+	}
 
 	MainCtx = ctx
 
 	tbcFullNodeContext, cancel := context.WithCancel(ctx)
 
-	switch cfg.Network {
-	case "mainnet":
-		tbcChainParams = &chaincfg.MainNetParams
-	case "testnet3":
-		tbcChainParams = &chaincfg.TestNet3Params
-	case "localnet":
-		tbcChainParams = &chaincfg.RegressionNetParams
-	default:
-		log.Crit("TBC configured with an unknown network!", "network", cfg.Network)
+	params, err := paramsForNetwork(cfg.Network)
+	if err != nil {
+		log.Crit("TBC configured with an unknown network!", "network", cfg.Network, "err", err)
 	}
+	tbcChainParams = params
 
 	tbcNode, err := tbc.NewServer(cfg)
 	if err != nil {
@@ -237,6 +302,25 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 	return lowCursorHeader, lowCursorHeight, nil, true, nil
 }
 
+// ErrTBCMissingHeader is returned by TBCIndexToHashHeight when the full TBC node is missing a BTC
+// header required to move its indexers to the requested target. It is transient and recoverable: the
+// full TBC node is a P2P crawler that never prunes headers (not in ExternalHeaderMode), so the missing
+// header is one it has not synced yet and ongoing header sync will deliver it. core/vm cannot import
+// the consensus package (import cycle), so callers in core/blockchain.go translate this sentinel to
+// consensus.ErrFullTBCMissingBTCHeader, which the block-import path treats as a deferrable retry.
+// Genuine corruption / I/O errors are not mapped to this sentinel; they remain fail-stop.
+var ErrTBCMissingHeader = errors.New("full TBC node is missing a required BTC header")
+
+// isTBCMissingHeader reports whether err is a TBC "header not found"
+// (database.NotFoundError) — the transient, recoverable condition where the full TBC node has not
+// synced a header yet. It deliberately does not match other faults (corruption / I/O / context errors,
+// or the distinct database.BlockNotFoundError for block-body reads), so those remain fail-stop rather
+// than being laundered into an endless deferral.
+func isTBCMissingHeader(err error) bool {
+	var notFound database.NotFoundError
+	return errors.As(err, &notFound)
+}
+
 // TBCIndexToHashHeight first checks to make sure the UTXO and Tx indexers
 // are the same (and if not, moves both to the lowest indexed height of either)
 // and then moves the indexer to the specified target hash and height,
@@ -265,21 +349,30 @@ func TBCIndexToHashHeight(targetHH *tbc.HashHeight) error {
 
 	ancestor, _, missingHeader, isFork, err := FindCommonAncestor(tIndexInfo, targetHH)
 	if err != nil {
-		if missingHeader != nil {
-			// This function should only be called after upstream caller ensures that TBC full node has the correct
-			// information to perform the requested indexer update, but return an error so upstream can decide how
-			// to handle.
-			log.Error(fmt.Sprintf("Unable to find common ancestor between indexers tip %s @ %d and best header"+
-				" %s @ %d, encountered a missing header %s", tIndexInfo.Hash.String(), tIndexInfo.Height,
-				targetHH.Hash.String(), targetHH.Height, missingHeader.String()), "err", err)
-			panic("Clayton change me")
-			// return consensus.ErrFullTBCMissingBTCHeader
-		} else {
-			// An error without a missing header indicated, fail with crit
-			log.Crit(fmt.Sprintf("Unable to find common ancestor between indexers tip %s @ %d and best header"+
-				" %s @ %d, but no missing header in the path identified", tIndexInfo.Hash.String(), tIndexInfo.Height,
-				targetHH.Hash.String(), targetHH.Height), "err", err)
+		// FindCommonAncestor reports any BlockHeaderByHash failure as a missing header, so we
+		// discriminate on the error type rather than on missingHeader != nil: only a NotFound (the
+		// full node has not synced that header yet) is the transient, recoverable condition. Treating
+		// every error as recoverable would launder genuine corruption / I/O faults into an endless
+		// retry. (Mirrors TBCBlocksAvailableToHeader.)
+		if isTBCMissingHeader(err) {
+			// Transient missing header. The full TBC node never prunes headers, so this is a
+			// not-yet-synced header that ongoing P2P header sync will deliver; the block-import
+			// caller defers + retries. core/vm cannot import consensus (import cycle), so return
+			// a vm-local sentinel that core/blockchain.go translates.
+			missingHash := "<unknown>"
+			if missingHeader != nil {
+				missingHash = missingHeader.String()
+			}
+			log.Warn(fmt.Sprintf("Full TBC node missing BTC header %s while moving indexers from %s @ %d to "+
+				"%s @ %d; deferring (will retry as the full node continues to sync)", missingHash,
+				tIndexInfo.Hash.String(), tIndexInfo.Height, targetHH.Hash.String(), targetHH.Height), "err", err)
+			return ErrTBCMissingHeader
 		}
+		// A non-NotFound error indicates a bug or data corruption in the full TBC node — this
+		// should be impossible after the upstream availability check, so fail-stop.
+		log.Crit(fmt.Sprintf("Unable to find common ancestor between indexers tip %s @ %d and target"+
+			" %s @ %d (non-recoverable error)", tIndexInfo.Hash.String(), tIndexInfo.Height,
+			targetHH.Hash.String(), targetHH.Height), "err", err)
 	}
 
 	ancestorHash := ancestor.BlockHash()
@@ -812,6 +905,37 @@ var PrecompiledContractsHvm0 = map[common.Address]PrecompiledContract{
 	common.BytesToAddress(hvmContractsToAddress[reflect.TypeOf(&btcTxGetInputWitness{})]): &btcTxGetInputWitness{},
 }
 
+// hvmPrecompileSet holds the precompile instances that dispatch into the embedded TBC node. A panic
+// inside one of these (e.g. a fault from the embedded Bitcoin node on malformed or inconsistent indexed
+// data) must be contained rather than crash the process; see EVM.runPrecompile. Built from the same
+// singleton pointers ActivePrecompiledContracts installs (copied verbatim), so identity comparison
+// against the active precompile is valid.
+var hvmPrecompileSet = func() map[PrecompiledContract]struct{} {
+	m := make(map[PrecompiledContract]struct{}, len(PrecompiledContractsHvm0))
+	for _, p := range PrecompiledContractsHvm0 {
+		m[p] = struct{}{}
+	}
+	return m
+}()
+
+// isHVMPrecompile reports whether p is one of the hVM (Bitcoin) precompiles that
+// query the TBC node, and therefore needs a panic-recovery boundary.
+func isHVMPrecompile(p PrecompiledContract) bool {
+	_, ok := hvmPrecompileSet[p]
+	return ok
+}
+
+// btcTxOutValueAt returns the value of sourceTx's output at index. Malformed or
+// inconsistent indexed Bitcoin data could reference an out-of-range index, which
+// would OOB-panic; this returns ErrHVMInvalidPrecompileInput instead so the
+// hVM precompile normalizes it to an empty no-op rather than crashing the node.
+func btcTxOutValueAt(sourceTx *wire.MsgTx, index uint32) (int64, error) {
+	if sourceTx == nil || int(index) >= len(sourceTx.TxOut) {
+		return 0, ErrHVMInvalidPrecompileInput
+	}
+	return sourceTx.TxOut[index].Value, nil
+}
+
 var (
 	PrecompiledAddressesJovian    []common.Address
 	PrecompiledAddressesIsthmus   []common.Address
@@ -980,6 +1104,9 @@ func calculateHVMQueryKey(input []byte, precompileAddress byte, blockContext com
 	return k, nil
 }
 
+// isValidBlock reports whether a block-scoped execution context has been set, gating the hvmQueryMap
+// cache. It is always false today: blockContext comes from evm.blockExecutionContext, which is never
+// assigned, so the cache is dead (see hvmQueryMap).
 func isValidBlock(blockContext common.Hash) bool {
 	return !bytes.Equal(blockContext[:], HvmNullBlockHash)
 }
@@ -1073,8 +1200,8 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 			"input", fmt.Sprintf("%x", input))
 		// Signal invalid input. The EVM precompile dispatch (EVM.runPrecompile)
 		// normalizes this to an empty successful return so execution semantics are
-		// unchanged, while flagging the call so the sequencer can reject the tx at
-		// block-building time instead of including a no-op. See miner.applyTransaction.
+		// unchanged: the call returns empty data and the transaction is included as
+		// a no-op, identically on builders and validators.
 		return nil, ErrHVMInvalidPrecompileInput
 	}
 
@@ -1567,7 +1694,12 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 			"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
 		return nil, nil
 	}
-	value := sourceTx.TxOut[prevIn.Index].Value
+	// Bounds-check the prevout index against the source tx's outputs (see
+	// btcTxOutValueAt): out-of-range -> invalid input.
+	value, err := btcTxOutValueAt(sourceTx, prevIn.Index)
+	if err != nil {
+		return nil, err
+	}
 
 	resp = binary.BigEndian.AppendUint64(resp, uint64(value))
 
@@ -1964,7 +2096,11 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 					"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
 				return nil, nil
 			}
-			value := sourceTx.TxOut[prevIn.Index].Value
+			// Bounds-check the prevout index (see btcTxOutValueAt).
+			value, err := btcTxOutValueAt(sourceTx, prevIn.Index)
+			if err != nil {
+				return nil, err
+			}
 
 			resp = binary.BigEndian.AppendUint64(resp, uint64(value))
 			if includeInputSource {

@@ -142,13 +142,6 @@ type EVM struct {
 	// The Hemi header hash this EVM is executed within. Required for making sure hVM calls return the correct state.
 	blockExecutionContext common.Hash
 
-	// hvmInvalidInput is raised when an hVM precompile is invoked with malformed
-	// input during this EVM's execution. It does not affect execution/consensus
-	// (the precompile call is normalized to an empty successful return); it exists
-	// purely so the block builder can refuse to sequence the offending mempool
-	// transaction. Reset per transaction by the miner. See miner.applyTransaction.
-	hvmInvalidInput bool
-
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
 
@@ -163,29 +156,50 @@ type EVM struct {
 }
 
 // runPrecompile dispatches a precompiled contract and normalizes the hVM
-// "invalid input" sentinel. When an hVM precompile reports malformed input we
-// must keep execution/consensus byte-for-byte identical to the historical no-op
-// behavior (empty successful return, only the fixed RequiredGas consumed), so
-// the sentinel is swallowed here. We additionally raise evm.hvmInvalidInput so
-// the block builder can choose to reject the transaction at sequencing time
-// without affecting block validation. See miner.applyTransaction.
+// "invalid input" sentinel: malformed input becomes an empty successful return
+// consuming only the fixed RequiredGas, keeping execution/consensus identical to the
+// historical no-op behavior. The offending transaction is included as a no-op,
+// identically on builders and validators.
 func (evm *EVM) runPrecompile(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
-	ret, remainingGas, err := RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+	ret, remainingGas, err := evm.runPrecompileGuarded(p, input, gas)
 	if errors.Is(err, ErrHVMInvalidPrecompileInput) {
-		evm.hvmInvalidInput = true
 		return nil, remainingGas, nil
 	}
 	return ret, remainingGas, err
 }
 
-// HVMInvalidInput reports whether an hVM precompile was invoked with invalid
-// input during the most recent execution. Used by the block builder; reset with
-// ResetHVMInvalidInput between transactions.
-func (evm *EVM) HVMInvalidInput() bool { return evm.hvmInvalidInput }
-
-// ResetHVMInvalidInput clears the invalid-input flag. The miner calls this
-// before applying each candidate transaction.
-func (evm *EVM) ResetHVMInvalidInput() { evm.hvmInvalidInput = false }
+// runPrecompileGuarded executes the precompile. For hVM (Bitcoin) precompiles it installs a
+// recover() boundary so that malformed or inconsistent indexed Bitcoin data is handled deterministically
+// rather than aborting transaction execution. Without it, such a fault would unwind through
+// StateProcessor.Process / core.ApplyTransaction (which have no recover); the boundary instead contains it
+// as a deterministic no-op so execution stays identical across the builder and every validator.
+//
+// The contained fault is converted to ErrHVMInvalidPrecompileInput, which the caller normalizes to an
+// empty no-op consuming only the fixed RequiredGas — identical to the deterministic malformed-input
+// outcome, so every node agrees. It only guarantees a node fails closed to that no-op instead of
+// crashing. Standard (non-hVM) precompiles are not guarded: a fault there is a genuine bug that must not
+// be silently swallowed.
+func (evm *EVM) runPrecompileGuarded(p PrecompiledContract, input []byte, gas uint64) (ret []byte, remainingGas uint64, err error) {
+	if !isHVMPrecompile(p) {
+		return RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			// Reached only after RunPrecompiledContract has charged RequiredGas (the
+			// panic happens inside Run, after the gas check), so gas >= RequiredGas.
+			// Refund the remainder to mirror the malformed-input no-op exactly.
+			var rg uint64
+			if gasCost := p.RequiredGas(input); gas >= gasCost {
+				rg = gas - gasCost
+			}
+			hvmPrecompileInvalidDataCounter.Inc(1)
+			log.Error("invalid Bitcoin data in hVM precompile; treating as a no-op",
+				"precompile", p.Name())
+			ret, remainingGas, err = nil, rg, ErrHVMInvalidPrecompileInput
+		}
+	}()
+	return RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+}
 
 // NewEVM constructs an EVM instance with the supplied block context, state
 // database and several configs. It meant to be used throughout the entire

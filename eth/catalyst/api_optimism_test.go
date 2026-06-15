@@ -112,6 +112,7 @@ func TestCheckOptimismPayload(t *testing.T) {
 			params: engine.ExecutableData{
 				ExtraData:   validExtraData,
 				Withdrawals: emptyWithdrawals,
+				GasLimit:    100_000_000, // > the elasticity encoded in validExtraData (84,281,096)
 			},
 			cfg:      postHolocene(),
 			expected: nil,
@@ -122,6 +123,7 @@ func TestCheckOptimismPayload(t *testing.T) {
 				ExtraData:       validExtraData,
 				Withdrawals:     emptyWithdrawals,
 				WithdrawalsRoot: &types.EmptyWithdrawalsHash,
+				GasLimit:        100_000_000, // pass extraData validation so the withdrawalsRoot check is reached
 			},
 			cfg:      postHolocene(),
 			expected: errors.New("non-nil withdrawalsRoot pre-Isthmus"),
@@ -132,6 +134,7 @@ func TestCheckOptimismPayload(t *testing.T) {
 				ExtraData:       validExtraData,
 				Withdrawals:     emptyWithdrawals,
 				WithdrawalsRoot: &types.EmptyWithdrawalsHash,
+				GasLimit:        100_000_000, // > the elasticity encoded in validExtraData (84,281,096)
 			},
 			cfg:      postIsthmus(),
 			expected: nil,
@@ -141,6 +144,7 @@ func TestCheckOptimismPayload(t *testing.T) {
 			params: engine.ExecutableData{
 				Withdrawals: emptyWithdrawals,
 				ExtraData:   validExtraData,
+				GasLimit:    100_000_000, // pass extraData validation so the withdrawalsRoot check is reached
 			},
 			cfg:      postIsthmus(),
 			expected: errors.New("nil withdrawalsRoot post-Isthmus"),
@@ -151,6 +155,7 @@ func TestCheckOptimismPayload(t *testing.T) {
 				Timestamp:       0,
 				ExtraData:       validJovianExtraData,
 				WithdrawalsRoot: &types.EmptyWithdrawalsHash,
+				GasLimit:        100_000_000, // > the elasticity encoded in validJovianExtraData (67,438,087)
 			},
 			cfg:      postJovian(),
 			expected: nil,
@@ -163,6 +168,30 @@ func TestCheckOptimismPayload(t *testing.T) {
 			},
 			cfg:      postJovian(),
 			expected: errors.New("Jovian extraData should be 17 bytes, got 9"),
+		},
+		// elasticity > gasLimit must be rejected via the threaded params.GasLimit (encoded elasticity is
+		// 84,281,096 in validExtraData and 67,438,087 in validJovianExtraData). These pin that the
+		// newPayload path reads params.GasLimit, not a constant or other field.
+		{
+			name: "invalid payload post-Holocene with elasticity above gas limit",
+			params: engine.ExecutableData{
+				ExtraData:   validExtraData,
+				Withdrawals: emptyWithdrawals,
+				GasLimit:    84_281_095, // one below the encoded elasticity
+			},
+			cfg:      postHolocene(),
+			expected: errors.New("holocene extraData elasticity 84281096 exceeds gas limit 84281095"),
+		},
+		{
+			name: "invalid payload post-Jovian with elasticity above gas limit",
+			params: engine.ExecutableData{
+				Timestamp:       0,
+				ExtraData:       validJovianExtraData,
+				WithdrawalsRoot: &types.EmptyWithdrawalsHash,
+				GasLimit:        67_438_086, // one below the encoded elasticity
+			},
+			cfg:      postJovian(),
+			expected: errors.New("holocene extraData elasticity 67438087 exceeds gas limit 67438086"),
 		},
 	}
 

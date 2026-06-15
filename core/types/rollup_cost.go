@@ -569,8 +569,16 @@ func CalcDAFootprint(txs []*Transaction) (uint64, error) {
 	// it must not have user transactions.
 	data := txs[0].Data()
 	if len(data) == IsthmusL1AttributesLen {
-		if !txs[len(txs)-1].IsDepositTx() {
-			// sufficient to check last transaction because deposits precede non-deposit txs
+		// The first Jovian block uses the Isthmus-format (no DA scalar) L1-info deposit and op-node builds it
+		// with NoTxPool, so it carries only system txs (deposit 0x7E, and possibly PoP 0x7D / BtcAttr 0x7C) and
+		// no user txs; its DA footprint is 0 regardless of contents. The last-tx check is a lightweight tripwire
+		// for that NoTxPool guarantee, NOT a full user-tx scan — a user tx wedged before a trailing system tx
+		// would slip past it. That gap is benign: the footprint is 0 either way and CalcDAFootprint is identical
+		// on build and import, so it can never diverge; rejecting only catches a user-LAST malformed activation
+		// block (a stricter scan would risk a fork-boundary halt on a NoTxPool bug, for no consensus gain). Note
+		// the steady-state branch below relies on NO ordering — it skips system txs per-tx — because on hVM
+		// chains a 0x7C can appear AFTER user txs (the [0x7E, user, 0x7C] layout; see receipt_opstack.go).
+		if last := txs[len(txs)-1]; !last.IsZeroDAFootprintTx() {
 			return 0, errors.New("unexpected non-deposit transactions in Jovian activation block")
 		}
 		return 0, nil
@@ -582,7 +590,15 @@ func CalcDAFootprint(txs []*Transaction) (uint64, error) {
 	}
 	var daFootprint uint64
 	for _, tx := range txs {
-		if tx.IsDepositTx() {
+		// Deposit (0x7E) and Hemi's system txs PoP payout (0x7D) and BTC Attributes Deposited (0x7C) are
+		// never posted to the L1 DA batch and carry no DA footprint; the miner build path omits them from
+		// the BlobGasUsed accumulation, so they must be skipped here too. Otherwise import recomputes a
+		// larger footprint than the builder set and every node deterministically rejects the block (a
+		// post-Jovian liveness stall). The skip cannot rely on a zero EstimatedDASize: only deposits get
+		// an empty RollupCostData (transaction.go); 0x7C/0x7D compute a real fastlz size, and
+		// EstimatedDASize floors to MinTransactionSize (100), so an un-skipped system tx contributes
+		// >=100*scalar, never 0. IsZeroDAFootprintTx keeps this set in lock-step with receipt_opstack.go.
+		if tx.IsZeroDAFootprintTx() {
 			continue
 		}
 		daFootprint += tx.RollupCostData().EstimatedDASize().Uint64() * uint64(daFootprintGasScalar)

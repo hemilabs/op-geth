@@ -18,6 +18,7 @@ package eth
 
 import (
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
@@ -249,9 +250,38 @@ func handleMessage(backend Backend, peer *Peer) error {
 	}
 	if handler := handlers[msg.Code]; handler != nil {
 		if msg.Code == BtcBlocksMsg {
-			log.Info(fmt.Sprintf("Raw BTC block message: %s", msg.String()))
+			log.Debug(fmt.Sprintf("Raw BTC block message: %s", msg.String()))
+		}
+		// The Hemi BTC-gossip codes exist only on eth/68. Gate on the version explicitly: code
+		// 0x11 is GetBtcBlocksMsg on eth/68 but BlockRangeUpdateMsg on eth/69 (shared constant),
+		// and only the eth/68 BTC handlers process peer-supplied Bitcoin data through the embedded node.
+		if peer.version == ETH68 && (msg.Code == GetBtcBlocksMsg || msg.Code == BtcBlocksMsg) {
+			// Process peer-supplied Bitcoin data behind a recover boundary: the per-peer handler
+			// goroutine has no recover() upstream, so a fault on a single malformed message would
+			// otherwise crash the whole process. The guard drops only the offending peer (eth/69's
+			// BlockRangeUpdateMsg on code 0x11 is not wrapped).
+			return handleHvmBTCMessageGuarded(handler, backend, msg, peer)
 		}
 		return handler(backend, msg, peer)
 	}
 	return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
+}
+
+// handleHvmBTCMessageGuarded runs a Hemi BTC-gossip message handler (GetBtcBlocksMsg /
+// BtcBlocksMsg) behind a recover() boundary. These handlers process peer-supplied Bitcoin data through
+// the embedded Bitcoin node. The eth message-handler runs on the per-peer goroutine (p2p/peer.go) with
+// no recover() upstream, so a fault on a single malformed message would otherwise terminate the whole
+// op-geth process. Containing it makes handleMessage tear down only the offending peer, mirroring the
+// precompile recover boundary in core/vm/evm.go (runPrecompileGuarded). Standard (non-BTC) eth handlers
+// are intentionally not wrapped: a fault there is a genuine bug that must remain a loud crash, matching
+// upstream go-ethereum.
+func handleHvmBTCMessageGuarded(handler msgHandler, backend Backend, msg Decoder, peer *Peer) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("dropping peer for invalid hVM BTC message data",
+				"peer", peer.ID(), "stack", string(debug.Stack()))
+			err = fmt.Errorf("invalid hVM BTC message data")
+		}
+	}()
+	return handler(backend, msg, peer)
 }

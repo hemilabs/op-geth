@@ -91,6 +91,15 @@ func CalcBaseFee(config *params.ChainConfig, parent *types.Header, time uint64) 
 
 func calcBaseFeeInner(config *params.ChainConfig, parent *types.Header, elasticity uint64, denominator uint64) *big.Int {
 	parentGasTarget := parent.GasLimit / elasticity
+	// Defense-in-depth: elasticity > parent.GasLimit makes parentGasTarget == 0, and the base-fee update
+	// below divides by it (a big.Int divide-by-zero panic, no recover on the verify path).
+	// ValidateOptimismExtraData rejects such headers, so this is unreachable for any accepted post-Holocene
+	// block; the guard also covers a non-revalidating CalcBaseFee caller. (A zero config elasticity is a
+	// separate, earlier panic on the division above and is governed by config validation, not this guard.)
+	// Returning parent.BaseFee unchanged is a deterministic, fleet-identical fallback, so it cannot cause a split.
+	if parentGasTarget == 0 {
+		return new(big.Int).Set(parent.BaseFee)
+	}
 	parentGasMetered := parent.GasUsed
 	if config.IsJovian(parent.Time) {
 		if parent.BlobGasUsed == nil {

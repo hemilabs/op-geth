@@ -358,12 +358,24 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		// Set tbc, tbcd, and leveldb log levels to the log level based on op-geth
 		fullNodeTbcCfg.LogLevel = "tbcd=" + logLevel + ";tbc=" + logLevel + ";level=" + logLevel
 
+		// Load-bearing invariant: the full node must run with AutoIndex=false so its indexers are driven
+		// only to a lagging consensus target, never to the live P2P best tip. AutoIndex=true is not a
+		// supported configuration.
+		if fullNodeTbcCfg.AutoIndex {
+			log.Crit("Refusing to start TBC full node with AutoIndex=true: this is not a supported configuration")
+		}
+
 		// Initialize TBC Bitcoin indexer to answer hVM queries
 		err := vm.SetupTBCFullNode(ctx.Context, fullNodeTbcCfg)
 		if err != nil {
 			log.Crit("Unable to setup TBC Full Node", "err", err)
 		}
 
+		// This is the non-consensus full TBC node (it answers hVM precompile queries), so the
+		// (HvmGenesisHeader, HvmGenesisHeight) pair here is not routed through the pairing classifier
+		// (core.IsCanonicalHvmGenesisPairing) the way the consensus header node is in initHvmHeaderNode.
+		// The pair only positions where this node starts syncing/indexing; a desync does not split
+		// consensus, it fails closed below as a sync/index-availability crit.
 		genesisHeader, err := bdf.Hex2Header(cfg.Eth.HvmGenesisHeader)
 		genesisHash := genesisHeader.BlockHash()
 		genesisHeight := cfg.Eth.HvmGenesisHeight
@@ -383,12 +395,10 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 
 		var syncInfo tbc.SyncInfo
 
-		// Require a complete sync of TBC full node up to the hVM genesis height whether or not we have
-		// passed the hVM Phase 0 activation height, so that the node will not continue starting up
-		// until it will be in the correct initial condition when the hVM Phase 0 activation occurs,
-		// rather than working correctly until then and freezing at activation until TBC is caught up.
-		// Would rather have node delay full startup to fully sync TBC to required genesis height
-		// than startup without full information and later freeze at hVM Phase 0 activation time.
+		// Require a complete TBC full-node sync up to the hVM genesis height regardless of whether we have
+		// passed the hVM Phase 0 activation height, so the node is in the correct initial condition when
+		// activation occurs rather than working until then and freezing at activation while TBC catches up.
+		// Better to delay startup to fully sync TBC than to start without full information and freeze later.
 		for {
 			select {
 			case <-time.After(1000 * time.Millisecond):

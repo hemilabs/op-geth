@@ -71,9 +71,14 @@ var Defaults = Config{
 	GPO:                FullNodeGPO,
 	RPCTxFeeCap:        1, // 1 ether
 	// TODO: Move hVM defaults somewhere else on a per-network basis
-	HvmEnabled:           true,
-	HvmGenesisHeader:     "00000020715ae5bdcf3d4b3a27cecfc0db309ea522fddbe83946492d0f000000000000000f092c40dc00db9010da6452d0e0688056d5b1cbc287de4ffb6a5acff873cd4b0a3c4467ffff001d04dafc10",
-	HvmGenesisHeight:     3488421,
+	HvmEnabled: true,
+	// Live testnet3 hVM genesis (hemi-node testnet/config.json .hvm_genesis): height 3522419, hash
+	// 00000000…96c98151…. The network re-genesised from the older 3488421/00000000036fc6f1…; a node on
+	// live testnet3 must use 3522419 or the pairing guard refuses to start. Verified against the live
+	// chain (the committed BTC history connects from this genesis; see
+	// core/vm/btcdiff_testnet3_history_verify_test.go).
+	HvmGenesisHeader:     "00c05732cdc3e0d654efe86351f0cbfc6c79325e9f9fa7886a39b552f5c4d90700000000dae4079485e26f1f77425b84a13760038a352d07a0fef92b5188bd04c2999162afca58679121011962b9d0a5",
+	HvmGenesisHeight:     3522419,
 	HvmHeaderDataDir:     "~/.tbcdheaders", // TODO: put this in configured geth data directory
 	TxSyncDefaultTimeout: 20 * time.Second,
 	TxSyncMaxTimeout:     1 * time.Minute,

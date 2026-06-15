@@ -185,8 +185,10 @@ type BlockChain interface {
 	// SetAwaitingHvmSnapSync informs the blockchain that a snap sync is in progress
 	SetAwaitingHvmSnapSync()
 
-	// SnapSyncHvm informs the blockchain that an EVM snap sync has completed, and provides hVM light state to snap sync hVM
-	SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
+	// SnapSyncHvm informs the blockchain that an EVM snap sync has completed and provides hVM light
+	// state to snap sync hVM. quit is closed when the downloader is terminating, so a SnapSyncHvm
+	// attempt wedged on an unreachable Bitcoin tip does not block graceful shutdown.
+	SnapSyncHvm(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header, quit <-chan struct{})
 
 	HvmSnapSyncCompleted() bool
 
@@ -238,9 +240,13 @@ type BlockChain interface {
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
 func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func()) *Downloader {
+	// quitCh is closed by Terminate() (during handler.Stop(), before it waits on the snap peer-handler
+	// goroutines). Pass it into SnapSyncHvm so a snap-sync attempt wedged on an unreachable Bitcoin tip
+	// aborts on shutdown rather than blocking it.
+	quitCh := make(chan struct{})
 	hVMSnapFunc := func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header) {
 		log.Info("hVM Snap Sync Func called")
-		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader)
+		chain.SnapSyncHvm(btcTipHeader, hvmTipHeader, quitCh)
 	}
 	cutoffNumber, cutoffHash := chain.HistoryPruningCutoff()
 	dl := &Downloader{
@@ -253,7 +259,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer 
 		chainCutoffHash:   cutoffHash,
 		dropPeer:          dropPeer,
 		headerProcCh:      make(chan *headerTask, 1),
-		quitCh:            make(chan struct{}),
+		quitCh:            quitCh,
 		SnapSyncer:        snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
 		stateSyncStart:    make(chan *stateSync),
 		syncStartBlock:    chain.CurrentSnapBlock().Number.Uint64(),
@@ -435,7 +441,15 @@ func (d *Downloader) getMode() SyncMode {
 	return SyncMode(d.mode.Load())
 }
 
-func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error) {
+// hvmLightStateReissueInterval is how often hVMLightStateSyncWithAllPeers re-broadcasts its hVM
+// light-state request while waiting for completion. A peer that answers first with an unreachable
+// canonical tip makes SnapSyncHvm block (waiting for Bitcoin data that never arrives); because the
+// request ID is not consumed (see eth/protocols/snap.OnHvmLightState), re-broadcasting lets an honest
+// peer's later response still drive the round to completion. A var, not a const, only so tests can
+// shorten it.
+var hvmLightStateReissueInterval = 30 * time.Second
+
+func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) error {
 	if !d.blockchain.HvmEnabled() {
 		panic("cannot call hVMLightStateSyncWithAllPeers with hvm disabled ")
 	}
@@ -445,15 +459,30 @@ func (d *Downloader) hVMLightStateSyncWithAllPeers(hash common.Hash) (err error)
 	// Kick off async hVM light state requests
 	d.SnapSyncer.RequestHvmState(hash)
 
-	// Busy-wait until blockchain acknowledges hVM snap sync has completed
+	// Wait until the blockchain acknowledges hVM snap sync has completed. Unlike the previous
+	// uninterruptible busy-wait, this loop is cancellable (so node shutdown / sync abort works) and
+	// periodically re-issues the request so a malicious or unreachable first responder cannot wedge the
+	// round forever.
+	poll := time.NewTicker(1 * time.Second)
+	defer poll.Stop()
+	reissue := time.NewTicker(hvmLightStateReissueInterval)
+	defer reissue.Stop()
 	for {
-		time.Sleep(1000 * time.Millisecond)
-		if d.blockchain.HvmSnapSyncCompleted() {
-			log.Info("hVM Snap Sync completed in fetcher")
-			break
+		select {
+		case <-d.cancelCh:
+			return errCanceled
+		case <-d.quitCh:
+			return errCanceled
+		case <-reissue.C:
+			log.Info("hVM snap sync still pending, re-requesting hVM light state from peers")
+			d.SnapSyncer.RequestHvmState(hash)
+		case <-poll.C:
+			if d.blockchain.HvmSnapSyncCompleted() {
+				log.Info("hVM Snap Sync completed in fetcher")
+				return nil
+			}
 		}
 	}
-	return nil
 }
 
 // syncToHead starts a block synchronization based on the hash chain from
