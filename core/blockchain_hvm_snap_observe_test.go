@@ -5,17 +5,15 @@
 
 package core
 
-// Integration coverage for SnapSyncHvm's observe-only verdict-dispatch composition. SnapSyncHvm's
-// full end-to-end path needs a live, block-indexed full TBC node (the wait loop +
-// updateFullTBCToLightweight), which no harness can stand up (TBC indexer internals, the documented
-// residual). But the consensus-relevant, previously-untested part — the observe-only contextual-difficulty check (PoW +
-// above-floor suffix split + contextual validate + verdict classification) — was extracted into
-// observeSnapBtcDiff, which takes any vm.BTCHeaderLookup. This test drives that composition against a real
-// regtest lightweight TBC node (the same store SnapSyncHvm reconstructs into), closing the verdict-dispatch
-// gap. The bits that need a live indexed full node (untested here) are the block-availability wait/refetch
-// loop, the walk-back that builds headersToAdd, and updateFullTBCToLightweight. SnapSyncHvm's
-// AddExternalHeaders-into-the-lightweight-node + canonical-tip crit is not full-node-bound and is covered by
-// TestHvmApplyPathRollsBackOnWrongCanonicalTipRegtest.
+// Integration coverage for SnapSyncHvm's observe-only verdict-dispatch composition. The consensus-relevant
+// part — the contextual-difficulty check (PoW + above-floor suffix split + contextual validate + verdict
+// classification) — lives in observeSnapBtcDiff, which takes any vm.BTCHeaderLookup. This test drives it
+// against a real regtest lightweight TBC node (the same store SnapSyncHvm reconstructs into).
+//
+// SnapSyncHvm's full end-to-end path needs a live, block-indexed full TBC node, so these parts are not covered
+// here: the block-availability wait/refetch loop, the walk-back that builds headersToAdd, and
+// updateFullTBCToLightweight. SnapSyncHvm's AddExternalHeaders-into-the-lightweight-node + canonical-tip
+// section is not full-node-bound and is covered by TestHvmApplyPathRollsBackOnWrongCanonicalTipRegtest.
 
 import (
 	"testing"
@@ -89,6 +87,37 @@ func TestObserveSnapBtcDiffDispatch(t *testing.T) {
 		require.Equal(t, len(hdrs), obs.enforcedCount+obs.deferredCount, "every header is either enforced or deferred")
 	})
 
+	t.Run("all headers below enforce floor -> benign empty suffix, NOT a skip", func(t *testing.T) {
+		// A short base entirely within the deferred near-floor band: enforceable suffix is empty, so contextualRan
+		// is false WITHOUT any skip error (clearanceErr/firstHeightErr nil). The migration observe switch's
+		// benign-empty arm keys on exactly this shape, distinct from a genuine skipped check. If
+		// clearanceErr/firstHeightErr were set here the migration would misroute to the misleading SKIPPED warn.
+		belowFloor := int(enforceFloor) - 1
+		if belowFloor < 1 {
+			t.Skip("enforce floor too low on this network to construct an all-below-floor base")
+		}
+		chain, genesis := newRegtestChainWithLightTBC(t, btcDiffTestHvm0Time)
+		hdrs := buildAndSeedRegtestChain(t, chain, genesis, belowFloor, -1, 0)
+		obs := observeSnapBtcDiff(chain.ctx, chain.tbcHeaderNode, "localnet", 0, hdrs)
+		require.NoError(t, obs.clearanceErr, "an all-below-floor base is NOT a skipped check (clearance resolved)")
+		require.NoError(t, obs.firstHeightErr, "the first header is resolvable")
+		require.False(t, obs.contextualRan, "no above-floor suffix -> the contextual validator does not run")
+		require.Equal(t, 0, obs.enforcedCount, "nothing is enforceable below the floor")
+		require.Equal(t, len(hdrs), obs.deferredCount, "every header is deferred (the benign empty-suffix case)")
+	})
+
+	t.Run("walk not starting at genesis+1 -> firstHeightMismatch (the TRUE direction)", func(t *testing.T) {
+		chain, genesis := newRegtestChainWithLightTBC(t, btcDiffTestHvm0Time)
+		hdrs := buildAndSeedRegtestChain(t, chain, genesis, total, -1, 0)
+		// Drop headers[0] so the slice now starts at the height-2 header (still resolvable in the lightweight node,
+		// so firstHeightErr stays nil). firstHeight (2) != genesisOffset(0)+1, so the genesis+1 tripwire must fire.
+		// This exercises the TRUE direction of the walk-start tripwire on both the snap and migration bulk-load paths.
+		obs := observeSnapBtcDiff(chain.ctx, chain.tbcHeaderNode, "localnet", 0, hdrs[1:])
+		require.NoError(t, obs.firstHeightErr, "the first header (height 2) is resolvable, so the height read must succeed")
+		require.True(t, obs.firstHeightMismatch, "a walk starting at height 2 (not genesisOffset+1==1) must set firstHeightMismatch")
+		require.Equal(t, uint64(2), obs.firstHeight, "the observed first height is 2")
+	})
+
 	t.Run("wrong-difficulty header above floor -> snapObsReject (alertable, NEVER halts)", func(t *testing.T) {
 		chain, genesis := newRegtestChainWithLightTBC(t, btcDiffTestHvm0Time)
 		// A wrong (slightly harder) difficulty header well above the enforce floor: PoW still passes (target
@@ -124,6 +153,11 @@ func TestObserveSnapBtcDiffDispatch(t *testing.T) {
 		obs := observeSnapBtcDiff(chain.ctx, chain.tbcHeaderNode, "localnet", 0, []*wire.BlockHeader{forged})
 		require.True(t, obs.powFailed, "an unmined header must flag the PoW observation")
 		require.Error(t, obs.powErr)
+		// Pin the firstHeightErr SKIP arm distinctly from the PoW arm: the forged header is not in the lookup,
+		// so the contextual stage is skipped via firstHeightErr (NOT clearanceErr — localnet resolves params).
+		require.Error(t, obs.firstHeightErr, "an absent first header must skip the contextual check via firstHeightErr")
+		require.False(t, obs.contextualRan, "the contextual validator must not run when the first header is unresolvable")
+		require.NoError(t, obs.clearanceErr, "localnet has params, so the SKIP here is firstHeightErr, not clearanceErr")
 	})
 
 	t.Run("unknown network -> contextual check skipped (clearanceErr), no PoW alert", func(t *testing.T) {

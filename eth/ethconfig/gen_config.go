@@ -62,6 +62,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		HvmGenesisHeader                          string        `toml:",omitempty"`
 		HvmGenesisHeight                          uint64        `toml:",omitempty"`
 		HvmHeaderDataDir                          string        `toml:",omitempty"`
+		TBCNetwork                                string        `toml:",omitempty"`
 		DeucalionAddress                          string        `toml:",omitempty"`
 		OverrideOsaka                             *uint64       `toml:",omitempty"`
 		OverrideBPO1                              *uint64       `toml:",omitempty"`
@@ -142,6 +143,7 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.HvmGenesisHeader = c.HvmGenesisHeader
 	enc.HvmGenesisHeight = c.HvmGenesisHeight
 	enc.HvmHeaderDataDir = c.HvmHeaderDataDir
+	enc.TBCNetwork = c.TBCNetwork
 	enc.DeucalionAddress = c.DeucalionAddress
 	enc.OverrideOsaka = c.OverrideOsaka
 	enc.OverrideBPO1 = c.OverrideBPO1
@@ -226,6 +228,7 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		HvmGenesisHeader                          *string        `toml:",omitempty"`
 		HvmGenesisHeight                          *uint64        `toml:",omitempty"`
 		HvmHeaderDataDir                          *string        `toml:",omitempty"`
+		TBCNetwork                                *string        `toml:",omitempty"`
 		DeucalionAddress                          *string        `toml:",omitempty"`
 		OverrideOsaka                             *uint64        `toml:",omitempty"`
 		OverrideBPO1                              *uint64        `toml:",omitempty"`
@@ -398,6 +401,9 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.HvmHeaderDataDir != nil {
 		c.HvmHeaderDataDir = *dec.HvmHeaderDataDir
+	}
+	if dec.TBCNetwork != nil {
+		c.TBCNetwork = *dec.TBCNetwork
 	}
 	if dec.DeucalionAddress != nil {
 		c.DeucalionAddress = *dec.DeucalionAddress

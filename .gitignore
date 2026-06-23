@@ -57,3 +57,10 @@ cmd/geth/geth
 cmd/rlpdump/rlpdump
 cmd/workload/workload
 cmd/keeper/keeper
+
+# Compiled hvm-btcattr-reconstruct tool binary (build artifact; never commit — go run ./cmd/hvm-btcattr-reconstruct)
+/hvm-btcattr-reconstruct
+/geth
+
+# Local agent/review-orchestration scaffolding — never commit
+.claude/

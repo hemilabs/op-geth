@@ -1097,9 +1097,9 @@ var (
 	}
 	TBCNetwork = &cli.StringFlag{
 		Name:     "tbc.network",
-		Usage:    "Bitcoin network TBC is running on",
+		Usage:    "Bitcoin network TBC is running on (also drives the lightweight hVM header node; switching a legacy node to \"mainnet\" triggers a one-time hVM header-store migration — keep --hvm.genesisheader set to the mainnet pair)",
 		Category: flags.RollupCategory,
-		Value:    "testnet3", // Change default to mainnet on Hemi mainnet
+		Value:    ethconfig.DefaultTBCNetwork, // single source of truth so the default can't drift between callers
 	}
 	TBCPrometheusAddress = &cli.StringFlag{
 		Name:     "tbc.prometheusaddress",

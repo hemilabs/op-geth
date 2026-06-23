@@ -69,17 +69,17 @@ func TestHvmIndexErrToConsensus(t *testing.T) {
 
 // btcAttrDepIsHeaderless is the load-bearing classification: a Bitcoin Attributes Deposited tx that is
 // absent (nil) or present-but-empty (zero headers) makes no TBC header change, so both apply and unapply
-// take the no-op (state-id-only) path. The original bug matched only btcAttrDep == nil, letting an
+// take the no-op (state-id-only) path. A guard matching only btcAttrDep == nil would let an
 // empty-but-present tx fall through to RemoveExternalHeaders with zero headers -> log.Crit on every node at
-// reorg. Pins the guard so a refactor cannot narrow it back to == nil. (The full apply/unapply round-trip
+// reorg. Pins the guard so a refactor cannot narrow it to == nil. (The full apply/unapply round-trip
 // needs an embedded TBC node; this is the pure regression-prone seam.)
 func TestBtcAttrDepIsHeaderless(t *testing.T) {
 	// Absent tx -> headerless (no-op path).
 	require.True(t, btcAttrDepIsHeaderless(nil), "nil btcAttrDep (no BtcAttr tx) must be headerless")
 
-	// Present-but-empty tx -> headerless. The case the original guard missed.
+	// Present-but-empty tx -> headerless. The case a nil-only check would miss.
 	require.True(t, btcAttrDepIsHeaderless(&types.BtcAttributesDepositData{}),
-		"present-but-empty BtcAttr tx (zero headers) must be headerless — this is the regression case")
+		"present-but-empty BtcAttr tx (zero headers) must be headerless — the empty-but-present case")
 	require.True(t, btcAttrDepIsHeaderless(&types.BtcAttributesDepositData{Headers: [][types.BitcoinHeaderLengthBytes]byte{}}),
 		"explicitly zero-length Headers must be headerless")
 
@@ -180,6 +180,7 @@ func TestHvmSnapLatchLifecycle(t *testing.T) {
 
 	require.True(t, bc.hvmSnapClaimCompletion(), "first claim wins")
 	require.False(t, bc.hvmSnapClaimCompletion(), "second claim loses")
+	require.False(t, bc.HvmSnapSyncCompleted(), "claiming completion must NOT mark the snap finished (only hvmSnapMarkFinished does)")
 	require.False(t, bc.hvmSnapShouldRun(), "no new attempt after claim")
 	require.True(t, bc.hvmSnapShouldStop(), "waiters abandon after claim")
 
@@ -198,7 +199,7 @@ func TestHvmSnapLatchLifecycle(t *testing.T) {
 	require.Equal(t, int64(0), hvmSnapAwaitingGauge.Snapshot().Value(), "a refused re-arm must leave the awaiting gauge cleared")
 }
 
-// SnapSyncHvm now returns immediately (the wait loop runs in a detached runHvmSnapWaiter goroutine so it
+// SnapSyncHvm returns immediately (the wait loop runs in a detached runHvmSnapWaiter goroutine so it
 // cannot block the caller's per-peer snap read loop). The spawned waiter must abort promptly when quit is
 // closed without touching the TBC node, and free its slot. Relies on the quit check being the first thing in
 // the wait loop, before any vm.TBCFullNode access (nil here, would panic if reached). hvmSnapWg joins the
@@ -323,9 +324,9 @@ func TestUpdateHvmHeaderConsensusSkipsWhileAwaitingSnap(t *testing.T) {
 	})
 }
 
-// recordHvmBtcAttrResult is the observability classifier for the build-path fix:
-// GetBitcoinAttributesForNextBlock no longer crashes the sequencer, so a persistent failure to advance the
-// hVM Bitcoin view must instead be alertable via metrics. Locks in the four-way classification without a
+// recordHvmBtcAttrResult is the observability classifier for the build path:
+// GetBitcoinAttributesForNextBlock does not crash the sequencer on a persistent failure to advance the
+// hVM Bitcoin view, so that failure must instead be alertable via metrics. Locks in the four-way classification without a
 // TBC node — the seam extracted so this consensus-irrelevant but ops-critical mapping can be unit-tested.
 func TestRecordHvmBtcAttrResult(t *testing.T) {
 	gaugeVal := func() int64 { return hvmBtcAttrFailingGauge.Snapshot().Value() }
@@ -340,7 +341,7 @@ func TestRecordHvmBtcAttrResult(t *testing.T) {
 	require.Equal(t, startMeter, meterCount(), "nil result must not mark the fail meter")
 
 	// The pending-blocked sentinel (bare and %w-wrapped) is hidden from the caller (returns nil, so the
-	// caller behaves like the old (nil,nil) path) but raises the stuck gauge and must not mark the fail
+	// caller sees a plain (nil,nil) result) but raises the stuck gauge and must not mark the fail
 	// meter (not a hard failure, just a non-advancing round).
 	for _, err := range []error{
 		errHvmBtcAttrPendingBlocked,

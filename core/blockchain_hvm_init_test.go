@@ -133,6 +133,20 @@ func TestInitHvmHeaderNodeRefusesDesyncedChild(t *testing.T) {
 		h := mustEffectiveGenesisHeader(t)
 		h.Nonce++
 		cfg = hvmInitLightTBCConfig(t, "testnet3", h, 0)
+	case "nil-genesis-chaincfg-unknown":
+		// EffectiveGenesisBlock==nil skips the entire pairing switch (the `!= nil` guard), but the UNCONDITIONAL
+		// chaincfg<->genesis lockstep crit that follows must still fire on a chaincfg-unknown network. Pins that
+		// the nil-skip bypasses ONLY the pairing switch, not the lockstep guard (a mutant moving the lockstep
+		// inside the `!= nil` block would let a nil-genesis chaincfg-unknown node boot and then per-block wedge).
+		cfg = hvmInitLightTBCConfig(t, "zzz-no-chaincfg-params", nil, 0)
+		cfg.EffectiveGenesisBlock = nil
+	case "no-external-header":
+		// The FIRST guard in initHvmHeaderNode: a TBC config without ExternalHeaderMode must refuse-to-start
+		// (a non-external-header node would index the full Bitcoin chain — never what the consensus header node
+		// wants). localnet + the canonical pair would otherwise warn-and-proceed, so reaching the crit proves
+		// the ExternalHeaderMode guard fired (not the pairing guard). Distinct crit text ("ExternalHeaderMode").
+		cfg = hvmInitLightTBCConfig(t, "localnet", mustEffectiveGenesisHeader(t), 0)
+		cfg.ExternalHeaderMode = false
 	case "chaincfg-unknown":
 		// chaincfg<->genesis lockstep: a network with a pinned checkpoint (so the pairing guard classifies it
 		// Canonical and passes) but no btcd chaincfg params must refuse at startup, not boot and then
@@ -162,14 +176,22 @@ func TestInitHvmHeaderNodeRefusesDesyncedChild(t *testing.T) {
 // EffectiveGenesisBlock!=nil guard — none observable in-process, all survive the classifier-only test.
 func TestInitHvmHeaderNodeRefuses(t *testing.T) {
 	cases := []struct {
-		mode       string
-		wantSub    string // a substring UNIQUE to the intended refuse arm's crit message
-		wantNotSub string // the OTHER refuse arm's unique substring — must be ABSENT (proves the right arm)
+		mode            string
+		wantSub         string   // a substring UNIQUE to the intended refuse arm's crit message
+		wantNotSub      string   // the OTHER refuse arm's unique substring — must be ABSENT (proves the right arm)
+		wantContains    []string // operator-remediation hint values the crit MUST carry (the recovery path)
+		wantNotContains []string // values the crit must NOT carry (proves the network-specific hint branch)
 	}{
-		{"mismatch", "DESYNCED", "NOT a pinned canonical"},
-		{"custom-mainnet", "NOT a pinned canonical", "DESYNCED"},
-		{"custom-testnet3", "NOT a pinned canonical", "DESYNCED"},
-		{"chaincfg-unknown", "no btcd chaincfg params", "DESYNCED"},
+		{"mismatch", "DESYNCED", "NOT a pinned canonical", nil, nil},
+		// custom-mainnet: the Custom-refuse crit emits the canonical mainnet pair AND the wantHeader bytes (the
+		// mainnet-only branch) so a bricked mainnet build has a recovery path.
+		{"custom-mainnet", "NOT a pinned canonical", "DESYNCED",
+			[]string{vm.MainnetHvmGenesisHash, vm.MainnetHvmGenesisHeader}, nil},
+		// custom-testnet3: the canonHint is testnet3's checkpoint hash; wantHeader is mainnet-only, so the mainnet
+		// header bytes must be ABSENT (proves the canonicalBTCNetwork=="mainnet" guard on the wantHeader branch).
+		{"custom-testnet3", "NOT a pinned canonical", "DESYNCED",
+			[]string{hvmGenesisCheckpoints["testnet3"][0].hash}, []string{vm.MainnetHvmGenesisHeader}},
+		{"chaincfg-unknown", "no btcd chaincfg params", "DESYNCED", nil, nil},
 	}
 	for i, tc := range cases {
 		// The refuse arms are the pairing guard's core protection (verdict->refuse). Keep the first on the
@@ -212,8 +234,54 @@ func TestInitHvmHeaderNodeRefuses(t *testing.T) {
 			require.NotContains(t, string(out), "unable to create new TBC server",
 				"a refuse arm must os.Exit BEFORE tbc.NewServer for mode %q; the TBC-create crit means it was "+
 					"downgraded to log.Warn and fell through", tc.mode)
+			// Operator-remediation hints: the Custom-refuse crit's only recovery path. A blanked canonHint or a
+			// broken wantHeader branch would leave operators no values, yet keep the message substrings above green.
+			for _, want := range tc.wantContains {
+				require.Contains(t, string(out), want, "mode %q crit must carry the remediation hint %q", tc.mode, want)
+			}
+			for _, notWant := range tc.wantNotContains {
+				require.NotContains(t, string(out), notWant, "mode %q crit must NOT carry %q (wrong network hint branch)", tc.mode, notWant)
+			}
 		})
 	}
+}
+
+// TestInitHvmHeaderNodeRefusesWithoutExternalHeaderMode drives the FIRST initHvmHeaderNode guard (line ~859) via
+// subprocess re-exec: a TBC config without ExternalHeaderMode must refuse-to-start. The existing refuse harness
+// only exercises the genesis-pairing/lockstep guards (all of which assume ExternalHeaderMode is already set), so
+// this distinct crit had no coverage. A separate parent (not folded into TestInitHvmHeaderNodeRefuses) because its
+// crit text carries neither "Refusing to start" nor the pairing vocabulary that test asserts. Mutants killed:
+// inverting/deleting the `ExternalHeaderMode != true` guard, or downgrading its log.Crit to log.Warn.
+func TestInitHvmHeaderNodeRefusesWithoutExternalHeaderMode(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestInitHvmHeaderNodeRefusesDesyncedChild$", "-test.v")
+	cmd.Env = append(os.Environ(), hvmInitCritChildEnv+"=no-external-header")
+	out, err := cmd.CombinedOutput()
+
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "child must exit non-zero (refuse-to-start), got output:\n%s", string(out))
+	require.False(t, ee.Success(), "child must report failure")
+	require.Contains(t, string(out), "does not have ExternalHeaderMode set",
+		"the crit must be the ExternalHeaderMode guard's, not another log.Crit site")
+	require.NotContains(t, string(out), "initHvmHeaderNode returned for mode",
+		"the ExternalHeaderMode guard must os.Exit (via log.Crit) before returning; the returned-marker means a downgrade to log.Warn")
+}
+
+// TestInitHvmHeaderNodeRefusesNilGenesisChaincfgUnknown drives the EffectiveGenesisBlock==nil skip via subprocess
+// re-exec: with a nil genesis the pairing switch is bypassed, but the unconditional chaincfg<->genesis lockstep
+// crit must still refuse a chaincfg-unknown network (else it would boot and per-block ErrCorrupt-wedge). Asserts
+// the lockstep crit fired and neither pairing arm ran.
+func TestInitHvmHeaderNodeRefusesNilGenesisChaincfgUnknown(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestInitHvmHeaderNodeRefusesDesyncedChild$", "-test.v")
+	cmd.Env = append(os.Environ(), hvmInitCritChildEnv+"=nil-genesis-chaincfg-unknown")
+	out, err := cmd.CombinedOutput()
+
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "child must exit non-zero (refuse-to-start), got output:\n%s", string(out))
+	require.False(t, ee.Success(), "child must report failure")
+	require.Contains(t, string(out), "no btcd chaincfg params", "the chaincfg-lockstep crit must fire on a chaincfg-unknown network even with a nil genesis")
+	require.NotContains(t, string(out), "DESYNCED", "the pairing switch must be SKIPPED (nil genesis), not entered")
+	require.NotContains(t, string(out), "NOT a pinned canonical", "the pairing switch must be SKIPPED (nil genesis)")
+	require.NotContains(t, string(out), "initHvmHeaderNode returned for mode", "the lockstep crit must os.Exit before returning")
 }
 
 // TestClassifyHvmGenesisPairingMultiCheckpoint exercises the classifier's loop over a network with more
@@ -254,17 +322,25 @@ func TestClassifyHvmGenesisPairingMultiCheckpoint(t *testing.T) {
 // checkpoint-inspection test only inspects testnet3[0]; the classifier test only checks NotEmpty/Empty;
 // nothing else iterates the whole map.
 func TestHvmGenesisCheckpointsWellFormed(t *testing.T) {
-	allowed := map[string]bool{"testnet3": true, "upgradetest": true}
-	require.Len(t, hvmGenesisCheckpoints, len(allowed), "only testnet3 and upgradetest are pinned today")
+	// testnet3 pins two pairs ([0] compiled default, [1] DEFER-state mainnet pair); mainnet pins the single
+	// MIGRATED-state pair (the dual-pin with testnet3[1]); upgradetest tracks the single default — see
+	// core.hvmGenesisCheckpoints.
+	allowed := map[string]int{"testnet3": 2, "mainnet": 1, "upgradetest": 1}
+	require.Len(t, hvmGenesisCheckpoints, len(allowed), "testnet3, mainnet and upgradetest are pinned")
 	for net, cps := range hvmGenesisCheckpoints {
-		require.Truef(t, allowed[net], "unexpected checkpoint network key %q (a typo like 'mainet', or a premature mainnet add that needs its own lockstep test?)", net)
-		require.Lenf(t, cps, 1, "network %q: exactly one checkpoint expected today", net)
+		wantN, ok := allowed[net]
+		require.Truef(t, ok, "unexpected checkpoint network key %q (a typo like 'mainet', or a new network that needs its own lockstep test?)", net)
+		require.Lenf(t, cps, wantN, "network %q: %d checkpoint(s) expected today", net, wantN)
 		for _, cp := range cps {
 			require.Greaterf(t, cp.height, uint64(0), "network %q: checkpoint height must be > 0", net)
 			require.Regexpf(t, "^[0-9a-f]{64}$", cp.hash, "network %q: checkpoint hash must be 64-char lowercase hex with no 0x prefix", net)
 		}
 	}
-	require.NotContains(t, hvmGenesisCheckpoints, "mainnet", "a mainnet checkpoint needs its own ethconfig.Defaults lockstep test (see eth/backend_hvm_genesis_test.go)")
+	// mainnet's pinned pair is the shared {883092,…eda8} constant, dual-pinned identically as testnet3[1].
+	require.Equal(t, []btcGenesisCheckpoint{{height: vm.MainnetHvmGenesisHeight, hash: vm.MainnetHvmGenesisHash}}, hvmGenesisCheckpoints["mainnet"],
+		"mainnet pins the shared migrated-state pair")
+	require.Contains(t, hvmGenesisCheckpoints["testnet3"], btcGenesisCheckpoint{height: vm.MainnetHvmGenesisHeight, hash: vm.MainnetHvmGenesisHash},
+		"testnet3 dual-pins the SAME pair (the DEFER state) — both must stay in lockstep")
 	require.NotContains(t, hvmGenesisCheckpoints, "localnet", "localnet is intentionally unpinned (Custom -> warn)")
 }
 

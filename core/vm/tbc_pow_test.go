@@ -166,3 +166,21 @@ func TestCheckBTCHeaderPoWGlobalParams(t *testing.T) {
 		require.Equal(t, blockchain.ErrHighHash, re.ErrorCode)
 	})
 }
+
+// TestCheckBTCHeaderBatchPoWNilHeaderFailsClosed pins that a nil header at ANY index of the EXPORTED batch PoW
+// gate fails closed to the recoverable skip sentinel (mirrors the contextual batch's TestValidateBTCHeaderBatchNilHeaderSkips).
+// TestCheckBTCHeaderPoW only covers nil via the unexported direct helper, never through the consensus-enforcing
+// batch entry, leaving a position-dependent nil-handling mutant (early short-circuit / silent skip) uncaught.
+func TestCheckBTCHeaderBatchPoWNilHeaderFailsClosed(t *testing.T) {
+	good := mineRegtestHeader(t, time.Unix(1_700_000_000, 0), 0)
+	for _, pos := range []int{0, 1} {
+		batch := []*wire.BlockHeader{good, good}
+		batch[pos] = nil
+		var err error
+		require.NotPanics(t, func() {
+			err = CheckBTCHeaderBatchPoWForNetwork("localnet", batch)
+		}, "a nil header at index %d must not nil-deref", pos)
+		require.ErrorIs(t, err, ErrBTCHeaderContextUnavailable,
+			"a nil header at index %d must fail closed to the skip sentinel, not be silently skipped", pos)
+	}
+}

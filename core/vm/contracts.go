@@ -90,8 +90,9 @@ var MainCtx context.Context
 // hvmQueryMap is a per-block precompile-result cache. It is currently DEAD: isValidBlock is always false
 // because evm.blockExecutionContext is never assigned, so every cache branch is unreachable. The
 // machinery is kept as scaffolding for wiring block-scoped execution context (which would also make the
-// build path read a pinned TBC view); reviving it must fix the shadowed-k write bug in the precompiles
-// (the read uses an inner k, the write the outer zero-valued k) and include the indexer position in the key.
+// build path read a pinned TBC view); reviving it must include the indexer position in the key, and each
+// precompile must write the cache under the SAME key it read — computed via
+// `var err error; k, err = calculateHVMQueryKey(...)`, never a zero-valued key.
 // TODO: Eventually store this on-disk so old transaction execution can be simulated if required.
 var hvmQueryMap = make(map[hVMQueryKey][]byte)
 
@@ -103,6 +104,18 @@ var HvmNullBlockHash = make([]byte, 32)
 // reaching the precompiles fleet-wide; alert on it. Distinct from the benign deterministic malformed-input
 // no-op, which does NOT increment this counter.
 var hvmPrecompileInvalidDataCounter = metrics.NewRegisteredCounter("vm/hvm/precompile/invalid_data", nil)
+
+// utxoIndexHashForLastHeader is the seam btcLastHeader uses to read the UTXO indexer position. It defaults to the
+// live TBCFullNode.UtxoIndexHash and is NEVER reassigned in production — it exists ONLY so a test can drive the
+// NON-panic UtxoIndexHash-error sub-case of btcLastHeader's guard. That sub-case is otherwise unreachable from a
+// test: a closed-DB fault makes goleveldb PANIC inside UtxoIndexHash (which routes through the precompile recover
+// boundary in evm.go, NOT btcLastHeader's explicit `if err != nil`). Without this seam a `return nil, rawErr`
+// regression on the explicit arm — a consensus-observable CALL failure (revert + full gas burn) on a corrupt-index
+// node, diverging from the deployed recover->(nil,nil) — would survive the whole suite. Pure forward; zero
+// production behavior change.
+var utxoIndexHashForLastHeader = func(ctx context.Context) (*tbc.HashHeight, error) {
+	return TBCFullNode.UtxoIndexHash(ctx)
+}
 
 func GetTBCFullNodeSyncStatus() *tbc.SyncInfo {
 	syncInfo := TBCFullNode.Synced(MainCtx)
@@ -147,10 +160,11 @@ func paramsForNetwork(network string) (*chaincfg.Params, error) {
 	case "testnet3", "upgradetest":
 		// The TBC node maps both "testnet3" and "upgradetest" to TestNet3Params; they must map
 		// identically here, in lockstep with that mapping.
-		// Forward-safety: the consensus-binding lightweight node currently hardcodes Network="testnet3"
-		// (eth/backend.go), so today the upgradetest alias only affects the full-node path (it now
-		// resolves rather than log.Crit-ing). It prevents a deterministic ErrCorruptHVMHeaderOnlyModeState
-		// restore livelock if the eth/backend.go network is ever forwarded from config to this node.
+		// Forward-safety: the consensus-binding lightweight header node now derives its Network from
+		// config.TBCNetwork (eth/backend.go buildHvmHeaderNodeConfig sets tbcCfg.Network = config.TBCNetwork,
+		// fallback ethconfig.DefaultTBCNetwork), so the upgradetest alias CAN reach this path. Resolving it here
+		// (rather than log.Crit-ing on the alias) prevents a deterministic ErrCorruptHVMHeaderOnlyModeState
+		// restore livelock on an upgradetest-configured node.
 		return &chaincfg.TestNet3Params, nil
 	case "localnet":
 		return &chaincfg.RegressionNetParams, nil
@@ -251,23 +265,24 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 		return header, height, nil, false, nil // They are same, no fork
 	}
 
-	lowerHeight := a.Height
-	higherHash := b.Hash
-	lowerHash := a.Hash
-	if b.Height < lowerHeight {
-		lowerHeight = b.Height
-		higherHash = a.Hash
-		lowerHash = b.Hash
+	// Fetch BOTH headers up front and order the cursors by their REAL (fetched) heights — NOT the caller-supplied
+	// a.Height/b.Height. An inconsistent (hash,height) input would otherwise mis-assign higher/lower; the
+	// height-equalize loop below then never runs, the both-walk-back loop walks two different-height cursors that can
+	// never align, and the walk runs off the bottom of the chain returning a spurious missing-header.
+	aHeader, aHeight, err := TBCFullNode.BlockHeaderByHash(MainCtx, a.Hash)
+	if err != nil {
+		return nil, 0, &a.Hash, false, err
+	}
+	bHeader, bHeight, err := TBCFullNode.BlockHeaderByHash(MainCtx, b.Hash)
+	if err != nil {
+		return nil, 0, &b.Hash, false, err
 	}
 
-	highCursorHeader, highCursorHeight, err := TBCFullNode.BlockHeaderByHash(MainCtx, higherHash)
-	if err != nil {
-		return nil, 0, &higherHash, false, err
-	}
-
-	lowCursorHeader, lowCursorHeight, err := TBCFullNode.BlockHeaderByHash(MainCtx, lowerHash)
-	if err != nil {
-		return nil, 0, &lowerHash, false, err
+	highCursorHeader, highCursorHeight := aHeader, aHeight
+	lowCursorHeader, lowCursorHeight := bHeader, bHeight
+	if bHeight > aHeight {
+		highCursorHeader, highCursorHeight = bHeader, bHeight
+		lowCursorHeader, lowCursorHeight = aHeader, aHeight
 	}
 
 	for highCursorHeight > lowCursorHeight {
@@ -565,7 +580,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	// blocks were available to index to the two different tips
 	commonIndexTip, commonIndexTipHeight, missingHeaderHashIndexerAncestorSearch, _, err := FindCommonAncestor(&utxoSync, &txSync)
 	if err != nil {
-		if errors.As(err, &database.ErrNotFound) {
+		if errors.Is(err, database.ErrNotFound) {
 			// A header wasn't found when looking for the common ancestor.
 			return false, nil, missingHeaderHashIndexerAncestorSearch, nil
 		}
@@ -576,7 +591,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 
 	targetHH, err := hashHeightForHeader(ctx, endingHeader)
 	if err != nil {
-		if errors.As(err, &database.ErrNotFound) {
+		if errors.Is(err, database.ErrNotFound) {
 			endingHeaderHash := endingHeader.BlockHash()
 			log.Warn(fmt.Sprintf("Header %s not found", endingHeaderHash.String()), "err", err)
 			// TBC full node does not know about the ending header
@@ -588,7 +603,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	// Find common ancestor between current common index ancestor tip and target header
 	ancestorToTarget, _, missingHeaderHashTargetAncestorSearch, _, err := FindCommonAncestor(tipHH, targetHH)
 	if err != nil {
-		if errors.As(err, &database.ErrNotFound) {
+		if errors.Is(err, database.ErrNotFound) {
 			return false, nil, missingHeaderHashTargetAncestorSearch, nil
 		}
 		return false, nil, nil, err
@@ -597,7 +612,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	ancestorToTargetHash := ancestorToTarget.BlockHash()
 	_, ancestorHeight, err := TBCFullNode.BlockHeaderByHash(ctx, ancestorToTargetHash)
 	if err != nil {
-		if errors.As(err, &database.ErrNotFound) {
+		if errors.Is(err, database.ErrNotFound) {
 			// Should be impossible, as if the ancestor header is not available FindCommonAncestor
 			// would have returned an error already.
 			return false, nil, &ancestorToTargetHash, nil
@@ -649,18 +664,20 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		if err != nil {
 			// Should be impossible as a missing header would have been identified when finding the
 			// common ancestor between target and lowest indexed tip.
-			if errors.As(err, &database.ErrNotFound) {
+			if errors.Is(err, database.ErrNotFound) {
 				return false, nil, &prevBlockHash, nil
 			}
 			log.Warn(fmt.Sprintf("Unable to get block header for cursor's previous block %s, got error other "+
-				"than database not found", cursor.PrevBlock.String()), "err", err)
+				"than database not found", prevBlockHash.String()), "err", err)
 			return false, nil, nil, err
 		}
 		if height < ancestorHeight {
 			// Somehow walking backwards got to a lower block than the ancestor we are looking for.
 			// Should never happen, would mean that the current indexed tip and target are not
 			// on the same chain graph but FindCommonAncestor reported a common ancestor.
-			log.Error(fmt.Sprintf(""))
+			log.Error(fmt.Sprintf("TBCBlocksAvailableToHeader walked below the common ancestor: target %s @ %d, "+
+				"ancestor %s @ %d, walked to height=%d", targetHH.Hash.String(), targetHH.Height,
+				ancestorToTarget.BlockHash().String(), ancestorHeight, height))
 			return false, nil, nil, fmt.Errorf("TBCBlocksAvailableToHeader failed walking backwards from "+
 				"%s @ %d looking for %s @ %d, walked to height=%d", targetHH.Hash.String(),
 				targetHH.Height, ancestorToTarget.BlockHash().String(), ancestorHeight, height)
@@ -1083,7 +1100,8 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 }
 
 // calculateHVMQueryKey constructs an hVMQueryKey which is used to cache hVM responses.
-// Each key is (precompile_input + precompile_address_byte + containing_header_hash)
+// Each key is sha256(containing_header_hash || precompile_address_byte || precompile_input) — note the preimage order
+// matches the code below (block context first, then the address byte, then the input), not the reverse.
 // This query key is unique for a specific precompile called with specific input argument contained in a specific block
 func calculateHVMQueryKey(input []byte, precompileAddress byte, blockContext common.Hash) (hVMQueryKey, error) {
 	if bytes.Equal(blockContext[:], HvmNullBlockHash) {
@@ -1151,9 +1169,15 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
-			log.Crit("Unable to calculate hVM Query Key!", "input", input, "blockContext", blockContext)
+			// Fail-closed: return the error rather than log.Crit/halt the node on this otherwise-unreachable internal
+			// error, so behavior matches the other 9 precompile sites. See the matching comment there.
+			log.Error("Unable to calculate hVM Query Key!",
+				"input", fmt.Sprintf("%x", input),
+				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1212,11 +1236,17 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1236,7 +1266,12 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		log.Warn("Unable to lookup tx confirmations by Txid; unable to convert txid %x to chainhash!", "txid", txid, "err", err)
 	}
 
-	// This only returns information about the canonical chain
+	// This only returns information about the canonical chain.
+	// CONSENSUS-COMPAT (do not "fix" without a coordinated fork): for a valid-but-unindexed txid this returns the raw
+	// not-found error, which the EVM treats as a CALL failure (revert + all gas burned) — inconsistent with the sibling
+	// lookup precompiles' (nil,nil) no-op, but it is the DEPLOYED testnet3 behavior. Changing it to (nil,nil) here is a
+	// consensus-observable output change that would split a mixed (rolling-upgrade) fleet on the first such call, so the
+	// harmonization is deferred to a future coordinated cutover / Hvm fork rather than ridden on the already-active Hvm0.
 	blockHash, err := TBCFullNode.BlockHashByTxId(MainCtx, txHash)
 	if err != nil {
 		log.Error("Unable to lookup transaction confirmations by txid", "txid", txid, "err", err)
@@ -1259,6 +1294,10 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		return nil, err
 	}
 
+	// CONSENSUS-COMPAT (do not "fix" without a coordinated fork): if the tx's block height somehow exceeds the upstream
+	// best height (tx index momentarily ahead of TBCUpstreamTip), heightBest-height underflows uint64 and the uint32
+	// cast emits a wrapped garbage count. Clamping to 0 is a consensus-observable output change vs the DEPLOYED binary
+	// and would split a mixed fleet, so it is deferred to the same coordinated cutover / fork as the not-found case above.
 	resp := make([]byte, 4)
 	binary.BigEndian.PutUint32(resp, uint32(heightBest-height+1))
 
@@ -1292,11 +1331,17 @@ func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, e
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1348,11 +1393,17 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1362,10 +1413,24 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 		}
 	}
 
-	// Assumes UTXO and Tx indexers are in sync when hVM precompile calls are performed
-	utxoIndex, err := TBCFullNode.UtxoIndexHash(MainCtx)
+	// Assumes UTXO and Tx indexers are in sync when hVM precompile calls are performed.
+	// (Read via the utxoIndexHashForLastHeader seam — a pure forward to TBCFullNode.UtxoIndexHash — so a test can
+	// exercise the NON-panic error sub-case of the guard below; see the seam's declaration.)
+	utxoIndex, err := utxoIndexHashForLastHeader(MainCtx)
 	if err != nil {
+		// UtxoIndexHash returns (nil, err) on failure; falling through would nil-deref utxoIndex.Hash. Return the
+		// guarded sentinel (NOT the raw err) so runPrecompile normalizes it to the SAME (nil,nil) CALL-success the
+		// deployed binary produced for this fault: at base this nil-deref PANICKED and was caught by the precompile
+		// recover boundary -> ErrHVMInvalidPrecompileInput -> (nil,nil). Returning the raw err instead would propagate
+		// as a CALL failure (revert + all gas burned) — a consensus-observable divergence from the deployed fleet.
+		//
+		// The deployed panic-recover path (evm.go) also fired hvmPrecompileInvalidDataCounter for this fault, so we
+		// increment it here to preserve the OBSERVABILITY contract too — otherwise alerting built against the deployed
+		// binary's metric would silently go blind to UtxoIndexHash faults on upgraded nodes. (Counter only; gas and
+		// return bytes are already identical, so this is monitoring-fidelity, not consensus.)
 		log.Error("hVM precompile unable to get UTXO indexer status", "err", err)
+		hvmPrecompileInvalidDataCounter.Inc(1)
+		return nil, ErrHVMInvalidPrecompileInput
 	}
 
 	// Get header and height that UTXO indexer (and assumed Tx indexer) is synced to
@@ -1431,11 +1496,17 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1541,11 +1612,17 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1622,11 +1699,17 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1758,11 +1841,17 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1862,11 +1951,17 @@ func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]by
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -1962,11 +2057,17 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 
 	var k hVMQueryKey
 	if isValidBlock(blockContext) {
-		k, err := calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
+		var err error
+		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
+			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
+			// future revival of the cache path). Unreachable today — calculateHVMQueryKey only errors on the null
+			// block, which isValidBlock already excludes — but harmonized across all precompiles so a revival cannot
+			// introduce a per-precompile divergence.
 			log.Error("Unable to calculate hVM Query Key!",
 				"input", fmt.Sprintf("%x", input),
 				"blockContext", fmt.Sprintf("%x", blockContext))
+			return nil, err
 		}
 		cachedResult, exists := hvmQueryMap[k]
 		if exists {
@@ -2001,8 +2102,8 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 
 	bitflag3 := input[34] // Gives size limits for data which could get unexpectedly expensive to return
 	// Two free bits here
-	maxInputsExponent := (bitflag3 & (0x07 << 3)) >> 3 // bits xxXXXxxx used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 inputs
-	maxOutputsExponent := bitflag3 & (0x07)            // bits xxxxxXXX used as 2^(X), b00=2^0=1, b01=2^1=2, ... up to 2^6=64 outputs
+	maxInputsExponent := (bitflag3 & (0x07 << 3)) >> 3 // bits xxXXXxxx used as 2^(X), b000=2^0=1, ... up to 2^7=128 inputs (3-bit field)
+	maxOutputsExponent := bitflag3 & (0x07)            // bits xxxxxXXX used as 2^(X), b000=2^0=1, ... up to 2^7=128 outputs (3-bit field)
 
 	maxInputs := 0x01 << maxInputsExponent
 	maxOutputs := 0x01 << maxOutputsExponent

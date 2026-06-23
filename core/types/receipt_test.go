@@ -155,6 +155,44 @@ var (
 		},
 		Type: BtcAttributesDepositedTxType,
 	}
+	// Successful-status variants: every existing 0x7C/0x7D receipt fixture uses ReceiptStatusFailed, so the
+	// statusEncoding/setStatus round-trip for the SUCCESS byte ([]byte{0x01} vs []byte{}) was never exercised for a
+	// system-tx receipt. A real BtcAttr receipt is normally successful; pin that Status survives the consensus RLP.
+	btcAttributesDepositedSuccessfulWithNoNonce = &Receipt{
+		Status:            ReceiptStatusSuccessful,
+		CumulativeGasUsed: 1,
+		Logs: []*Log{
+			{
+				Address: common.BytesToAddress([]byte{0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+			{
+				Address: common.BytesToAddress([]byte{0x01, 0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+		},
+		Type: BtcAttributesDepositedTxType,
+	}
+	btcAttributesDepositedSuccessfulWithNonce = &Receipt{
+		Status:                      ReceiptStatusSuccessful,
+		CumulativeGasUsed:           1,
+		BtcAttributesDepositedNonce: &nonce,
+		Logs: []*Log{
+			{
+				Address: common.BytesToAddress([]byte{0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+			{
+				Address: common.BytesToAddress([]byte{0x01, 0x11}),
+				Topics:  []common.Hash{common.HexToHash("dead"), common.HexToHash("beef")},
+				Data:    []byte{0x01, 0x00, 0xff},
+			},
+		},
+		Type: BtcAttributesDepositedTxType,
+	}
 
 	// Create a few transactions to have receipts for
 	to2 = common.HexToAddress("0x2")
@@ -739,6 +777,8 @@ func TestRoundTripReceiptLegacy(t *testing.T) {
 		{name: "PoPPayoutWithNonce", rcpt: popPayoutReceiptWithNonce},
 		{name: "BtcAttributesDepositedWithNonce", rcpt: btcAttributesDepositedWithNonce},
 		{name: "BtcAttributesDepositedWithNoNonce", rcpt: btcAttributesDepositedWithNoNonce},
+		{name: "BtcAttributesDepositedSuccessfulWithNonce", rcpt: btcAttributesDepositedSuccessfulWithNonce},
+		{name: "BtcAttributesDepositedSuccessfulWithNoNonce", rcpt: btcAttributesDepositedSuccessfulWithNoNonce},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -780,6 +820,8 @@ func TestRoundTripReceiptForStorageLegacy(t *testing.T) {
 		{name: "PoPPayoutWithNonce", rcpt: popPayoutReceiptWithNonce},
 		{name: "BtcAttributesDepositedWithNonce", rcpt: btcAttributesDepositedWithNonce},
 		{name: "BtcAttributesDepositedWithNoNonce", rcpt: btcAttributesDepositedWithNoNonce},
+		{name: "BtcAttributesDepositedSuccessfulWithNonce", rcpt: btcAttributesDepositedSuccessfulWithNonce},
+		{name: "BtcAttributesDepositedSuccessfulWithNoNonce", rcpt: btcAttributesDepositedSuccessfulWithNoNonce},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -796,6 +838,10 @@ func TestRoundTripReceiptForStorageLegacy(t *testing.T) {
 			require.Equal(t, test.rcpt.DepositNonce, d.DepositNonce)
 			require.Equal(t, test.rcpt.DepositReceiptVersion, d.DepositReceiptVersion)
 			require.Equal(t, test.rcpt.PoPPayoutNonce, d.PoPPayoutNonce)
+			// The BtcAttr nonce sits LAST after three positional placeholder sentinels in the stored encoding
+			// (storedReceiptRLP); a wrong sentinel ordering or a botched optional-guard would silently drop it.
+			// Pin its preservation in both the non-nil and nil (rlp:"optional" absent) states.
+			require.Equal(t, test.rcpt.BtcAttributesDepositedNonce, d.BtcAttributesDepositedNonce)
 		})
 	}
 }

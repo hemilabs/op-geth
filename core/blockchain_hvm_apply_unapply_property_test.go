@@ -139,7 +139,7 @@ func TestUnapplyHvmHeaderConsensusUpdateOrphanedParentBlockRecoverable(t *testin
 	require.NoError(t, chain.applyHvmHeaderConsensusUpdate(blockB.Header(), false, true), "apply steady-state block B")
 
 	// Orphan A's BLOCK but keep its HEADER: the prevBlock (header) guard passes, but the walk-back's
-	// getBlockFromDiskOrHoldingPen(A) returns nil → cursor.Time() would nil-panic without the new guard.
+	// getBlockFromDiskOrHoldingPen(A) returns nil → cursor.Time() would nil-panic without the nil-cursor guard.
 	delete(chain.tempBlocks, blockA.Hash().String())
 	require.NotNil(t, chain.getHeaderFromDiskOrHoldingPen(blockA.Hash()),
 		"A's header must still resolve (only the block is orphaned, so the prevBlock guard does not fire first)")
@@ -149,4 +149,19 @@ func TestUnapplyHvmHeaderConsensusUpdateOrphanedParentBlockRecoverable(t *testin
 		"an orphaned parent BLOCK on the unapply walk-back must not nil-deref")
 	require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
 		"unapply with an unresolvable parent block must return the recoverable corrupt-state sentinel")
+
+	// The recoverable corrupt return must NOT have mutated the consensus view: B stays applied (tip + state-id
+	// unchanged) and all of B's headers remain present. Kills a mutant that removes headers or rolls the state-id
+	// back BEFORE returning the sentinel (such a side-effect would pass the error-class check above but silently
+	// diverge the lightweight TBC view).
+	_, tipAfter, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, bTip, tipAfter.BlockHash(), "a corrupt-return unapply must leave the BTC tip at B unchanged")
+	sidAfter, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, blockB.Hash().Bytes(), sidAfter[:], "a corrupt-return unapply must leave the upstream-state-id at B")
+	for _, h := range bHeaders {
+		_, _, e := chain.tbcHeaderNode.BlockHeaderByHash(chain.ctx, h.BlockHash())
+		require.NoError(t, e, "B's headers must remain present after a corrupt-return unapply")
+	}
 }

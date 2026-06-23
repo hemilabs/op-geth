@@ -47,35 +47,41 @@ func TestBtcAttrFutureSkewExceeded(t *testing.T) {
 // constant relationship fails this test.
 func TestBodyAbsentShouldGiveUp(t *testing.T) {
 	cases := []struct {
-		polls int
-		want  bool
+		polls, maxPolls int
+		want            bool
 	}{
-		{0, false},
-		{1, false},
-		{maxHvmSnapBodyAbsentPolls - 1, false}, // one below the bound: keep waiting
-		{maxHvmSnapBodyAbsentPolls, true},      // exactly at the bound: give up (this is the >= boundary)
-		{maxHvmSnapBodyAbsentPolls + 1, true},  // above the bound: give up
+		// Production horizon (maxHvmSnapBodyAbsentPolls). The live give-up site now CALLS this predicate with
+		// bc.effectiveMaxBodyAbsentPolls(), so these rows pin the ACTUAL live boundary, not a copy of it.
+		{0, maxHvmSnapBodyAbsentPolls, false},
+		{1, maxHvmSnapBodyAbsentPolls, false},
+		{maxHvmSnapBodyAbsentPolls - 1, maxHvmSnapBodyAbsentPolls, false}, // one below the bound: keep waiting
+		{maxHvmSnapBodyAbsentPolls, maxHvmSnapBodyAbsentPolls, true},      // exactly at the bound: give up (>= boundary)
+		{maxHvmSnapBodyAbsentPolls + 1, maxHvmSnapBodyAbsentPolls, true},  // above the bound: give up
+		// Injectable override horizon (the test-only hvmSnapBodyAbsentPollsLimit path). A > vs >= off-by-one at the
+		// bound is discriminated here regardless of the horizon value the live waiter resolves.
+		{2, 3, false}, // one below the lowered bound: keep waiting
+		{3, 3, true},  // exactly at the lowered bound: give up
+		{4, 3, true},  // above the lowered bound: give up
 	}
 	for _, c := range cases {
-		if got := bodyAbsentShouldGiveUp(c.polls); got != c.want {
-			t.Errorf("bodyAbsentShouldGiveUp(%d) = %v, want %v (maxHvmSnapBodyAbsentPolls=%d)",
-				c.polls, got, c.want, maxHvmSnapBodyAbsentPolls)
+		if got := bodyAbsentShouldGiveUp(c.polls, c.maxPolls); got != c.want {
+			t.Errorf("bodyAbsentShouldGiveUp(%d, %d) = %v, want %v", c.polls, c.maxPolls, got, c.want)
 		}
 	}
 }
 
 // TestShouldWalkBackTipLag pins the updateFullTBCToLightweight tip-lag walk-back boundary, including the
-// unsigned-underflow case that the addition form fixes. The prior subtraction form
-// (cursorHeight - lag > genesisOffset) wrapped to a huge value (passing the guard, then walking below
-// genesis) when cursorHeight < lag — reachable right after the hVM Phase-0 transition on a near-zero-offset
-// regtest network. A revert to that subtraction, or a > vs >= off-by-one at the genesis floor, fails here.
+// unsigned-underflow case the addition form (cursorHeight > genesisOffset+lag) avoids. A subtraction form
+// (cursorHeight - lag > genesisOffset) wraps to a huge value (passing the guard, then walking below genesis)
+// when cursorHeight < lag — reachable right after the hVM Phase-0 transition on a near-zero-offset regtest
+// network. That subtraction form, or a > vs >= off-by-one at the genesis floor, fails here.
 func TestShouldWalkBackTipLag(t *testing.T) {
 	cases := []struct {
 		name                      string
 		cursorHeight, offset, lag uint64
 		want                      bool
 	}{
-		// Underflow region: cursorHeight < lag. The old subtraction wrapped TRUE here; correct is FALSE.
+		// Underflow region: cursorHeight < lag. A subtraction form (cursorHeight - lag > genesisOffset) would wrap TRUE here; correct is FALSE.
 		{"underflow-h1-lag2", 1, 0, 2, false},
 		{"underflow-h2-lag2", 2, 0, 2, false},
 		{"zero-cursor", 0, 0, 2, false},

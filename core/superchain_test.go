@@ -125,3 +125,52 @@ func TestOPMainnetGenesisDB(t *testing.T) {
 		t.Fatalf("canonical hash mismatch: %s <> %s", canonicalHash, expected)
 	}
 }
+
+// TestOverrideHemiHvm0 pins ChainOverrides.OverrideHemiHvm0 propagation through SetupGenesisBlockWithOverride
+// (genesis.go apply() ~392): a set override lands on the final chainConfig.Hvm0Time, and a nil override leaves it
+// unchanged. Every sibling override (Canyon, etc.) is covered by TestRegistryChainConfigOverride; OverrideHemiHvm0
+// alone was not — it is the CLI-wired (eth/backend.go, ethconfig) mechanism to activate hVM at genesis. Corpus-free
+// (in-memory DB + the committed superchain-configs fixture).
+func TestOverrideHemiHvm0(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		override *uint64
+	}{
+		{"set", uint64ptr(1234567)},
+		{"nil-preserves", nil},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			db := rawdb.NewMemoryDatabase()
+			genesis, err := LoadOPStackGenesis(10)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if genesis.Config.Hvm0Time != nil {
+				t.Fatal("precondition: baseline OP-stack genesis must have no hVM activation")
+			}
+			tdb := triedb.NewDatabase(db, newDbConfig(rawdb.PathScheme))
+			genesis.MustCommit(db, tdb)
+			bl := genesis.ToBlock()
+			rawdb.WriteCanonicalHash(db, bl.Hash(), 0)
+			rawdb.WriteBlock(db, bl)
+
+			chainConfig, _, _, err := SetupGenesisBlockWithOverride(db, tdb, genesis, &ChainOverrides{OverrideHemiHvm0: tt.override})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.override == nil {
+				if chainConfig.Hvm0Time != nil {
+					t.Fatalf("a nil OverrideHemiHvm0 must leave Hvm0Time unchanged, got %d", *chainConfig.Hvm0Time)
+				}
+				return
+			}
+			if chainConfig.Hvm0Time == nil {
+				t.Fatal("OverrideHemiHvm0 must propagate to Hvm0Time, got nil")
+			}
+			if *chainConfig.Hvm0Time != *tt.override {
+				t.Fatalf("expected Hvm0Time %d, got %d", *tt.override, *chainConfig.Hvm0Time)
+			}
+		})
+	}
+}

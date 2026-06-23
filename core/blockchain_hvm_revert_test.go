@@ -31,7 +31,7 @@ import (
 // EVM Process/ValidateState, the revert must roll the lightweight TBC node fully back to the pre-insert EVM
 // tip (tbcHeader) — restoring the upstream-state-id and removing every BTC header the rejected block added.
 //
-// Reproduces the insert sequence the revert fix protects, at the lightweight (consensus) seam:
+// Reproduces the insert sequence the revert path handles, at the lightweight (consensus) seam:
 //  1. apply currentHead (activation block) -> state-id = currentHead   (this is "tbcHeader", the EVM tip
 //     the TBC represents at insert entry, captured in production via getHeaderModeTBCEVMHeader).
 //  2. apply a header-bearing block N -> AddExternalHeaders advances the tip and state-id to N (mirrors the
@@ -47,12 +47,12 @@ import (
 // (updateFullTBCToLightweight, gated by bool=true) which needs a live vm.TBCFullNode — out of scope, the
 // same reason related tests use attemptPrefetch=false. Full-node-lag is covered by TestIsHvmFullNodeBehind.
 //
-// Scope: this locks in the revert unwind, not the wiring. The fix's novel surface is the two
+// Scope: this locks in the revert unwind, not the wiring. The novel surface is the two
 // revertHvmStateAfterInvalidBlock call sites in insertChain's EVM-failure paths (after processor.Process
 // and validator.ValidateState, under the isHvmActivated guard); deleting both would leave this green. That
 // wiring cannot run in a unit test (needs the full insert path -> a live vm.TBCFullNode, plus
-// findCommonAncestor's disk reads), so it is covered by code review; this test guards the behavior the
-// wiring invokes — that the revert fully undoes a rejected block's TBC advance (state-id + headers).
+// findCommonAncestor's disk reads); this test guards the behavior the wiring invokes — that the revert
+// fully undoes a rejected block's TBC advance (state-id + headers).
 //
 // The assertion that the added BTC headers are removed (tip restored to the checkpoint), not just the
 // state-id rolled back, is what makes this a revert regression rather than a generic state-id check: a
@@ -126,12 +126,16 @@ func TestHvmRevertUndoesHeaderBearingBlockAdvance(t *testing.T) {
 	require.Equal(t, currentHead.Hash().Bytes(), sidReverted[:],
 		"revert must restore the upstream-state-id to the pre-insert tip (not leave it at the rejected block)")
 	require.NotEqual(t, blockN.Hash().Bytes(), sidReverted[:],
-		"a state-id left at block N is the pre-fix signature (rejected block's advance not undone)")
+		"a state-id left at block N means the rejected block's advance was not undone")
 	_, tipReverted, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
 	require.NoError(t, err)
 	tipRevertedHash := tipReverted.BlockHash()
 	require.Equal(t, checkpoint[:], tipRevertedHash[:],
 		"revert must REMOVE the BTC headers the rejected block added (tip back to the checkpoint)")
+	for _, h := range headers {
+		_, _, err := chain.tbcHeaderNode.BlockHeaderByHash(chain.ctx, h.BlockHash())
+		require.Error(t, err, "revert must remove header %s from the store", h.BlockHash())
+	}
 }
 
 // TestHvmRevertFirstHvmBlockNilGuard exercises revertHvmStateAfterInvalidBlock on its tbcHeader==nil branch

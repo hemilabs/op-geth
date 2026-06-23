@@ -17,6 +17,7 @@
 package params
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/big"
@@ -165,6 +166,59 @@ func TestCheckCompatible(t *testing.T) {
 				What:         "Holocene fork timestamp",
 				StoredTime:   newUint64(10),
 				NewTime:      newUint64(20),
+				RewindToTime: 9,
+			},
+		},
+		// hVM Phase 0 fork timestamp must be enforced by CheckCompatible (via opCheckCompatible) like every other op
+		// fork: moving Hvm0Time across an already-processed head must force a protective rewind, not silently
+		// re-interpret synced blocks under hVM rules. Without the opCheckCompatible guard this row would get a nil err.
+		{
+			stored:           &ChainConfig{Hvm0Time: newUint64(10)},
+			new:              &ChainConfig{Hvm0Time: newUint64(20)},
+			headTimestamp:    25,
+			genesisTimestamp: newUint64(15),
+			wantErr: &ConfigCompatError{
+				What:         "hVM Phase 0 fork timestamp",
+				StoredTime:   newUint64(10),
+				NewTime:      newUint64(20),
+				RewindToTime: 9,
+			},
+		},
+		// Control: head before either Hvm0Time means no block has been processed under either schedule, so moving the
+		// fork is compatible (no rewind). Pins that the guard is head-gated, not a blanket "any Hvm0Time change rewinds".
+		{
+			stored:           &ChainConfig{Hvm0Time: newUint64(10)},
+			new:              &ChainConfig{Hvm0Time: newUint64(20)},
+			headTimestamp:    5,
+			genesisTimestamp: newUint64(1),
+			wantErr:          nil,
+		},
+		// Move-EARLIER: the EXACT scenario config_op.go's guard comment names — an operator setting --override.hvm0 to
+		// an EARLIER timestamp on an already-synced node. Blocks in (new,stored] were processed WITHOUT hVM and must be
+		// rewound and re-processed under hVM rules. Rewind = newtime-1 (the earlier schedule).
+		{
+			stored:           &ChainConfig{Hvm0Time: newUint64(20)},
+			new:              &ChainConfig{Hvm0Time: newUint64(10)},
+			headTimestamp:    25,
+			genesisTimestamp: newUint64(15),
+			wantErr: &ConfigCompatError{
+				What:         "hVM Phase 0 fork timestamp",
+				StoredTime:   newUint64(20),
+				NewTime:      newUint64(10),
+				RewindToTime: 9,
+			},
+		},
+		// nil -> set: enabling hVM (was disabled) on a node already past the new activation must rewind to newtime-1 so
+		// the now-hVM-active blocks are re-processed. This is the from-scratch testnet3 enablement transition.
+		{
+			stored:           &ChainConfig{Hvm0Time: nil},
+			new:              &ChainConfig{Hvm0Time: newUint64(10)},
+			headTimestamp:    25,
+			genesisTimestamp: newUint64(5),
+			wantErr: &ConfigCompatError{
+				What:         "hVM Phase 0 fork timestamp",
+				StoredTime:   nil,
+				NewTime:      newUint64(10),
 				RewindToTime: 9,
 			},
 		},
@@ -363,4 +417,71 @@ func TestCheckOptimismValidity(t *testing.T) {
 
 func ptr[T any](t T) *T {
 	return &t
+}
+
+// TestConfigRulesHvm0 pins two properties of the IsHvm0 field in Rules() that no test asserts. (1) MERGE-
+// INDEPENDENCE: IsHvm0 is the ONLY fork field set from a bare predicate (`IsHvm0: c.IsHvm0(timestamp)`), with no
+// `isMerge &&` guard that every sibling fork (Shanghai/Cancun/all Optimism forks) carries — an intentional, fragile
+// design (there is an in-code TODO). A "consistency cleanup" adding `isMerge &&` would silently disable hVM for any
+// pre-London/non-merge config. (2) nil-disable: a nil Hvm0Time disables it.
+func TestConfigRulesHvm0(t *testing.T) {
+	// Merge-independence: NO London, NO Optimism set, isMerge=false -> IsHvm0 still activates on the timestamp.
+	c := &ChainConfig{Hvm0Time: newUint64(500)}
+	for _, isMerge := range []bool{false, true} {
+		if r := c.Rules(big.NewInt(0), isMerge, 499); r.IsHvm0 {
+			t.Errorf("isMerge=%v: IsHvm0 must be false before activation", isMerge)
+		}
+		if r := c.Rules(big.NewInt(0), isMerge, 500); !r.IsHvm0 {
+			t.Errorf("isMerge=%v: IsHvm0 must be true at activation (independent of isMerge)", isMerge)
+		}
+		if r := c.Rules(big.NewInt(0), isMerge, math.MaxInt64); !r.IsHvm0 {
+			t.Errorf("isMerge=%v: IsHvm0 must stay true past activation", isMerge)
+		}
+	}
+
+	// Differential against a merge-GATED sibling: with isMerge=false, Shanghai stays off past its time while IsHvm0
+	// is on at the same timestamp — exactly the gap an `isMerge &&` mutation on the IsHvm0 line would erase.
+	cg := &ChainConfig{Hvm0Time: newUint64(500), ShanghaiTime: newUint64(500)}
+	r := cg.Rules(big.NewInt(0), false, 600)
+	if r.IsShanghai {
+		t.Errorf("Shanghai is merge-gated: must be false when isMerge=false")
+	}
+	if !r.IsHvm0 {
+		t.Errorf("IsHvm0 must be true regardless of isMerge — the merge-independence invariant")
+	}
+
+	// nil Hvm0Time disables hVM everywhere.
+	if r := (&ChainConfig{}).Rules(big.NewInt(0), true, math.MaxInt64); r.IsHvm0 {
+		t.Errorf("a nil Hvm0Time must keep IsHvm0 false")
+	}
+}
+
+// TestChainConfigHvm0TimeJSONRoundTrip pins the Hvm0Time JSON serialization (struct tag "hvm0Time,omitempty";
+// ChainConfig has no custom MarshalJSON). This is the genesis.json / rawdb config-persistence path
+// (core/genesis.go + rawdb.WriteChainConfig/ReadChainConfig); a field-name change or a dropped value would
+// silently disable hVM on a config reload. No params test marshalled/unmarshalled Hvm0Time.
+func TestChainConfigHvm0TimeJSONRoundTrip(t *testing.T) {
+	// Round-trip with a set value.
+	c := &ChainConfig{Hvm0Time: newUint64(500)}
+	b, err := json.Marshal(c)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `"hvm0Time":500`, "the on-wire field name must be the stable hvm0Time")
+	var got ChainConfig
+	require.NoError(t, json.Unmarshal(b, &got))
+	require.NotNil(t, got.Hvm0Time)
+	require.Equal(t, uint64(500), *got.Hvm0Time)
+
+	// nil (hVM disabled) is omitted (omitempty) and round-trips as nil.
+	b2, err := json.Marshal(&ChainConfig{})
+	require.NoError(t, err)
+	require.NotContains(t, string(b2), "hvm0Time", "a nil Hvm0Time must be omitted")
+	var got2 ChainConfig
+	require.NoError(t, json.Unmarshal(b2, &got2))
+	require.Nil(t, got2.Hvm0Time)
+
+	// Deserialization direction (a hand-written genesis.json snippet) locks the read path independently.
+	var got3 ChainConfig
+	require.NoError(t, json.Unmarshal([]byte(`{"chainId":1,"hvm0Time":1700000000}`), &got3))
+	require.NotNil(t, got3.Hvm0Time)
+	require.Equal(t, uint64(1700000000), *got3.Hvm0Time)
 }

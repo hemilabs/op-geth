@@ -17,12 +17,16 @@
 package eth
 
 import (
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/btcsuite/btcd/chaincfg"
 	"github.com/ethereum/go-ethereum/core"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
+	"github.com/mitchellh/go-homedir"
 )
 
 // TestEthconfigHvmDefaultsMatchCanonicalCheckpoint guards lockstep between the compiled hVM
@@ -36,9 +40,10 @@ import (
 // eth/backend.go: bdf.Hex2Header over the default header, GenesisHeightOffset = HvmGenesisHeight, network
 // testnet3. On failure, update core.hvmGenesisCheckpoints to match ethconfig.Defaults before shipping.
 func TestEthconfigHvmDefaultsMatchCanonicalCheckpoint(t *testing.T) {
-	// The consensus header node's network is hardcoded in eth/backend.go. Keep this identical to that
-	// constant; if backend.go starts deriving the network per chain, extend this test to cover every
-	// reachable (network, default) pair.
+	// The consensus header node's network DEFAULTS to testnet3 in eth/backend.go (buildHvmHeaderNodeConfig sets
+	// tbcCfg.Network = config.TBCNetwork, falling back to ethconfig.DefaultTBCNetwork when unset). Keep this
+	// identical to that default; if a non-testnet3 network ships its own default genesis, extend this test to
+	// cover every reachable (network, default) pair.
 	const productionNetwork = "testnet3"
 
 	hdr, err := bdf.Hex2Header(ethconfig.Defaults.HvmGenesisHeader)
@@ -96,9 +101,10 @@ func TestEthconfigHvmDefaultsMatchCanonicalCheckpoint(t *testing.T) {
 // buildHvmHeaderNodeConfig that New calls) and asserts the resulting (Network, GenesisHeightOffset,
 // EffectiveGenesisBlock) triple is a canonical genesis pairing. The defaults test above only checks
 // ethconfig.Defaults against the checkpoint using a test-local "testnet3" literal; it does not read the
-// network literal backend.go actually hardcodes. Without this, a backend-only refactor (changing the
-// network literal, wiring --tbc.network through, or breaking the field mapping) would refuse to start
-// every node at boot (initHvmHeaderNode's genesis-pairing guard) while the suite stayed green.
+// network default backend.go actually resolves (config.TBCNetwork → ethconfig.DefaultTBCNetwork). Without
+// this, a backend-only refactor (changing the default network, breaking the --tbc.network plumbing, or
+// breaking the field mapping) would refuse to start every node at boot (initHvmHeaderNode's genesis-pairing
+// guard) while the suite stayed green.
 func TestProductionHvmHeaderConfigIsCanonical(t *testing.T) {
 	cfg := ethconfig.Defaults // copy
 	tbcCfg := buildHvmHeaderNodeConfig(&cfg)
@@ -116,5 +122,113 @@ func TestProductionHvmHeaderConfigIsCanonical(t *testing.T) {
 	}
 	if !tbcCfg.ExternalHeaderMode {
 		t.Error("the hVM header node must be configured in ExternalHeaderMode")
+	}
+}
+
+// TestBuildHvmHeaderNodeConfigNetwork pins how buildHvmHeaderNodeConfig derives the lightweight header node's
+// Bitcoin Network: it flows config.TBCNetwork through verbatim, and falls back to the shared
+// ethconfig.DefaultTBCNetwork ONLY when config.TBCNetwork is empty (a programmatic config). This is the field
+// that keeps the lightweight and full nodes on the same network, guarding against a network mislabel. Pure
+// unit test: no running node, no test fixtures.
+func TestBuildHvmHeaderNodeConfigNetwork(t *testing.T) {
+	cases := []struct {
+		name string
+		tbc  string
+		want string
+	}{
+		{"mainnet flows through", "mainnet", "mainnet"},
+		{"testnet3 flows through", "testnet3", "testnet3"},
+		{"empty falls back to the shared default", "", ethconfig.DefaultTBCNetwork},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := ethconfig.Defaults // a valid config with a decodable default genesis header
+			cfg.TBCNetwork = tc.tbc
+			got := buildHvmHeaderNodeConfig(&cfg)
+			if got.Network != tc.want {
+				t.Fatalf("buildHvmHeaderNodeConfig with TBCNetwork=%q -> Network %q, want %q", tc.tbc, got.Network, tc.want)
+			}
+			if !got.ExternalHeaderMode {
+				t.Fatalf("the lightweight header node config must have ExternalHeaderMode set")
+			}
+			if got.GenesisHeightOffset != cfg.HvmGenesisHeight {
+				t.Fatalf("GenesisHeightOffset %d != HvmGenesisHeight %d", got.GenesisHeightOffset, cfg.HvmGenesisHeight)
+			}
+		})
+	}
+}
+
+// TestDifferentialReplayGateTestnet3GenesisMatchesProductionDefault cross-checks the shared testnet3 hVM genesis constants the
+// vm-package differential-replay gate uses (vm.Testnet3HvmGenesis*) against the production testnet3 default
+// (ethconfig.Defaults, which TestEthconfigHvmDefaultsMatchCanonicalCheckpoint welds to core.hvmGenesisCheckpoints).
+// Mainnet uses one symbol (vm.MainnetHvmGenesis*) so its gate cannot diverge; testnet3 has several independent
+// literal copies, so a re-genesis that updated production but not the gate would leave the gate silently proving
+// difficulty math over a defunct chain. Binding gate genesis to production makes that drift fail CI. The vm package
+// cannot import ethconfig/core; this lives in package eth, which imports both.
+func TestDifferentialReplayGateTestnet3GenesisMatchesProductionDefault(t *testing.T) {
+	if vm.Testnet3HvmGenesisHeight != ethconfig.Defaults.HvmGenesisHeight {
+		t.Fatalf("gate testnet3 genesis height %d != ethconfig.Defaults.HvmGenesisHeight %d — the gate genesis has "+
+			"drifted from the production testnet3 default (re-genesis not propagated to vm.Testnet3HvmGenesis*)",
+			vm.Testnet3HvmGenesisHeight, ethconfig.Defaults.HvmGenesisHeight)
+	}
+	if vm.Testnet3HvmGenesisHeader != ethconfig.Defaults.HvmGenesisHeader {
+		t.Fatalf("gate testnet3 genesis header != ethconfig.Defaults.HvmGenesisHeader — gate/production drift")
+	}
+	// Weld the shared hash to the header so all three values stay internally consistent.
+	gen, err := bdf.Hex2Header(vm.Testnet3HvmGenesisHeader)
+	if err != nil {
+		t.Fatalf("decode vm.Testnet3HvmGenesisHeader: %v", err)
+	}
+	if got := gen.BlockHash().String(); got != vm.Testnet3HvmGenesisHash {
+		t.Fatalf("vm.Testnet3HvmGenesisHeader hashes to %s but vm.Testnet3HvmGenesisHash pins %s", got, vm.Testnet3HvmGenesisHash)
+	}
+}
+
+// TestBuildHvmHeaderNodeConfigExpandsDataDir pins that buildHvmHeaderNodeConfig expands a leading "~" in
+// HvmHeaderDataDir to an absolute path for LevelDBHome. This is load-bearing: op-geth's OWN filepath.Join
+// consumers (the network-scoped reset and the migration's detect/delete/rename) operate on this string
+// directly, so an un-expanded literal "~/.tbcdheaders/..." would point at a directory that never exists — the
+// migration would silently no-op and the scoped reset would target the wrong path. The production DEFAULT is the
+// literal "~/.tbcdheaders", and every migration test feeds an absolute t.TempDir() that BYPASSES this branch, so
+// a revert to the un-expanded assignment (tbcCfg.LevelDBHome = config.HvmHeaderDataDir) would pass the whole
+// suite while silently breaking migration on the default home. Pure unit test: no running node, no test fixtures.
+func TestBuildHvmHeaderNodeConfigExpandsDataDir(t *testing.T) {
+	home, err := homedir.Dir()
+	if err != nil {
+		t.Skipf("cannot resolve home directory in this environment: %v", err)
+	}
+
+	cases := []string{
+		ethconfig.Defaults.HvmHeaderDataDir, // the production default ("~/.tbcdheaders") — the path that actually ships
+		"~/.tbcdheaders",
+		"~/some/nested/headers",
+	}
+	for _, in := range cases {
+		t.Run(in, func(t *testing.T) {
+			if !strings.HasPrefix(in, "~") {
+				t.Fatalf("test input %q must start with ~ to exercise the expansion branch", in)
+			}
+			cfg := ethconfig.Defaults // valid config with a decodable default genesis header
+			cfg.HvmHeaderDataDir = in
+			got := buildHvmHeaderNodeConfig(&cfg)
+
+			if strings.HasPrefix(got.LevelDBHome, "~") {
+				t.Fatalf("LevelDBHome %q still has a leading ~ — HvmHeaderDataDir was NOT expanded (a revert to the "+
+					"un-expanded assignment would silently no-op the migration and mis-target the scoped reset)", got.LevelDBHome)
+			}
+			if !filepath.IsAbs(got.LevelDBHome) {
+				t.Fatalf("LevelDBHome %q is not absolute after expansion", got.LevelDBHome)
+			}
+			if !strings.HasPrefix(got.LevelDBHome, home) {
+				t.Fatalf("LevelDBHome %q must expand under the home directory %q", got.LevelDBHome, home)
+			}
+			want, eerr := homedir.Expand(in)
+			if eerr != nil {
+				t.Fatalf("homedir.Expand(%q): %v", in, eerr)
+			}
+			if got.LevelDBHome != want {
+				t.Fatalf("LevelDBHome = %q, want homedir.Expand(%q) = %q", got.LevelDBHome, in, want)
+			}
+		})
 	}
 }

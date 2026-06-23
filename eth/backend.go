@@ -31,6 +31,7 @@ import (
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"github.com/holiman/uint256"
+	"github.com/mitchellh/go-homedir"
 	"golang.org/x/time/rate"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -146,10 +147,10 @@ type Ethereum struct {
 }
 
 // buildHvmHeaderNodeConfig assembles the ExternalHeaderMode hVM consensus header-node TBC config from
-// the node's hVM settings. Extracted from New so a test can assert the resulting (Network,
-// GenesisHeightOffset, EffectiveGenesisBlock) triple is a canonical pairing: a backend-only change to
-// the network literal or field mapping would otherwise brick the fleet at startup (initHvmHeaderNode
-// refuses a non-canonical pair) while tests stay green. See TestProductionHvmHeaderConfigIsCanonical.
+// the node's hVM settings. Kept separate from New so TestProductionHvmHeaderConfigIsCanonical can assert
+// the resulting (Network, GenesisHeightOffset, EffectiveGenesisBlock) triple is a canonical pairing without
+// booting a full node. initHvmHeaderNode refuses a non-canonical pair at startup, so a stray change to the
+// network literal or field mapping would otherwise fail every node at boot.
 func buildHvmHeaderNodeConfig(config *ethconfig.Config) *tbc.Config {
 	tbcCfg := tbc.NewDefaultConfig()
 
@@ -161,7 +162,16 @@ func buildHvmHeaderNodeConfig(config *ethconfig.Config) *tbc.Config {
 	tbcCfg.ExternalHeaderMode = true
 	tbcCfg.EffectiveGenesisBlock = genesisHeader
 	tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
-	tbcCfg.LevelDBHome = config.HvmHeaderDataDir
+	// Expand a leading ~ to an absolute path ONCE, at the source. TBC's level.New / NewServer expand it
+	// internally, but op-geth's own filepath.Join consumers — the network-scoped reset and the header-store
+	// detect/delete/rename logic — operate on this string directly. Without expansion they would target a
+	// literal "~/.tbcdheaders/..." dir that never exists, silently no-opping the rename and making the scoped
+	// reset delete the wrong path. Expanding here keeps every consumer in agreement.
+	expandedHome, herr := homedir.Expand(config.HvmHeaderDataDir)
+	if herr != nil {
+		log.Crit("Unable to expand hVM header data directory", "dir", config.HvmHeaderDataDir, "err", herr)
+	}
+	tbcCfg.LevelDBHome = expandedHome
 	tbcCfg.BlockheaderCacheSize = "0"
 	tbcCfg.BlockCacheSize = "0"
 	tbcCfg.AutoIndex = false
@@ -169,10 +179,15 @@ func buildHvmHeaderNodeConfig(config *ethconfig.Config) *tbc.Config {
 	tbcCfg.MaxCachedTxs = 0
 	tbcCfg.MempoolEnabled = false
 
-	// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net.
-	// This literal is consensus-coupled: it must remain a network for which hvmGenesisCheckpoints pins the
+	// Network comes from the operator's --tbc.network (plumbed via ethconfig.Config.TBCNetwork), the same
+	// value the full node uses — never hardcoded — so the lightweight and full nodes always share one network.
+	// Fall back to the default only if a programmatic config left it empty (ethconfig.Defaults and cmd/geth
+	// always populate it). The chosen network must be one for which hvmGenesisCheckpoints pins the
 	// (HvmGenesisHeader, HvmGenesisHeight) pair, or initHvmHeaderNode's genesis-pairing guard refuses to start.
-	tbcCfg.Network = "testnet3"
+	tbcCfg.Network = config.TBCNetwork
+	if tbcCfg.Network == "" {
+		tbcCfg.Network = ethconfig.DefaultTBCNetwork // one shared default so the value cannot drift between copies
+	}
 
 	return tbcCfg
 }

@@ -3,3 +3,6 @@
 *.sol linguist-language=Solidity
 # Keep our local workflow files when merging from upstream
 .github/workflows/* merge=ours
+# Committed I2 differential-replay fixtures: pin LF so autocrlf cannot rewrite line endings and
+# break the double-SHA256 header/contiguity/tip pins the gate asserts (round-4).
+core/vm/testdata/btcattr_*_history.ndjson -text eol=lf

@@ -207,6 +207,36 @@ func (tx *Transaction) MarshalJSON() ([]byte, error) {
 		enc.IsSystemTx = &itx.IsSystemTransaction
 		enc.Nonce = (*hexutil.Uint64)(&itx.EffectiveNonce)
 		// other fields will show up as null.
+
+	case *PopPayoutTx:
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.To = tx.To()
+		enc.GasPrice = (*hexutil.Big)(common.Big0) // always 0, but required non-nil by UnmarshalJSON
+		// other fields will show up as null.
+
+	case *popPayoutTxWithNonce:
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.To = tx.To()
+		enc.GasPrice = (*hexutil.Big)(common.Big0)
+		enc.Nonce = (*hexutil.Uint64)(&itx.EffectiveNonce)
+		// other fields will show up as null.
+
+	case *BtcAttributesDepositedTx:
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.To = tx.To()
+		enc.GasPrice = (*hexutil.Big)(common.Big0) // always 0, but required non-nil by UnmarshalJSON
+		// other fields will show up as null.
+
+	case *btcAttributesDepositedTxWithNonce:
+		enc.Gas = (*hexutil.Uint64)(&itx.Gas)
+		enc.Input = (*hexutil.Bytes)(&itx.Data)
+		enc.To = tx.To()
+		enc.GasPrice = (*hexutil.Big)(common.Big0)
+		enc.Nonce = (*hexutil.Uint64)(&itx.EffectiveNonce)
+		// other fields will show up as null.
 	}
 	return json.Marshal(&enc)
 }
@@ -619,6 +649,9 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		if dec.GasPrice == nil {
 			return errors.New("missing required field 'gasPrice' in PoP payout transaction")
 		}
+		if dec.Input == nil {
+			return errors.New("missing required field 'input' in PoP payout transaction")
+		}
 		itx.Data = *dec.Input
 		if dec.Nonce != nil {
 			inner = &popPayoutTxWithNonce{PopPayoutTx: itx, EffectiveNonce: uint64(*dec.Nonce)}
@@ -649,6 +682,9 @@ func (tx *Transaction) UnmarshalJSON(input []byte) error {
 		itx.Gas = uint64(*dec.Gas)
 		if dec.GasPrice == nil {
 			return errors.New("missing required field 'gasPrice' in BTC Attr Dep transaction")
+		}
+		if dec.Input == nil {
+			return errors.New("missing required field 'input' in BTC Attr Dep transaction")
 		}
 		itx.Data = *dec.Input
 		if dec.Nonce != nil {

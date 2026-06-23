@@ -19,10 +19,12 @@ package types
 
 import (
 	"bytes"
-	"github.com/davecgh/go-spew/spew"
-	"github.com/ethereum/go-ethereum/common"
+	"encoding/hex"
 	"reflect"
 	"testing"
+
+	"github.com/davecgh/go-spew/spew"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func TestPopPayoutTxEncodeDecode(t *testing.T) {
@@ -40,6 +42,13 @@ func TestPopPayoutTxEncodeDecode(t *testing.T) {
 	}
 
 	t.Logf("%v", spew.Sdump(b.Bytes()))
+
+	// Golden wire bytes: the symmetric encode->decode->DeepEqual below survives a {To,Gas,Data} field reorder
+	// (RLP decodes positionally), silently changing the on-the-wire layout. Pin the exact bytes to catch that.
+	const goldenRLP = "df9442000000000000000000000000000000000000428408f0d1808464617461"
+	if got := hex.EncodeToString(b.Bytes()); got != goldenRLP {
+		t.Fatalf("PopPayoutTx RLP wire layout changed: got %s want %s (a {To,Gas,Data} reorder survives the round-trip below)", got, goldenRLP)
+	}
 
 	tx2 := &PopPayoutTx{}
 	err = tx2.decode(b.Bytes())

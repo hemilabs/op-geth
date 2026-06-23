@@ -1,12 +1,15 @@
 package core
 
 import (
+	"bytes"
+	"log/slog"
 	"math/big"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/log"
 	"github.com/stretchr/testify/require"
 
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -153,6 +156,7 @@ func TestUpdateHvmHeaderConsensusEarlyReturns(t *testing.T) {
 		sid1, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
 		require.NoError(t, err)
 		require.Equal(t, sid0[:], sid1[:], "awaiting snap must NOT advance the upstream-state-id")
+		require.False(t, chain.HvmSnapSyncCompleted(), "while awaiting snap, the finished flag must remain false")
 	})
 }
 
@@ -260,8 +264,39 @@ func TestUpdateHvmHeaderConsensusUpstreamStateIdErrorRecoverable(t *testing.T) {
 
 	newHead := &types.Header{Number: big.NewInt(11), Time: hvm0Time + 100, ParentHash: common.Hash{0x42}}
 	var got error
+	var logBuf bytes.Buffer
+	prevLogger := log.Root()
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(&logBuf, slog.LevelDebug, false)))
 	require.NotPanics(t, func() { got = chain.updateHvmHeaderConsensus(newHead, false) },
 		"a faulted UpstreamStateId read must not nil-deref")
+	log.SetDefault(prevLogger)
 	require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
 		"a faulted UpstreamStateId read must return the recoverable corrupt-state sentinel")
+	require.Contains(t, logBuf.String(), "unable to get upstream state id from lightweight TBC",
+		"the faulted-store diagnostic must be logged before returning the sentinel")
+}
+
+// TestApplyHvmHeaderConsensusUpdateMissingTargetBlockBehavior pins the APPLY-side TARGET-block-absent guard: when
+// the to-be-applied block's header resolves (the caller holds it) but its BODY is absent from BOTH disk and the
+// holding pen, applyHvmHeaderConsensusUpdate returns a PLAIN error ("unable to get block"), NOT a sentinel. This is
+// the dual-store-duality mirror of TestUnapplyHvmHeaderConsensusUpdateMissingTargetBlockRecoverable — and it is
+// deliberately ASYMMETRIC: the unapply side returns the recoverable sentinel, the apply side does not. Lock both the
+// non-panic (the nil-check must fire before block.Transactions()) and the exact classification, so the asymmetry is
+// a test-visible contract and a dropped nil-check (re-introducing the panic) fails here.
+func TestApplyHvmHeaderConsensusUpdateMissingTargetBlockBehavior(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// A header whose own block is NEVER seeded into tempBlocks and is not on disk -> getBlockFromDiskOrHoldingPen
+	// returns nil: the header exists but its body is orphaned from both stores.
+	orphan := &types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: common.Hash{0xab, 0xcd}}
+
+	var got error
+	require.NotPanics(t, func() { got = chain.applyHvmHeaderConsensusUpdate(orphan, false, false) },
+		"an absent apply-target block must not nil-deref")
+	require.Error(t, got)
+	require.ErrorContains(t, got, "unable to get block", "the apply target-absent guard returns the plain error")
+	require.NotErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+		"apply-side target-absent is asymmetric with the unapply side: a plain error, not the recoverable sentinel")
+	require.NotErrorIs(t, got, consensus.ErrInvalidHVMHeaders, "target-absent is not a bad-block classification")
 }

@@ -133,11 +133,11 @@ func TestValidateBTCHeaderBatchUnconnected(t *testing.T) {
 // anchor loop must report ErrBTCBatchUnconnected before the floor gate returns ErrBTCBatchBelowFloor.
 // This is the precondition that justifies the apply path setting batchConnectivityConfirmed=true on
 // the BelowFloor arm: a non-connecting near-floor batch is never classified BelowFloor (which would
-// mark it connectivity-confirmed and, on a torn store, route it to corrupt/self-heal). The existing
-// tests are orthogonal — TestValidateBTCHeaderBatchUnconnected uses floorHeight=0 (gate never fires)
-// and TestValidateBTCHeaderBatchBelowFloor uses a fully-connecting batch (anchor loop never returns
-// Unconnected) — so neither pins that the anchor loop runs strictly before the floor gate. Kills a
-// reorder mutant that checks the floor gate per-header inside the anchor loop.
+// mark it connectivity-confirmed and, on a torn store, route it to corrupt/self-heal). Neither
+// TestValidateBTCHeaderBatchUnconnected (floorHeight=0, gate never fires) nor
+// TestValidateBTCHeaderBatchBelowFloor (fully-connecting batch, anchor loop never returns Unconnected)
+// pins that the anchor loop runs strictly before the floor gate; this does. Kills a reorder mutant
+// that checks the floor gate per-header inside the anchor loop.
 func TestValidateBTCHeaderBatchUnconnectedDominatesBelowFloor(t *testing.T) {
 	store, hdrs := baseTS(20)                             // heights 5000..5019
 	good := extendBatch(hdrs, 1, mainBits, contTS(20))[0] // connects to base tip 5019 -> height 5020
@@ -279,9 +279,9 @@ func TestValidateBTCHeaderBatchCrossesRetargetBoundary(t *testing.T) {
 
 // Testnet3 min-difficulty seam: testnet3 ReduceMinDifficulty routes within-20-min non-boundary
 // headers through findPrevTestNetDifficulty, which walks Parent() — here across the overlay->base seam
-// down to the boundary at 4032 (returning PowLimitBits). This is the production consensus rule set whose
-// testnet3 min-difficulty walk previously false-rejected near-floor headers; it must validate correctly
-// over the overlay, above the floor.
+// down to the boundary at 4032 (returning PowLimitBits). The testnet3 min-difficulty walk must
+// validate correctly over the overlay above the floor (a walk that crosses below the floor would
+// false-reject near-floor headers).
 func TestValidateBTCHeaderBatchTestnet3MinDiffSeam(t *testing.T) {
 	const anchor = 4032                                                                                             // a retarget boundary; findPrevTestNetDifficulty stops here
 	tsAt := func(h int) int64 { return int64(1_600_000_000 + (h-anchor)*600) }                                      // 600s < 1200s -> within-20-min
@@ -300,14 +300,12 @@ func TestValidateBTCHeaderBatchTestnet3MinDiffSeam(t *testing.T) {
 	requireReject(t, validateBTCHeaderBatchWith(ctx(), store, &chaincfg.TestNet3Params, 0, rbatch), blockchain.ErrUnexpectedDifficulty)
 }
 
-// TestValidateBTCHeaderBatchFloorGateBoundary pins the exact defer/enforce transition at the (shrunk)
+// TestValidateBTCHeaderBatchFloorGateBoundary pins the exact defer/enforce transition at the
 // clearance: a batch whose minHeight == floorHeight+floorClearance enforces (and a constant-Bits batch
-// accepts), while minHeight one below that defers. This is the CI-runnable boundary guard the gated
-// mainnet replay (not CI-runnable) otherwise provides — it pins both the floorClearance value and the
-// gate's strict `<` (an accidental re-expansion to 2*BlocksPerRetarget, or flipping `<`->`<=`, flips
-// one assertion). The lowest batch header (5020) is not a retarget boundary (5020 % 2016 != 0), so the
-// enforce branch validates Bits==prev + MTP (both present in the base store) — no anchor walk crosses
-// below floor.
+// accepts), while minHeight one below that defers. Pins both the floorClearance value and the gate's
+// strict `<` (widening clearance to 2*BlocksPerRetarget, or flipping `<`->`<=`, flips one assertion).
+// The lowest batch header (5020) is not a retarget boundary (5020 % 2016 != 0), so the enforce branch
+// validates Bits==prev + MTP (both present in the base store) — no anchor walk crosses below floor.
 func TestValidateBTCHeaderBatchFloorGateBoundary(t *testing.T) {
 	store, hdrs := baseTS(20)                           // heights 5000..5019
 	batch := extendBatch(hdrs, 4, mainBits, contTS(20)) // minHeight 5020
@@ -323,11 +321,10 @@ func TestValidateBTCHeaderBatchFloorGateBoundary(t *testing.T) {
 		"minHeight one below floorHeight+floorClearance must DEFER")
 }
 
-// floorClearance derives from BlocksPerRetarget (2016 on every real network) + medianTimeBlocks. The
-// value is BlocksPerRetarget + medianTimeBlocks: the deepest contextual walk (the retarget anchor)
-// reads exactly BlocksPerRetarget back, so that is the exact minimal-presence clearance;
-// +medianTimeBlocks is a conservative margin. Was 2*BlocksPerRetarget+medianTimeBlocks — a ~2x
-// over-margin that needlessly deferred the upper ~BlocksPerRetarget of the band.
+// floorClearance == BlocksPerRetarget (2016 on every real network) + medianTimeBlocks. The deepest
+// contextual walk (the retarget anchor) reads exactly BlocksPerRetarget back, so that is the exact
+// minimal-presence clearance; +medianTimeBlocks is a conservative margin. A larger value (e.g.
+// 2*BlocksPerRetarget) needlessly defers the upper ~BlocksPerRetarget of the band.
 func TestFloorClearance(t *testing.T) {
 	require.Equal(t, uint64(2016+11), floorClearance(&chaincfg.MainNetParams))
 	require.Equal(t, uint64(2016+11), floorClearance(&chaincfg.TestNet3Params))
@@ -366,17 +363,17 @@ func TestBTCFloorClearanceForNetwork(t *testing.T) {
 	require.Zero(t, got)
 }
 
-// TestBTCConsensusParamsForwardCompatLock is a tripwire for btcd consensus drift. The contextual-difficulty validator reuses btcd's
-// CheckBlockHeaderContext difficulty algorithm; that algorithm's behavior is governed by these
-// chaincfg.Params fields. A btcd module bump (selectable transitively via the TBC dependency
-// with no op-geth code change and no compile error) could alter the enforced difficulty rule — e.g.
-// btcd v0.25.0 added an EnforceBIP94 timewarp-fix path inside the same CheckBlockHeaderContext. If real
-// Bitcoin adopts a rule btcd-pinned does not implement (or a bump flips one of these), honest headers
-// would start failing contextual-difficulty validation, halting the forward apply path and the sequencer build, and tripping the
-// (now observe-only) snap alert. Pinning the difficulty-relevant params here forces any such drift to
-// fail CI, prompting a human to re-verify the contextual-difficulty rule (incl. BIP94/timewarp) before
-// shipping. If this test fails after a btcd bump: re-validate the contextual-difficulty validator against real Bitcoin history and
-// update the expectations deliberately.
+// TestBTCConsensusParamsForwardCompatLock is a tripwire for btcd consensus drift. The
+// contextual-difficulty validator reuses btcd's CheckBlockHeaderContext difficulty algorithm, whose
+// behavior is governed by these chaincfg.Params fields. A btcd module bump (pulled in transitively via
+// the TBC dependency with no op-geth code change and no compile error) could alter the enforced
+// difficulty rule — e.g. btcd v0.25.0 added an EnforceBIP94 timewarp-fix path inside the same
+// CheckBlockHeaderContext. If real Bitcoin adopts a rule the pinned btcd does not implement (or a bump
+// flips one of these), honest headers would start failing contextual-difficulty validation, halting the
+// forward apply path and the sequencer build, and tripping the observe-only snap alert. Pinning the
+// difficulty-relevant params here forces any such drift to fail CI, so the contextual-difficulty rule
+// (incl. BIP94/timewarp) must be re-verified against real Bitcoin history and these expectations updated
+// deliberately before shipping.
 func TestBTCConsensusParamsForwardCompatLock(t *testing.T) {
 	const (
 		fortnight   = 14 * 24 * time.Hour
@@ -404,4 +401,87 @@ func TestBTCConsensusParamsForwardCompatLock(t *testing.T) {
 	check("mainnet", &chaincfg.MainNetParams, mainPowBits, mainPowLimit, false, false, 0)
 	check("testnet3", &chaincfg.TestNet3Params, mainPowBits, mainPowLimit, true, false, twentyMin)
 	check("regtest", &chaincfg.RegressionNetParams, regPowBits, regPowLimit, true, true, twentyMin)
+}
+
+// TestValidateBTCHeaderBatchReturnsFirstReject pins that validateBTCHeaderBatchWith returns the FIRST rejecting
+// header's RuleError in iteration order. With two rejecting headers of DISTINCT codes (header[0] wrong-difficulty
+// -> ErrUnexpectedDifficulty, header[1] too-old timestamp -> ErrTimeTooOld), the returned code must be header[0]'s.
+// A mutant that returns the LAST reject (dropping the `if firstReject == nil` guard) survives single-reject tests.
+func TestValidateBTCHeaderBatchReturnsFirstReject(t *testing.T) {
+	store, hdrs := baseTS(20) // heights 5000..5019, mainBits, 600s apart
+	// header[0]: wrong difficulty (parent is base tip mainBits; carries 0x1d00fffe) -> ErrUnexpectedDifficulty.
+	p := &wire.BlockHeader{Version: 1, PrevBlock: hdrs[19].BlockHash(), Bits: 0x1d00fffe, Timestamp: time.Unix(contTS(20)(0), 0), Nonce: 7}
+	// header[1]: inherits p's 0x1d00fffe (so NO difficulty error) but a far-too-old timestamp -> ErrTimeTooOld.
+	q := &wire.BlockHeader{Version: 1, PrevBlock: p.BlockHash(), Bits: 0x1d00fffe, Timestamp: time.Unix(1_600_000_000, 0), Nonce: 8}
+	requireReject(t, validateBTCHeaderBatchWith(ctx(), store, &chaincfg.MainNetParams, 0, []*wire.BlockHeader{p, q}),
+		blockchain.ErrUnexpectedDifficulty)
+
+	// Control: a single header in q's shape but with CORRECT difficulty rejects with ErrTimeTooOld — proving the
+	// two rejects carry distinct codes, so the assertion above genuinely pins iteration order.
+	qGood := &wire.BlockHeader{Version: 1, PrevBlock: hdrs[19].BlockHash(), Bits: mainBits, Timestamp: time.Unix(1_600_000_000, 0), Nonce: 9}
+	requireReject(t, validateBTCHeaderBatchWith(ctx(), store, &chaincfg.MainNetParams, 0, []*wire.BlockHeader{qGood}),
+		blockchain.ErrTimeTooOld)
+}
+
+// TestValidateBTCHeaderBatchOrderPermutationBreaksConnectivity is the metamorphic relation: a batch that is
+// contiguous in CONTENT but MIS-ORDERED (a child placed before its parent) must be rejected as
+// ErrBTCBatchUnconnected — never silently accepted, never mis-classified as a difficulty violation. The validator
+// anchors each header at the one height its declared parent fixes, so a child seen before its parent resolves
+// against neither the overlay-so-far nor the committed base. Every other batch test builds in ascending order.
+func TestValidateBTCHeaderBatchOrderPermutationBreaksConnectivity(t *testing.T) {
+	store, hdrs := baseTS(20) // committed base heights 5000..5019
+	b := extendBatch(hdrs, 4, mainBits, contTS(20))
+
+	// Control: the in-order batch is clean (so the permutations below are a pure reordering, not a content defect).
+	require.NoError(t, validateBTCHeaderBatchWith(ctx(), store, &chaincfg.MainNetParams, 0, b),
+		"the in-order contiguous batch must be the clean baseline")
+
+	perms := map[string][]*wire.BlockHeader{
+		"swap-first-two": {b[1], b[0], b[2], b[3]}, // a child (b1) before its parent (b0)
+		"reverse":        {b[3], b[2], b[1], b[0]},
+		"gap-skip-b2":    {b[0], b[1], b[3]}, // contiguous-prefix then a hole: b3's parent b2 is absent
+	}
+	for name, perm := range perms {
+		t.Run(name, func(t *testing.T) {
+			err := validateBTCHeaderBatchWith(ctx(), store, &chaincfg.MainNetParams, 0, perm)
+			require.ErrorIs(t, err, ErrBTCBatchUnconnected, "a mis-ordered batch must be reported unconnected")
+			require.NotErrorIs(t, err, ErrBTCHeaderContextUnavailable, "mis-ordering is not a skip/corrupt")
+			var re blockchain.RuleError
+			require.False(t, errors.As(err, &re), "mis-ordering must NOT be mis-classified as a difficulty RuleError")
+		})
+	}
+}
+
+// TestValidateBTCHeaderBatchPrefixMonotonicity pins the modeling assumption longestEnforceableBTCHeaderPrefix
+// relies on, against the REAL validator: header validity depends only on its own ancestry, so the verdict is
+// prefix-monotonic. (1) Every prefix of an all-clean above-floor batch validates clean. (2) For a batch with the
+// first fault at index k, every prefix [:j] is clean for j<=k and a difficulty RuleError for j>k — a well-defined
+// first-invalid index. If the real validator were non-monotone (e.g. near a retarget boundary), the shrink-from-end
+// build algorithm could return a prefix the apply path rejects.
+func TestValidateBTCHeaderBatchPrefixMonotonicity(t *testing.T) {
+	store, hdrs := baseTS(20)
+
+	// (1) all-clean batch: every leading prefix validates clean.
+	good := extendBatch(hdrs, 6, mainBits, contTS(20))
+	for i := 1; i <= len(good); i++ {
+		require.NoError(t, validateBTCHeaderBatchWith(ctx(), store, &chaincfg.MainNetParams, 0, good[:i]),
+			"every prefix of an all-clean batch must validate clean (prefix len %d)", i)
+	}
+
+	// (2) first fault at index k=2: clean for j<=2, difficulty RuleError for j>2.
+	const k = 2
+	b := extendBatch(hdrs, 5, mainBits, contTS(20))
+	bad := &wire.BlockHeader{Version: 1, PrevBlock: b[k-1].BlockHash(), Bits: 0x1d00fffe, Timestamp: time.Unix(contTS(20)(k), 0), Nonce: 77}
+	b[k] = bad
+	for i := k + 1; i < len(b); i++ { // re-link the tail onto the forged header so connectivity is preserved
+		b[i] = &wire.BlockHeader{Version: 1, PrevBlock: b[i-1].BlockHash(), Bits: mainBits, Timestamp: time.Unix(contTS(20)(i), 0), Nonce: uint32(80 + i)}
+	}
+	for j := 1; j <= len(b); j++ {
+		err := validateBTCHeaderBatchWith(ctx(), store, &chaincfg.MainNetParams, 0, b[:j])
+		if j <= k {
+			require.NoError(t, err, "prefix [:%d] is entirely before the first fault -> clean", j)
+		} else {
+			requireReject(t, err, blockchain.ErrUnexpectedDifficulty) // monotone: once the fault is included it stays rejected
+		}
+	}
 }

@@ -39,7 +39,7 @@ import (
 
 // canonicalHvmGenesisHash is the block hash of op-geth's compiled default testnet3 hVM
 // EffectiveGenesisBlock (ethconfig.Defaults.HvmGenesisHeader at height 3522419) — the live testnet3
-// pairing (hemi-node testnet/config.json .hvm_genesis).
+// genesis pairing.
 const canonicalHvmGenesisHash = "000000000000000096c98151accc5ee217d7cc4ff1e59a3d91e4c9365c4ea144"
 
 // canonicalHvmGenesisHeaderHex is that same default header (ethconfig.Defaults.HvmGenesisHeader).
@@ -103,7 +103,7 @@ func TestClassifyHvmGenesisPairing(t *testing.T) {
 		"one block above the checkpoint, canonical header = desync")
 	// The real testnet3 genesis @ 0 is a self-consistent pair but not the canonical hVM effective genesis
 	// (3522419) — the classifier returns Custom, and the wrapper refuses it on testnet3 (offset 0 would
-	// mis-align the retarget boundary vs canonical nodes). This is the fail-open the wrapper now closes.
+	// mis-align the retarget boundary vs canonical nodes) rather than failing open on it.
 	require.Equal(t, hvmGenesisPairingCustom, classifyHvmGenesisPairing("testnet3", 0,
 		"000000000933ea01ad0ee984209779baaec3ced90fa3f408719526f8d77f4943"))
 	require.Equal(t, hvmGenesisPairingCustom, classifyHvmGenesisPairing("localnet", 0, canonicalHvmGenesisHash),
@@ -114,18 +114,21 @@ func TestClassifyHvmGenesisPairing(t *testing.T) {
 	// hvmGenesisCheckpoints["testnet3"] }` fallback mutant that would let an unpinned network inherit
 	// testnet3's checkpoint and classify Canonical.
 	require.Equal(t, hvmGenesisPairingCustom, classifyHvmGenesisPairing("mainnet", canonicalHvmGenesisHeight, canonicalHvmGenesisHash),
-		"mainnet has no checkpoint: even the exact canonical testnet3 pair must be Custom (no fallback)")
+		"mainnet's checkpoint is the {883092,…eda8} pair, not the testnet3 pair: the testnet3 pair classifies Custom on mainnet (no fallback)")
 	require.Equal(t, hvmGenesisPairingCustom, classifyHvmGenesisPairing("localnet", canonicalHvmGenesisHeight, canonicalHvmGenesisHash),
 		"localnet has no checkpoint: even the exact canonical testnet3 pair must be Custom (no fallback)")
 
 	// The wrapper (initHvmHeaderNode) refuses (log.Crit) a Custom pairing on every network except the
 	// localnet dev network. Enforced networks are pinned (a Custom pairing there = a non-canonical
-	// offset/header -> refuse); localnet is unpinned (-> warn). A future mainnet build with no checkpoint
-	// here still refuses, forcing its checkpoint to be added before it can run enforced.
+	// offset/header -> refuse); localnet is unpinned (-> warn). mainnet is pinned with the migrated-state
+	// {883092,…eda8} pair (the dual-pin with testnet3[1]); localnet stays unpinned.
 	require.NotEmpty(t, hvmGenesisCheckpoints["testnet3"], "testnet3 is pinned/enforced")
 	require.NotEmpty(t, hvmGenesisCheckpoints["upgradetest"])
 	require.Empty(t, hvmGenesisCheckpoints["localnet"], "localnet is the unpinned dev network (Custom -> warn)")
-	require.Empty(t, hvmGenesisCheckpoints["mainnet"], "no mainnet checkpoint yet -> a mainnet build would refuse until added")
+	require.NotContains(t, hvmGenesisCheckpoints, "localnet", "localnet must not be a key in the checkpoints map (an empty-slice entry would pass the Empty check above)")
+	require.Len(t, hvmGenesisCheckpoints["mainnet"], 1, "mainnet is pinned with the migrated-state pair (dual-pin)")
+	require.Equal(t, hvmGenesisPairingCanonical, classifyHvmGenesisPairing("mainnet", vm.MainnetHvmGenesisHeight, vm.MainnetHvmGenesisHash),
+		"the {883092,…eda8} pair is Canonical on mainnet (the migrated state)")
 }
 
 // TestHvmGenesisCheckpointMatchesCanonicalHeader pins the hardcoded checkpoint hash against the block
@@ -133,7 +136,10 @@ func TestClassifyHvmGenesisPairing(t *testing.T) {
 func TestHvmGenesisCheckpointMatchesCanonicalHeader(t *testing.T) {
 	h := mustEffectiveGenesisHeader(t)
 	cps := hvmGenesisCheckpoints["testnet3"]
-	require.Len(t, cps, 1)
+	// cps[0] is the compiled default; additional entries (e.g. the backwards-compat fleet pair) may
+	// follow it. This test pins the default at [0]; the exact per-network count is asserted by
+	// TestHvmGenesisCheckpointsWellFormed.
+	require.NotEmpty(t, cps)
 	require.Equal(t, canonicalHvmGenesisHeight, cps[0].height)
 	require.Equal(t, h.BlockHash().String(), cps[0].hash,
 		"testnet3 checkpoint hash must equal the canonical default header's block hash")
@@ -220,6 +226,18 @@ func TestHvmBtcDiffFloorAwareAgainstRealLightweightNode(t *testing.T) {
 	}}
 	require.ErrorIs(t, vm.ValidateBTCHeaderBatchForNetwork(chain.ctx, chain.tbcHeaderNode, "testnet3", hvmSyntheticGenesisHeight, below), vm.ErrBTCBatchBelowFloor,
 		"a near-floor batch must defer, even against the real node")
+
+	// DEFER-over-REJECT precedence: a WRONG-difficulty batch BELOW the floor must STILL defer (the floor gate runs
+	// BEFORE the contextual validator), not eagerly reject. The existing below-floor case uses CORRECT difficulty, so
+	// a mutant that contextually-rejects wrong difficulty before the floor check would survive it.
+	belowWrong := []*wire.BlockHeader{{
+		Version: lightTip.Version, PrevBlock: lightTip.BlockHash(), MerkleRoot: lightTip.MerkleRoot,
+		Timestamp: lightTip.Timestamp.Add(600 * time.Second), Bits: 0x1d00fffe, Nonce: 4,
+	}}
+	bwErr := vm.ValidateBTCHeaderBatchForNetwork(chain.ctx, chain.tbcHeaderNode, "testnet3", hvmSyntheticGenesisHeight, belowWrong)
+	require.ErrorIs(t, bwErr, vm.ErrBTCBatchBelowFloor, "a wrong-difficulty batch below the floor must DEFER, not contextually reject (floor-gate precedence)")
+	var bwRe blockchain.RuleError
+	require.NotErrorAs(t, bwErr, &bwRe, "the floor gate must short-circuit before any contextual RuleError")
 }
 
 // TestHvmApplyPathEnforcesAndReplaySuppresses drives the consensus apply path end-to-end (the switch

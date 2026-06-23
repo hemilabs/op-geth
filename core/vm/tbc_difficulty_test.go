@@ -441,3 +441,63 @@ func TestContiguousParentRejectsHeightZeroChild(t *testing.T) {
 	require.False(t, ok, "a height-0 child resolving a parent must fail closed (the childHeight==0 guard, not luck)")
 	require.True(t, r.heightInconsistent, "the childHeight==0 guard must latch heightInconsistent (no underflow-accept)")
 }
+
+// TestValidateVersionGateBIP66And65 covers the SECOND and THIRD clauses of btcd's version gate
+// (Version<3 && >=BIP0066Height; Version<4 && >=BIP0065Height). TestValidateVersionGateRejects only trips
+// the FIRST clause (Version<2 via a lowered BIP0034Height). A bump/mutant dropping either of the other two
+// OR-clauses would let an outdated-version header pass the consensus-binding apply path unnoticed.
+func TestValidateVersionGateBIP66And65(t *testing.T) {
+	store, h := buildChainTS(12, mainBits, func(i int) int64 { return 1_600_000_000 + int64(i)*600 })
+	parent := h[11] // candidate height 12
+
+	// BIP0066 (Version<3): clone with a low BIP0066Height; BIP0034/0065 keep their huge mainnet defaults so
+	// only the BIP0066 clause can fire for a Version-2 candidate.
+	p66 := chaincfg.MainNetParams
+	p66.BIP0066Height = 5
+	require.NotEqual(t, int32(5), chaincfg.MainNetParams.BIP0066Height, "anti-vacuity: the gate height must be load-bearing")
+	v2 := childOf(parent, mainBits, parent.Timestamp.Unix()+600)
+	v2.Version = 2
+	requireReject(t, validateBTCHeaderContextWith(ctx(), store, &p66, v2), blockchain.ErrBlockVersionTooOld)
+	v3 := childOf(parent, mainBits, parent.Timestamp.Unix()+600)
+	v3.Version = 3
+	require.NoError(t, validateBTCHeaderContextWith(ctx(), store, &p66, v3), "Version 3 clears the BIP0066 gate")
+
+	// BIP0065 (Version<4): clone with a low BIP0065Height; a Version-3 candidate now trips it.
+	p65 := chaincfg.MainNetParams
+	p65.BIP0065Height = 5
+	v3b := childOf(parent, mainBits, parent.Timestamp.Unix()+600)
+	v3b.Version = 3
+	requireReject(t, validateBTCHeaderContextWith(ctx(), store, &p65, v3b), blockchain.ErrBlockVersionTooOld)
+	v4 := childOf(parent, mainBits, parent.Timestamp.Unix()+600)
+	v4.Version = 4
+	require.NoError(t, validateBTCHeaderContextWith(ctx(), store, &p65, v4), "Version 4 clears the BIP0065 gate")
+}
+
+// TestValidateMTPEvenWindowMedian covers btcd's median-time-past selection for an EVEN node count near the chain
+// floor: CalcPastMedianTime returns the sorted-ascending element at index numNodes/2 — deliberately the
+// UPPER-middle for an even window (btcd's documented "incorrectly calculate the median for even numbers of
+// blocks" consensus quirk). Every existing MTP test uses an ODD window (11 nodes), where (n-1)/2 == n/2, so none
+// can distinguish the upper-middle from a lower-middle selection. A 4-node window (parent walked to the floor)
+// makes index 2 (h[2]) vs index 1 (h[1]) select DIFFERENT ancestors — the only configuration that pins the quirk.
+func TestValidateMTPEvenWindowMedian(t *testing.T) {
+	// Heights 0..3, 600s apart. The candidate at height 4 walks its parent (h[3]) back to the floor: h[3],h[2],
+	// h[1],h[0] = 4 nodes (even). Ascending timestamps -> sorted == input -> median = input[4/2] = h[2].
+	store, h := buildChainTS(4, mainBits, func(i int) int64 { return 1_600_000_000 + int64(i)*600 })
+	parent := h[3]
+	median := h[2].Timestamp.Unix() // the UPPER-middle of the 4-node window
+
+	// (1) exact-equality boundary: timestamp == median is NOT After(median) -> ErrTimeTooOld.
+	atMedian := childOf(parent, mainBits, median)
+	requireReject(t, validateBTCHeaderContextWith(ctx(), store, &chaincfg.MainNetParams, atMedian), blockchain.ErrTimeTooOld)
+
+	// (2) strictly after the upper-middle median -> accept (non-retarget height 4 inherits parent mainBits).
+	afterMedian := childOf(parent, mainBits, median+1)
+	require.NoError(t, validateBTCHeaderContextWith(ctx(), store, &chaincfg.MainNetParams, afterMedian),
+		"a timestamp strictly after the upper-middle median must be accepted")
+
+	// (3) anti-mutant: a timestamp AFTER the LOWER-middle (h[1]) but NOT after the upper-middle (h[2]) must STILL
+	// reject. A (n-1)/2 lower-middle mutant would compute median=h[1] and ACCEPT this; correct code rejects it.
+	betweenMiddles := childOf(parent, mainBits, h[1].Timestamp.Unix()+1)
+	require.Less(t, h[1].Timestamp.Unix()+1, median, "anti-vacuity: the probe sits strictly between the lower and upper middles")
+	requireReject(t, validateBTCHeaderContextWith(ctx(), store, &chaincfg.MainNetParams, betweenMiddles), blockchain.ErrTimeTooOld)
+}

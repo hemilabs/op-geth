@@ -85,7 +85,7 @@ var (
 
 	// hVM Bitcoin Attributes Deposited tx generation on the sequencer build path. A persistent
 	// failure here means the hVM Bitcoin view stops advancing while the L2 keeps producing blocks;
-	// the function no longer crashes the sequencer, so these meters are the alertable signal in its
+	// the function does not crash the sequencer on failure, so these meters are the alertable signal in its
 	// place. hvmBtcAttrFailMeter gives a genuine-failure rate; hvmBtcAttrFailingGauge holds the last
 	// status (1 = last attempt did not advance the hVM Bitcoin view, whether a genuine failure or
 	// pending work blocked this round; 0 = succeeded or had nothing to do), so a stuck condition is
@@ -124,6 +124,23 @@ var (
 	// — a distinct failure class from the contextual-difficulty meter above (a header can fail one without
 	// the other). Also observe-only (snap never halts on it).
 	hvmSnapPoWRejectMeter = metrics.NewRegisteredMeter("chain/hvm/snap/pow_reject", nil)
+
+	// hVM header-store migration meters: triggered when a legacy testnet3 store is detected on a
+	// mainnet-configured node, deferred when the full node is not yet ready (no dir touched), completed on a
+	// verified rebuild + retirement.
+	hvmMigrationTriggeredMeter = metrics.NewRegisteredMeter("chain/hvm/migration/triggered", nil)
+	hvmMigrationDeferredMeter  = metrics.NewRegisteredMeter("chain/hvm/migration/deferred", nil)
+	hvmMigrationCompletedMeter = metrics.NewRegisteredMeter("chain/hvm/migration/completed", nil)
+	// Observe-only alert meters for the one-time migration bulk-load (mirrors the snap-path pow_reject /
+	// btcdiff_reject; never halts — the full node served a base that fails PoW / contextual difficulty).
+	hvmMigrationPoWRejectMeter     = metrics.NewRegisteredMeter("chain/hvm/migration/pow_reject", nil)
+	hvmMigrationBtcDiffRejectMeter = metrics.NewRegisteredMeter("chain/hvm/migration/btcdiff_reject", nil)
+	// hvmMigrationFailedMeter is marked immediately before each fatal migration log.Crit so a failed migration
+	// leaves a scrapeable signal (the "failed" event), since log.Crit then exits the process.
+	hvmMigrationFailedMeter = metrics.NewRegisteredMeter("chain/hvm/migration/failed", nil)
+	// hvmMigrationInProgressGauge is 1 while a rebuild is running (set after the readiness check, cleared on
+	// return) so a multi-minute bulk-load/catch-up is observable rather than looking hung.
+	hvmMigrationInProgressGauge = metrics.NewRegisteredGauge("chain/hvm/migration/in_progress", nil)
 
 	// hvmBtcAttrDiffTruncMeter counts contextual-difficulty truncations on the sequencer
 	// build path (getBitcoinAttributesForNextBlock dropped candidate BTC headers that the apply path
@@ -449,22 +466,40 @@ type BlockChain struct {
 	hvmEnabled          bool
 	tbcHeaderNode       *tbc.Server
 	tbcHeaderNodeConfig *tbc.Config
+	// hvmDiffEnforceable: true once the header node is up on its correct, validated,
+	// NON-deferred network — a genuine testnet3/localnet node, or a MIGRATED mainnet node. False ONLY while a
+	// legacy node is in the DEFER state this boot (running testnet3 params over the Bitcoin-mainnet pair
+	// {883092,…eda8}), where enforcing testnet3 difficulty on mainnet headers would split the fleet. Gates the
+	// enforceBTCDiff path in applyHvmHeaderConsensusUpdate (the difficulty-enforcement gate). Set by initHvmHeaderNode
+	// after the genesis guards. atomic.Bool: the snap-completion reset re-sets it (holding tbcHeaderNodeMu) while the
+	// apply/build/snap-observe paths read it without that lock, so access must be atomic.
+	hvmDiffEnforceable atomic.Bool
+	// hvmMigrationInProgress is true only while migrateHvmHeaderNode is in its committed rebuild window
+	// (in_progress gauge == 1). It makes initHvmHeaderNode's fatal I/O crits (NewServer / ExternalHeaderSetup /
+	// BlockHeaderBest) route through migrationCrit so the "failed" meter is marked and the
+	// in-progress gauge cleared before log.Crit's os.Exit — the deferred gauge-clear in migrateHvmHeaderNode
+	// never runs across os.Exit. False on the normal boot / reset init paths, where a plain fatal crit is correct.
+	hvmMigrationInProgress bool
 	// tbcHeaderNodeMu guards the lifecycle of the lightweight header-only TBC node — its teardown +
 	// reassignment in resetHvmHeaderNodeToGenesis — and the missingProgressionBlocks field. Lightweight-TBC
 	// access falls into three buckets (this mutex closes the gap between bucket 2 and the writers):
 	//   (1) chainmu-held callers: the apply/import path, the sequencer (getBitcoinAttributesForNextBlock,
-	//       which TryLocks chainmu), ResetWithGenesisBlock. These are serialized by chainmu and do not
+	//       which TryLocks chainmu), ResetWithGenesisBlock, and ProcessBlockForWitness (the debug_executionWitness*
+	//       RPC path — it TryLocks chainmu before ProcessBlock). These are serialized by chainmu and do not
 	//       co-occur with the bucket-3 non-chainmu reset, so chainmu alone suffices.
 	//   (2) GetMissingBtcBlocks: the one reader that runs outside chainmu (the per-peer broadcast goroutine
 	//       prefetchBTCBlocks, every 5s) and so can co-occur with a teardown/reassign from either reset
 	//       trigger. It takes the read side of this mutex (TryRLock -> bail to nil if a reset is mid-flight).
 	//   (3) non-chainmu mutators that also trigger reset: SnapSyncHvm (the snap completion path) resets +
-	//       rebuilds the node lock-free, and ProcessBlock reached via the debug_executionWitness* RPCs runs
-	//       the hVM mutate/reset path off-chainmu too. Their reset goes through resetHvmHeaderNodeToGenesis,
-	//       which takes Lock unconditionally, so bucket-2's reader is protected against them. Their own
-	//       post-reset node content access (AddExternalHeaders etc.) is not taken under this mutex — it
-	//       relies on snap-phase isolation + the SnapSyncHvm latch, and (for the debug RPCs) on TBC's
-	//       internal concurrency.
+	//       rebuilds the node lock-free. Its reset goes through resetHvmHeaderNodeToGenesis, which takes Lock
+	//       unconditionally, so bucket-2's reader is protected against the teardown/reassign. Its post-reset
+	//       content rebuild (AddExternalHeaders etc.) is NOT taken under this mutex, and the bucket-2 reader
+	//       does not consult the snap latch, so that rebuild can run concurrently with bucket-2's
+	//       BlockHeaderBest read on the same node. That concurrency is safe: the underlying header store is
+	//       concurrency-safe for a reader racing a writer (BlockHeaderBest is deliberately lock-free), and the
+	//       only effect is the 5s broadcast reader may observe a tip mid-rebuild, which is benign (not a
+	//       consensus path). This mutex therefore guards only the node LIFECYCLE (teardown/reassign) and the
+	//       missingProgressionBlocks field, not the node's content.
 	// Writers take Lock; the reader TryRLocks. Lock ordering is always chainmu -> tbcHeaderNodeMu (the reader
 	// takes nothing else under RLock), so there is no inversion.
 	tbcHeaderNodeMu sync.RWMutex
@@ -481,7 +516,11 @@ type BlockChain struct {
 	// the waiters on shutdown (so an in-flight completion finishes rather than being torn mid-write).
 	hvmSnapWaiters map[chainhash.Hash]struct{}
 	hvmSnapWg      sync.WaitGroup
-	healthyNode    atomic.Bool
+	// hvmSnapBodyAbsentPollsLimit, when > 0, overrides maxHvmSnapBodyAbsentPolls for the body-absent give-up horizon.
+	// Test-only (lets a test lower the ~100-poll/~100s horizon so the give-up/slot-release path is reachable); 0 in
+	// production so effectiveMaxBodyAbsentPolls returns the const.
+	hvmSnapBodyAbsentPollsLimit int
+	healthyNode                 atomic.Bool
 
 	// Temporary workaround to allow restarting TBC Full Node when its not progressing
 	fullBlockFailureCount       uint32
@@ -672,7 +711,14 @@ func (bc *BlockChain) resetHvmHeaderNodeToGenesis() {
 		log.Info("Header-only TBC instance is not running, nothing to tear down. Continuing with genesis reset.")
 	}
 
-	dataDir := bc.tbcHeaderNodeConfig.LevelDBHome
+	// Network-scoped delete: remove ONLY this node's own <LevelDBHome>/<canonicalNet> store, NEVER the
+	// parent LevelDBHome. The parent can also hold a sibling network's store — e.g. a migrated <…>/mainnet/
+	// alongside the retired <…>/testnet3.migrated-*/ rollback backup — that a parent-wipe would destroy, and
+	// every steady-state recovery path (recoverReapplyHvmState, the writeBlockAndSetHead inline restore, the
+	// snap-completion reset) routes through here. canonicalBTCNetwork is load-bearing, not cosmetic: TBC writes
+	// "upgradetest" under <…>/testnet3/, so a raw-name Join would delete a nonexistent dir and leave the real
+	// store, after which the genesis-state assertion below would crit on the stale reopen.
+	dataDir := hvmHeaderStoreDir(bc.tbcHeaderNodeConfig.LevelDBHome, bc.tbcHeaderNodeConfig.Network)
 
 	path, _ := filepath.Abs(dataDir)
 	log.Info(fmt.Sprintf("Deleting TBC external header mode instance data directory: %s", path))
@@ -713,14 +759,54 @@ type btcGenesisCheckpoint struct {
 
 // hvmGenesisCheckpoints maps a TBC network to its canonical effective-genesis checkpoint(s). The
 // testnet3 entry is op-geth's compiled default (ethconfig.Defaults.HvmGenesisHeader/Height); the
-// hemi-node mainnet and testnet deployments set no override and rely on the binary default, so the
+// mainnet and testnet deployments set no override and rely on the binary default, so the
 // default is the canonical pairing. upgradetest == testnet3 (TBC lockstep). A Hemi-mainnet
 // op-geth build compiles in its own Bitcoin-mainnet default; add its checkpoint here when this build
-// supports mainnet hVM (today eth/backend.go hardcodes the consensus node to testnet3).
+// supports mainnet hVM (today eth/backend.go defaults the consensus node to testnet3 via
+// config.TBCNetwork → ethconfig.DefaultTBCNetwork).
 // TestHvmGenesisCheckpointMatchesCanonicalHeader pins these to the canonical header so they cannot drift.
 var hvmGenesisCheckpoints = map[string][]btcGenesisCheckpoint{
-	"testnet3":    {{height: 3522419, hash: "000000000000000096c98151accc5ee217d7cc4ff1e59a3d91e4c9365c4ea144"}},
+	// testnet3 pins two accepted effective-genesis pairs:
+	//
+	//   [0] The compiled default (ethconfig.Defaults.HvmGenesisHeader/Height). This MUST stay element
+	//       [0]: the lockstep tests in eth/backend_hvm_genesis_test.go pin the default to this pair, and
+	//       the in-core inspection test reads testnet3[0].
+	//
+	//   [1] Backwards-compatibility pin for the deployed fleet. These nodes have run this Bitcoin-mainnet
+	//       effective-genesis pair (set via --hvm.genesisheight / --hvm.genesisheader) since before this
+	//       genesis-pairing guard existed. The TBC consensus network defaults to "testnet3" in
+	//       eth/backend.go (buildHvmHeaderNodeConfig sets it from config.TBCNetwork → ethconfig.DefaultTBCNetwork)
+	//       even though this pair is a Bitcoin-mainnet
+	//       (height, header); because the ENTIRE fleet shares the same override the pairing is internally
+	//       consistent and does not split the network — it is a legacy mislabel, not a desync. The guard
+	//       is config-only and runs at every startup for every node (snap-synced or full), so without this
+	//       entry the running fleet would log.Crit on boot. Keep it pinned until the network is properly
+	//       migrated off the override (i.e. the TBC network is wired from chain config and the data dir is
+	//       relocated); removing it bricks the live fleet.
+	"testnet3": {
+		{height: 3522419, hash: "000000000000000096c98151accc5ee217d7cc4ff1e59a3d91e4c9365c4ea144"},
+		// [1] DEFER-state pin: a legacy node (or the migration's defer fallback) runs Network=testnet3 over
+		//     the Bitcoin-mainnet pair below. Sourced from the ONE shared constant (core/vm/hvm_genesis.go),
+		//     dual-pinned identically under "mainnet" so BOTH the deferred and migrated states pass the guard.
+		{height: vm.MainnetHvmGenesisHeight, hash: vm.MainnetHvmGenesisHash},
+	},
+	// MIGRATED-state pin: a migrated mainnet node runs Network=mainnet over the SAME {883092,…eda8} pair.
+	// Keep this dual-pin (with testnet3[1]) until a verifiable fleet-wide "migration complete" signal confirms
+	// zero deferred nodes remain; removing testnet3[1] on a timer would crit any still-deferred node.
+	"mainnet":     {{height: vm.MainnetHvmGenesisHeight, hash: vm.MainnetHvmGenesisHash}},
 	"upgradetest": {{height: 3522419, hash: "000000000000000096c98151accc5ee217d7cc4ff1e59a3d91e4c9365c4ea144"}},
+}
+
+// canonicalBTCNetwork maps a configured TBC network name to its on-disk / chaincfg canonical form, mirroring
+// TBC's own network-name rewrite in the heminetwork database/tbcd/level package: "upgradetest" is stored as
+// "testnet3"; everything else is identity. The on-disk store path (<HvmHeaderDataDir>/<net>), the
+// network-scoped reset, and the migration detection must all use this canonical form so they agree with
+// where TBC actually writes — a raw-name Join would target a nonexistent dir and silently miss the real store.
+func canonicalBTCNetwork(network string) string {
+	if network == "upgradetest" {
+		return "testnet3"
+	}
+	return network
 }
 
 type hvmGenesisPairing int
@@ -766,6 +852,21 @@ func IsCanonicalHvmGenesisPairing(network string, height uint64, hash string) bo
 	return classifyHvmGenesisPairing(network, height, hash) == hvmGenesisPairingCanonical
 }
 
+// hvmMigrationAwareCrit fatally fails a hVM operation. During an in-progress migration rebuild
+// (bc.hvmMigrationInProgress) it routes through migrationCrit so the "failed" meter is marked and the
+// in-progress gauge cleared before log.Crit's os.Exit (the deferred gauge-clear in
+// migrateHvmHeaderNode never runs across os.Exit). On the normal boot / reset / steady-state apply paths it is a
+// plain fatal crit. Used by initHvmHeaderNode's I/O crits and by applyHvmHeaderConsensusUpdate's crits, both of
+// which are reachable inside the migration rebuild window (init during the rebuild, applyHvmHeaderConsensusUpdate during the
+// forward catch-up).
+func (bc *BlockChain) hvmMigrationAwareCrit(msg string, ctx ...interface{}) {
+	if bc.hvmMigrationInProgress {
+		migrationCrit(msg, ctx...)
+		return
+	}
+	log.Crit(msg, ctx...)
+}
+
 func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	if config.ExternalHeaderMode != true {
 		log.Crit("initHvmHeaderNode called with a TBC config that does not have ExternalHeaderMode set")
@@ -795,13 +896,24 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 			// genesis) is allowed through with a warning; any other network (including a mainnet build
 			// that has not yet added its checkpoint here) must be pinned before it can run enforced.
 			if config.Network != "localnet" {
+				// Include the canonical remediation values for this network so the operator can
+				// recover (mirrors the migration's defer-fallback crit). For mainnet that is the shared constant pair.
+				canonHint := "<none pinned for this network>"
+				if cps := hvmGenesisCheckpoints[config.Network]; len(cps) > 0 {
+					canonHint = fmt.Sprintf("height=%d hash=%s", cps[0].height, cps[0].hash)
+				}
+				wantHeader := ""
+				if canonicalBTCNetwork(config.Network) == "mainnet" {
+					wantHeader = vm.MainnetHvmGenesisHeader // the exact --hvm.genesisheader bytes the flag needs
+				}
 				log.Crit("Refusing to start: hVM effective-genesis (height,header) pair (from --hvm.genesisheight / "+
 					"--hvm.genesisheader, or the compiled defaults) is NOT a pinned canonical pair for this "+
 					"difficulty-enforced network; the height is a consensus parameter (it positions the retarget "+
-					"boundary) and a non-canonical offset splits from canonical nodes — either revert to the canonical "+
-					"pair or add the canonical checkpoint for this network to core.hvmGenesisCheckpoints",
-					"network", config.Network, "height", config.GenesisHeightOffset,
-					"header", config.EffectiveGenesisBlock.BlockHash().String())
+					"boundary) and a non-canonical offset splits from canonical nodes — set --hvm.genesisheight / "+
+					"--hvm.genesisheader to the canonical pair below (or add the canonical checkpoint to core.hvmGenesisCheckpoints)",
+					"network", config.Network, "gotHeight", config.GenesisHeightOffset,
+					"gotHash", config.EffectiveGenesisBlock.BlockHash().String(),
+					"wantCanonical", canonHint, "wantHeader", wantHeader)
 			}
 			log.Warn("hVM effective-genesis pair has no canonical checkpoint for the localnet dev network; cannot "+
 				"verify the height/header pairing — ensure GenesisHeightOffset is the true Bitcoin height of the header",
@@ -838,19 +950,26 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 
 	tbcHeaderNode, err := tbc.NewServer(config)
 	if err != nil {
-		log.Crit("initHvmHeaderNode unable to create new TBC server", "err", err)
+		bc.hvmMigrationAwareCrit("initHvmHeaderNode unable to create new TBC server", "err", err)
 	}
 
 	// Pass in the hVMGenesisUpstreamId, which will only be set by ExternalHeaderSetup if the TBC instance
 	// has not been initialized with any headers yet.
 	err = tbcHeaderNode.ExternalHeaderSetup(bc.ctx, hVMGenesisUpstreamId[:])
 	if err != nil {
-		log.Crit("initHvmHeaderNode unable to run ExternalHeaderSetup on TBC", "err", err)
+		// A re-open failure here is most often the store being held by another process (exactly one op-geth
+		// process per HvmHeaderDataDir is required), or a still-held goleveldb directory lock leaked by an
+		// upstream level.New error path on a prior deferred migration, or corrupt store
+		// metadata. Name the likely causes so the failure is diagnosable instead of an opaque fatal.
+		bc.hvmMigrationAwareCrit("initHvmHeaderNode unable to run ExternalHeaderSetup on TBC — the hVM header store could "+
+			"not be opened; ensure exactly ONE op-geth process uses this HvmHeaderDataDir and restart. If it "+
+			"recurs, a prior boot may have leaked the goleveldb directory lock or the store metadata is corrupt "+
+			"and must be restored from backup", "err", err)
 	}
 
 	height, header, err := tbcHeaderNode.BlockHeaderBest(bc.ctx)
 	if err != nil {
-		log.Crit("initHvmHeaderNode unable to get best block header after initialization", "err", err)
+		bc.hvmMigrationAwareCrit("initHvmHeaderNode unable to get best block header after initialization", "err", err)
 	}
 
 	log.Info(fmt.Sprintf("After hVM external header node initialization, best header = %s @ %d",
@@ -859,6 +978,35 @@ func (bc *BlockChain) initHvmHeaderNode(config *tbc.Config) {
 	bc.tbcHeaderNode = tbcHeaderNode
 	bc.tbcHeaderNodeConfig = config
 	bc.hvmEnabled = true
+	// A node is difficulty-enforceable unless it is in the DEFER state — running testnet3
+	// params over the Bitcoin-mainnet effective-genesis pair (the legacy mislabel / the migration's defer
+	// fallback). A genuine testnet3 node (height 3522419), a localnet node, and a MIGRATED mainnet node
+	// (Network=mainnet) are all enforceable. Keyed on the (network, height) pair, NOT the word "migrated", so
+	// the genuine testnet3 fleet and the post-migration mainnet steady state both enforce correctly.
+	bc.hvmDiffEnforceable.Store(!isLegacyDeferredPairing(config.Network, config.GenesisHeightOffset))
+	if !bc.hvmDiffEnforceable.Load() {
+		log.Warn("hVM difficulty enforcement DISABLED this boot: node is in the legacy DEFER state (testnet3 "+
+			"params over the Bitcoin-mainnet genesis pair); it enforces only after migrating to network=mainnet. "+
+			"Do NOT run this node as the active op-stack sequencer until it has migrated (it can package a "+
+			"Bitcoin-Attributes header that enforced validators reject -> chain split)",
+			"network", config.Network, "genesisHeight", config.GenesisHeightOffset)
+	}
+}
+
+// isLegacyDeferredPairing reports the DEFER state: a node running on the RAW "testnet3" network over the
+// Bitcoin-MAINNET effective-genesis pair (height 883092) — the legacy "mainnet-as-testnet3" mislabel and the
+// migration's defer fallback (which sets config.Network = "testnet3"). Such a node must NOT enforce difficulty:
+// it would validate real mainnet headers under TestNet3Params (the ReduceMinDifficulty 20-minute rule),
+// splitting from a correctly-migrated fleet.
+//
+// Matched on the RAW network "testnet3", NOT canonicalBTCNetwork — to stay CONSISTENT with the
+// genesis-pairing guard, whose dual-pin {883092,…eda8} lives under the "testnet3" (and "mainnet") checkpoint
+// keys but NOT under "upgradetest". An upgradetest node over the mainnet pair is rejected (Custom -> crit) by
+// classifyHvmGenesisPairing before it ever runs, so it is not a valid defer state; canonicalizing here would
+// have this function disagree (call it deferred) with a guard that refuses to boot it. The genuine fleet and
+// the defer path both use the raw "testnet3" network, so this narrowing does not affect any real node.
+func isLegacyDeferredPairing(network string, genesisHeight uint64) bool {
+	return network == "testnet3" && genesisHeight == vm.MainnetHvmGenesisHeight
 }
 
 func (bc *BlockChain) SetupDeucalion(pctx context.Context, address string) error {
@@ -904,6 +1052,15 @@ func (bc *BlockChain) SetupDeucalion(pctx context.Context, address string) error
 }
 
 func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
+	// Automatic legacy "mainnet-as-testnet3" migration, at the TOP before any dir is opened. When
+	// it fully rebuilt a migrated mainnet store it returns true and bc.tbcHeaderNode is already initialized at
+	// the EVM tip — skip the normal init/restore. When it deferred it mutated config.Network back to "testnet3"
+	// and returns false, so the normal boot below runs on the untouched legacy store. When no migration was
+	// needed it returns false unchanged (the common path: genuine testnet3, or an already-migrated mainnet).
+	if bc.maybeMigrateHvmHeaderNode(config) {
+		return
+	}
+
 	bc.initHvmHeaderNode(config)
 
 	// Get the current state ID
@@ -918,8 +1075,11 @@ func (bc *BlockChain) SetupHvmHeaderNode(config *tbc.Config) {
 	log.Info(fmt.Sprintf("hVM node initiated, stateId=%x, current EVM tip=%s", stateId[:], currentHash.String()))
 
 	tnFix, _ := hex.DecodeString("2decc762c95d7c392b5e852fc861aab2044b5e5748d1696a0cb00de70014d0f4")
-	// Special case for testnet
-	if bytes.Equal(stateId[:], tnFix[:]) {
+	// Special case for testnet — network-gated so this testnet3-specific bad-BTC-header surgery
+	// can NEVER run on a migrated mainnet node (which reaches this block on its 2nd+ boot, when the migration
+	// is already complete and maybeMigrateHvmHeaderNode returns false). The stateId is testnet3-specific, but
+	// the guard makes the intent structural rather than relying on hash non-collision.
+	if canonicalBTCNetwork(config.Network) == "testnet3" && bytes.Equal(stateId[:], tnFix[:]) {
 		correctPrevStateId, _ := hex.DecodeString("4d1bafde31ffe9d02b81131333340c762a639865361b9429cdf21181e78d8bff")
 		badBTCBlock, _ := hex.DecodeString("aef45566e1303e620317eb7073aff8eca8d58834d58fa4cceabd010000000000")
 
@@ -1634,8 +1794,8 @@ func (bc *BlockChain) hvmSnapMarkFinished() {
 // node to reconstruct the lightweight TBC node from scratch up to the snap-synced tip.
 // maxHvmSnapWaiters caps the number of concurrent runHvmSnapWaiter goroutines (distinct candidate Bitcoin
 // tips). Honest peers all report the same committed tip (one waiter); the cap bounds a peer that sends
-// many distinct tips so it cannot exhaust goroutines. The previous synchronous design was implicitly
-// bounded by per-peer snap read-loop serialization; running the wait off that loop requires this explicit cap.
+// many distinct tips so it cannot exhaust goroutines. The wait runs off the per-peer snap read loop, so it
+// is not implicitly bounded by that loop's serialization and needs this explicit cap.
 const maxHvmSnapWaiters = 16
 
 // maxHvmSnapBodyAbsentPolls bounds how long a waiter whose BTC data is fully available will keep polling for
@@ -1648,11 +1808,95 @@ const maxHvmSnapWaiters = 16
 const maxHvmSnapBodyAbsentPolls = 100
 
 // bodyAbsentShouldGiveUp reports whether a snap waiter that has polled `polls` times with its pinned base
-// block's body still absent should abandon the candidate and release its waiter slot. Extracted as a pure
-// predicate so the give-up boundary — the defense that stops a peer pinning never-local bases from holding
-// every slot and wedging snap completion — is unit-testable without standing up a live TBC full node.
-func bodyAbsentShouldGiveUp(polls int) bool {
-	return polls >= maxHvmSnapBodyAbsentPolls
+// block's body still absent should abandon the candidate and release its waiter slot, given the give-up
+// horizon `maxPolls`. The live waiter passes bc.effectiveMaxBodyAbsentPolls() (= maxHvmSnapBodyAbsentPolls in
+// production, or the test-only override); a unit test may pass a lower bound. Extracted as a pure predicate —
+// AND called from the live give-up site below — so the boundary (the defense that stops a peer pinning
+// never-local bases from holding every slot and wedging snap completion) is unit-testable without standing up
+// a live TBC full node, and the live decision cannot drift from the tested predicate.
+func bodyAbsentShouldGiveUp(polls, maxPolls int) bool {
+	return polls >= maxPolls
+}
+
+// effectiveMaxBodyAbsentPolls is the give-up horizon used by the live waiter. It honors the test-only
+// hvmSnapBodyAbsentPollsLimit override (so the give-up/slot-release path is reachable in a bounded test window);
+// production leaves the field 0 and gets maxHvmSnapBodyAbsentPolls.
+func (bc *BlockChain) effectiveMaxBodyAbsentPolls() int {
+	if bc.hvmSnapBodyAbsentPollsLimit > 0 {
+		return bc.hvmSnapBodyAbsentPollsLimit
+	}
+	return maxHvmSnapBodyAbsentPolls
+}
+
+// snapShouldObserveBtcDiff reports whether the snap-completion path should run the observe-only
+// contextual-difficulty check on the reconstructed base: ONLY when there is at least one reconstructed header AND
+// the node is difficulty-enforceable. A DEFER-state node (TestNet3Params over Bitcoin-mainnet data) must SKIP it,
+// else it emits a stream of spurious btcdiff_reject alerts under the wrong params.
+// Extracted as a pure predicate so the skip-when-deferred gate is unit-testable without a live TBC node.
+func snapShouldObserveBtcDiff(headerCount int, enforceable bool) bool {
+	return headerCount > 0 && enforceable
+}
+
+// markSnapBtcDiffObservation marks the snap-sync observe-only alert meters and emits the advisory logs from an
+// observeSnapBtcDiff result. It is pure side effects (meters + logs) and NEVER halts or mutates state — the
+// observe-only safety net is telemetry, not enforcement. Split out (mirroring observeSnapBtcDiff) so the
+// meter-marking, which is the snap path's ONLY externally-visible safety signal, is unit-testable without the async
+// full-node snap harness. firstHeaderID is the snap base's first header hash (for the skip-arm log only).
+func (bc *BlockChain) markSnapBtcDiffObservation(obs snapObserveResult, firstHeaderID string) {
+	if obs.powFailed {
+		hvmSnapPoWRejectMeter.Mark(1)
+		log.Error("hVM snap sync observe-only check: a snap-loaded BTC header failed proof-of-work "+
+			"validation; proceeding under the canonical-tip + cumulative-work backstops — investigate",
+			"err", obs.powErr)
+	}
+
+	switch {
+	case obs.clearanceErr != nil:
+		// Unknown network => cannot parameterize the observability split. Telemetry, not enforcement, so
+		// do not halt: skip the observation and proceed (canonical-tip + cumulative-work backstops below).
+		log.Warn(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: cannot determine the contextual-difficulty "+
+			"floor clearance for network %q; skipping the snap-base observation", bc.tbcHeaderNodeConfig.Network), "err", obs.clearanceErr)
+	case obs.firstHeightErr != nil:
+		// The full node returned this header moments ago during the walk-back; a read error now is odd,
+		// but observe-only — skip the observation rather than crashing the snap.
+		log.Warn(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: cannot read the height of first snap header "+
+			"%s from the full node; skipping the snap-base observation", firstHeaderID), "err", obs.firstHeightErr)
+	default:
+		// headersToAdd[0] is the child of the just-reset effective genesis, so its height should be
+		// GenesisHeightOffset+1. The enforce/defer split does not depend on that (btcEnforceableSuffix
+		// uses the true queried firstHeight); a mismatch is a tripwire that the reset/walk-back did not
+		// start at the effective genesis as expected — surface it rather than letting it pass silently.
+		if obs.firstHeightMismatch {
+			log.Warn(fmt.Sprintf("hVM snap sync contextual-difficulty: first reconstructed header height %d != expected "+
+				"effective-genesis+1 (%d) — unexpected reconstruction start (the enforce/defer split still uses "+
+				"the true queried height)", obs.firstHeight, bc.tbcHeaderNodeConfig.GenesisHeightOffset+1))
+		}
+		log.Info(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: checking %d headers at/above height %d, "+
+			"not checking %d near-floor headers", obs.enforcedCount, obs.enforceFloor, obs.deferredCount))
+		if obs.contextualRan {
+			switch obs.ctxObservation {
+			case snapObsClean:
+				// the checked suffix is contextually clean — nothing to report
+			case snapObsBelowFloor:
+				// Unexpected (the suffix is above the enforce floor) but benign; nothing to report.
+				log.Debug("hVM snap sync observe-only contextual-difficulty: checked suffix reported below-floor; not checked")
+			case snapObsIncomplete:
+				// A connectivity gap or a transient/corrupt full-node read while resolving deep ancestry — not a
+				// forged-difficulty statement and not actionable here. AddExternalHeaders below remains the
+				// connectivity authority; the snap-base check simply could not complete.
+				log.Warn(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: could not complete the snap-base check "+
+					"(connectivity/transient read); proceeding"), "err", obs.ctxErr)
+			case snapObsReject:
+				// A genuine btcd contextual-difficulty RuleError on the snap base. Alertable but not enforced
+				// (see the rationale on the if-block above): emit the meter + alert, indicating the full node
+				// served a header that fails contextual validation, and proceed.
+				hvmSnapBtcDiffRejectMeter.Mark(1)
+				log.Error(fmt.Sprintf("hVM snap sync observe-only check: a snap-loaded BTC header failed contextual "+
+					"validation (difficulty / median-time-past / version); proceeding under the canonical-tip + "+
+					"cumulative-work backstops — investigate"), "err", obs.ctxErr)
+			}
+		}
+	}
 }
 
 // SnapSyncHvm is the snap downloader's hook for an hVM light-state response. It runs the wait-for-Bitcoin-data
@@ -1815,8 +2059,8 @@ func (bc *BlockChain) runHvmSnapWaiter(btcTipHeader *chainhash.Hash, hvmTipHeade
 				bodyAbsentPolls++
 				log.Warn(fmt.Sprintf("hVM snap sync candidate base %s @ %d is not locally available as a full "+
 					"block (below the body floor or not yet synced); not completing on this candidate (poll %d/%d)",
-					hvmTipHeader.Hash().String(), hvmTipHeader.Number.Uint64(), bodyAbsentPolls, maxHvmSnapBodyAbsentPolls))
-				if bodyAbsentShouldGiveUp(bodyAbsentPolls) {
+					hvmTipHeader.Hash().String(), hvmTipHeader.Number.Uint64(), bodyAbsentPolls, bc.effectiveMaxBodyAbsentPolls()))
+				if bodyAbsentShouldGiveUp(bodyAbsentPolls, bc.effectiveMaxBodyAbsentPolls()) {
 					// Give up on this candidate and RELEASE its slot (via the deferred releaseHvmSnapWaiterSlot)
 					// rather than holding it indefinitely. Otherwise a peer pinning a base whose body is never local
 					// could, across maxHvmSnapWaiters distinct tips, hold every slot indefinitely and stall snap
@@ -1855,13 +2099,13 @@ func (bc *BlockChain) runHvmSnapWaiter(btcTipHeader *chainhash.Hash, hvmTipHeade
 	log.Info("All required BTC data available, resetting lightweight TBC and adding headers")
 	bc.resetHvmHeaderNodeToGenesis()
 
-	_, target, err := bc.tbcHeaderNode.BlockHeaderBest(bc.ctx)
+	targetHeight, target, err := bc.tbcHeaderNode.BlockHeaderBest(bc.ctx)
 	if err != nil {
 		log.Crit(fmt.Sprintf("Unable to get best header from lighweight TBC node after reset"))
 	}
 	targetHash := target.BlockHash()
 
-	cursor, _, err := vm.TBCFullNode.BlockHeaderByHash(bc.ctx, *btcTipHeader)
+	cursor, cursorHeight, err := vm.TBCFullNode.BlockHeaderByHash(bc.ctx, *btcTipHeader)
 	if err != nil {
 		// Should never happen as this is part of the check in the above loop, indicates some form of corruption
 		log.Crit(fmt.Sprintf("After finding all BTC data, unable to fetch ending tip %s", btcTipHeader.String()))
@@ -1871,16 +2115,34 @@ func (bc *BlockChain) runHvmSnapWaiter(btcTipHeader *chainhash.Hash, hvmTipHeade
 
 	headersToAdd := make([]*wire.BlockHeader, 0)
 	for !bytes.Equal(cursorHash[:], targetHash[:]) {
+		// Height floor (mirrors gatherHeadersBackToGenesis): the snap candidate tip MUST descend from the
+		// lightweight node's reset tip (target). If the walk reaches the target's height or below without
+		// matching its hash, btcTipHeader is not a descendant of target — a forged/corrupt full-node tip — so
+		// crit rather than walk toward real Bitcoin genesis (buffering hundreds of thousands of headers / OOM).
+		if cursorHeight <= targetHeight {
+			log.Crit("hVM snap sync: full-node header walk reached the lightweight tip's height without matching it (forged/corrupt full-node tip?)",
+				"reachedHeight", cursorHeight, "targetHeight", targetHeight, "header", cursorHash.String())
+		}
 		headersToAdd = append(headersToAdd, cursor)
 
 		// Move cursor back
+		prevHeight := cursorHeight
 		prev := cursor.PrevBlock
-		cursor, _, err = vm.TBCFullNode.BlockHeaderByHash(bc.ctx, prev)
+		cursor, cursorHeight, err = vm.TBCFullNode.BlockHeaderByHash(bc.ctx, prev)
 		if err != nil {
 			// Should never happen as these headers were already found above
 			log.Crit(fmt.Sprintf("Unable to get header %s from TBC full node", prev.String()), "err", err)
 		}
 		cursorHash = cursor.BlockHash()
+		// CYCLE / corrupt-index guard (mirrors the migration walk): an honest PrevBlock walk strictly
+		// DECREASES height each step. The full node is not trusted (a torn index / malicious peer header forming a
+		// PrevBlock cycle above the target would otherwise spin this completion goroutine forever and OOM the
+		// node). A non-decrease is corruption — crit (consistent with the missing-ancestor crit above) rather
+		// than loop unboundedly.
+		if cursorHeight >= prevHeight {
+			log.Crit("hVM snap sync: full-node header walk did not strictly descend in height (PrevBlock cycle / corrupt full-node index?)",
+				"fromHeight", prevHeight, "toHeight", cursorHeight, "header", cursorHash.String())
+		}
 	}
 
 	slices.Reverse(headersToAdd)
@@ -1908,67 +2170,20 @@ func (bc *BlockChain) runHvmSnapWaiter(btcTipHeader *chainhash.Hash, hvmTipHeade
 	// the band the forward path would itself enforce (at/above floor+clearance+(MaximumBtcHeadersInTx-1);
 	// see btcSnapEnforceFloor), deferring the near-floor band the forward path also defers. Real consensus
 	// enforcement remains the apply path (forward) + the canonical-tip crit; this arm is telemetry.
-	if len(headersToAdd) > 0 {
+	// Skip the observe-only difficulty check in the legacy DEFER state: a deferred node runs
+	// TestNet3Params (bc.tbcHeaderNodeConfig.Network=="testnet3") over Bitcoin-MAINNET data, so observing those
+	// headers under the wrong params produces a systematic stream of spurious btcdiff_reject alerts. Enforceable
+	// nodes (genuine testnet3, migrated mainnet) have matching params and observe meaningfully.
+	if snapShouldObserveBtcDiff(len(headersToAdd), bc.hvmDiffEnforceable.Load()) {
 		// Observe-only contextual-difficulty (never halts, never mutates): PoW + contextual-difficulty check of the
 		// reconstructed base. The verdict-dispatch composition lives in observeSnapBtcDiff (unit-testable);
 		// this block only marks the alert meters and logs from its advisory result.
 		obs := observeSnapBtcDiff(bc.ctx, vm.TBCFullNode, bc.tbcHeaderNodeConfig.Network,
 			bc.tbcHeaderNodeConfig.GenesisHeightOffset, headersToAdd)
-
-		if obs.powFailed {
-			hvmSnapPoWRejectMeter.Mark(1)
-			log.Error("hVM snap sync observe-only check: a snap-loaded BTC header failed proof-of-work "+
-				"validation; proceeding under the canonical-tip + cumulative-work backstops — investigate",
-				"err", obs.powErr)
-		}
-
-		switch {
-		case obs.clearanceErr != nil:
-			// Unknown network => cannot parameterize the observability split. Telemetry, not enforcement, so
-			// do not halt: skip the observation and proceed (canonical-tip + cumulative-work backstops below).
-			log.Warn(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: cannot determine the contextual-difficulty "+
-				"floor clearance for network %q; skipping the snap-base observation", bc.tbcHeaderNodeConfig.Network), "err", obs.clearanceErr)
-		case obs.firstHeightErr != nil:
-			// The full node returned this header moments ago during the walk-back; a read error now is odd,
-			// but observe-only — skip the observation rather than crashing the snap.
-			log.Warn(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: cannot read the height of first snap header "+
-				"%s from the full node; skipping the snap-base observation", headersToAdd[0].BlockHash().String()), "err", obs.firstHeightErr)
-		default:
-			// headersToAdd[0] is the child of the just-reset effective genesis, so its height should be
-			// GenesisHeightOffset+1. The enforce/defer split does not depend on that (btcEnforceableSuffix
-			// uses the true queried firstHeight); a mismatch is a tripwire that the reset/walk-back did not
-			// start at the effective genesis as expected — surface it rather than letting it pass silently.
-			if obs.firstHeightMismatch {
-				log.Warn(fmt.Sprintf("hVM snap sync contextual-difficulty: first reconstructed header height %d != expected "+
-					"effective-genesis+1 (%d) — unexpected reconstruction start (the enforce/defer split still uses "+
-					"the true queried height)", obs.firstHeight, bc.tbcHeaderNodeConfig.GenesisHeightOffset+1))
-			}
-			log.Info(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: checking %d headers at/above height %d, "+
-				"not checking %d near-floor headers", obs.enforcedCount, obs.enforceFloor, obs.deferredCount))
-			if obs.contextualRan {
-				switch obs.ctxObservation {
-				case snapObsClean:
-					// the checked suffix is contextually clean — nothing to report
-				case snapObsBelowFloor:
-					// Unexpected (the suffix is above the enforce floor) but benign; nothing to report.
-					log.Debug("hVM snap sync observe-only contextual-difficulty: checked suffix reported below-floor; not checked")
-				case snapObsIncomplete:
-					// A connectivity gap or a transient/corrupt full-node read while resolving deep ancestry — not a
-					// forged-difficulty statement and not actionable here. AddExternalHeaders below remains the
-					// connectivity authority; the snap-base check simply could not complete.
-					log.Warn(fmt.Sprintf("hVM snap sync observe-only contextual-difficulty: could not complete the snap-base check "+
-						"(connectivity/transient read); proceeding"), "err", obs.ctxErr)
-				case snapObsReject:
-					// A genuine btcd contextual-difficulty RuleError on the snap base. Alertable but not enforced
-					// (see the rationale on the if-block above): emit the meter + alert, indicating the full node
-					// served a header that fails contextual validation, and proceed.
-					hvmSnapBtcDiffRejectMeter.Mark(1)
-					log.Error(fmt.Sprintf("hVM snap sync observe-only check: a snap-loaded BTC header failed contextual "+
-						"validation (difficulty / median-time-past / version); proceeding under the canonical-tip + "+
-						"cumulative-work backstops — investigate"), "err", obs.ctxErr)
-				}
-			}
-		}
+		// The verdict-dispatch (meter marks + advisory logs) lives in markSnapBtcDiffObservation, split out
+		// (mirroring observeSnapBtcDiff) so the meter-marking — the snap path's only externally-visible
+		// safety signal — is unit-testable without the async full-node snap harness.
+		bc.markSnapBtcDiffObservation(obs, headersToAdd[0].BlockHash().String())
 	}
 
 	// Add all headers between genesis and the hVM snap sync height, and set upstream ID to snap header.
@@ -2021,9 +2236,9 @@ func (bc *BlockChain) runHvmSnapWaiter(btcTipHeader *chainhash.Hash, hvmTipHeade
 // headers — either because there is no BtcAttr tx at all (btcAttrDep == nil) or because the tx is
 // present but empty (len(Headers) == 0). In both cases applying/unapplying the block makes no TBC
 // header change (only the upstream-state-id moves), so apply and unapply take the no-op path. This is
-// load-bearing: the original unapply guard matched only btcAttrDep == nil, so an empty-but-present tx
-// fell through to RemoveExternalHeaders with zero headers (an invalid call that crashed on unfixed code,
-// on reorg). Keep nil and empty unified here; do not narrow back to btcAttrDep == nil.
+// load-bearing: an unapply guard that matched only btcAttrDep == nil would let an empty-but-present tx
+// fall through to RemoveExternalHeaders with zero headers (an invalid call that crashes on reorg). Keep
+// nil and empty unified here; do not narrow to btcAttrDep == nil.
 func btcAttrDepIsHeaderless(btcAttrDep *types.BtcAttributesDepositData) bool {
 	return btcAttrDep == nil || len(btcAttrDep.Headers) == 0
 }
@@ -2432,6 +2647,12 @@ func consensusErrorForAddHeadersOutcome(o addExternalHeadersOutcome) error {
 // (performFullHvmHeaderStateRestore log.Crits on any apply error, so re-judging a historical block under
 // the new rule must not turn recovery into a crash).
 func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemptPrefetch bool, enforceBTCDiff bool) error {
+	// Migrate-before-enforce: a node in the DEFER state (testnet3 params over the mainnet pair
+	// this boot) must NOT enforce contextual difficulty on the import path — it would judge mainnet headers
+	// under TestNet3Params and split. Fold the per-boot enforceability gate in here so every caller (forward
+	// apply, reorg) is covered at one point; when not enforceable the path behaves like restore/replay (the
+	// already-accepted canonical headers are re-applied without re-judging difficulty).
+	enforceBTCDiff = enforceBTCDiff && bc.hvmDiffEnforceable.Load()
 	block := bc.getBlockFromDiskOrHoldingPen(header.Hash())
 	if block == nil {
 		// Block not on disk or in holding pen
@@ -2445,7 +2666,10 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 	// Store the current TBC state hash so we can put it back if we revert our changes here
 	previousStateTransitionHash, err := bc.tbcHeaderNode.UpstreamStateId(bc.ctx)
 	if err != nil {
-		log.Crit("Unable to get upstream state id from TBC", "err", err)
+		// Migration-aware: this apply path is reachable from the forward catch-up inside the
+		// migration rebuild window, where a plain log.Crit's os.Exit would leak the in-progress gauge and skip
+		// the "failed" meter; route through migrationCrit when a migration is in progress.
+		bc.hvmMigrationAwareCrit("Unable to get upstream state id from TBC", "err", err)
 	} else {
 		log.Info(fmt.Sprintf("Applying hVM header update: adding block %s @ %d, previous state id is %x",
 			header.Hash().String(), header.Number.Uint64(), previousStateTransitionHash[:]))
@@ -2470,8 +2694,10 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		checkHash := check.Hash()
 		if !bytes.Equal(checkHash[:], header.ParentHash[:]) {
 			// This implies a code bug as upstream calls of this function should be guarded to
-			// only occur when the new block is the direct child of the current state
-			log.Crit(fmt.Sprintf("Applying hVM header update for block %s @ %d failed, "+
+			// only occur when the new block is the direct child of the current state. Migration-aware:
+			// also reachable from the forward catch-up window — route through migrationCrit so the
+			// failed meter/gauge are cleared before os.Exit.
+			bc.hvmMigrationAwareCrit(fmt.Sprintf("Applying hVM header update for block %s @ %d failed, "+
 				"previous state id is %x but parent of updated block is %s @ %d",
 				header.Hash().String(), header.Number.Uint64(), previousStateTransitionHash[:],
 				header.ParentHash[:], header.Number.Uint64()-1))
@@ -2656,7 +2882,7 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		// forward-apply, reorg, and restore-replay — route through applyHvmHeaderConsensusUpdate). The
 		// other AddExternalHeaders sites (snap reconstruction; sequencer build-path dry-run) keep their
 		// fail-stop crits: those are node-local and restart-recoverable, and the sequencer dry-run's
-		// Add-then-Remove makes an idempotent retry there a separate (tracked) change.
+		// Add-then-Remove would need separate idempotency reasoning to retry safely.
 		if err != nil {
 			addOutcome := classifyAddExternalHeadersError(err, batchConnectivityConfirmed)
 			switch addOutcome {
@@ -2720,8 +2946,9 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		if err != nil {
 			// Although this failure does not immediately prevent chain progression, the inability to convert
 			// the canonical block hash returned from TBC by adding headers to a wire indicates something has
-			// gone very wrong so exit.
-			log.Crit(fmt.Sprintf("after applying Bitcoin consensus information from block %s @ %d to "+
+			// gone very wrong so exit. Also reachable from the migration forward catch-up window — route through
+			// migrationCrit so the failed meter/gauge are cleared before os.Exit.
+			bc.hvmMigrationAwareCrit(fmt.Sprintf("after applying Bitcoin consensus information from block %s @ %d to "+
 				"hVM's lightweight BTC consensus view, the canonical header %s returned could not be converted "+
 				"to a wire message", header.Hash().String(), header.Number.Uint64(), cbh.Hash.String()),
 				"err", err)
@@ -2792,8 +3019,10 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		lbHash := lbh.Hash[:]
 		if !bytes.Equal(lbh.Header[:], lastHeader[:]) {
 			// Indicates a bug in TBC, as TBC didn't add all the headers we passed in.
-			// Unlikely this would be due to data corruption, so assume bug and exit.
-			log.Crit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which "+
+			// Unlikely this would be due to data corruption, so assume bug and exit. Also reachable from the
+			// migration forward catch-up window — route through migrationCrit so the failed meter/gauge are
+			// cleared before os.Exit.
+			bc.hvmMigrationAwareCrit(fmt.Sprintf("block %s @ %d has a Bitcoin Attributes Deposited transaction which "+
 				"contains %d headers ending in %x, but after adding those headers to lightweight TBC, TBC's last "+
 				"added block was %x", header.Hash().String(), header.Number.Uint64(), headersToAdd, lastHeader[:],
 				lbHash[:]))
@@ -2818,12 +3047,12 @@ func (bc *BlockChain) applyHvmHeaderConsensusUpdate(header *types.Header, attemp
 		}
 		// An empty-but-present BtcAttr tx makes no TBC header change, but — like the no-BtcAttr-tx path
 		// above and the headers-added path (which advances the id via AddExternalHeaders) — we must still
-		// advance the TBC upstream state id to represent this block. Omitting it (the original bug) left
-		// the id at the parent, which then trips the parent-mismatch check when the next block is applied
-		// (and during a full state restore). The upstream state
-		// id is TBC-internal metadata (never part of the EVM state root / block hash), so advancing it here
-		// is consensus-safe and changes no block's acceptance — the CanonicalTip check above is the only
-		// acceptance decision and is preserved. The matching unapply rolls it back.
+		// advance the TBC upstream state id to represent this block. Omitting it would leave the id at the
+		// parent, which then trips the parent-mismatch check when the next block is applied (and during a
+		// full state restore). The upstream state id is TBC-internal metadata (never part of the EVM state
+		// root / block hash), so advancing it here is consensus-safe and changes no block's acceptance —
+		// the CanonicalTip check above is the only acceptance decision and is preserved. The matching
+		// unapply rolls it back.
 		if bc.chainConfig.IsHvm0(header.Time) {
 			err := bc.tbcHeaderNode.SetUpstreamStateId(bc.ctx, stateTransitionTargetHash)
 			if err != nil {
@@ -2942,11 +3171,11 @@ func (bc *BlockChain) IsHvmEnabled() bool {
 // btcAttrCacheKey identifies the inputs the cached Bitcoin Attributes Deposited tx was built from. The
 // tx is a pure function of these three: the EVM tip it is built on top of, and the lightweight and
 // full-node BTC consensus tips (which together drive the walk-back and the set of headers the tx
-// carries), so the cached entry is valid only while all three are unchanged. The original cache keyed on
-// the EVM tip alone, so a BTC-view change (the full node syncing new headers or a Bitcoin reorg) while
-// the EVM tip was unchanged kept re-serving a stale tx; if that stale tx was then rejected, the sequencer
-// re-served it forever — a permanent self-inflicted halt. Keying on all three (a comparable struct, so no
-// dimension can be silently dropped) invalidates the entry on any BTC-view change. See TestBtcAttrCacheKey.
+// carries), so the cached entry is valid only while all three are unchanged. Keying on the EVM tip alone
+// would let a BTC-view change (the full node syncing new headers or a Bitcoin reorg) while the EVM tip is
+// unchanged keep re-serving a stale tx; if that stale tx is then rejected, the sequencer re-serves it
+// forever — a permanent self-inflicted halt. Keying on all three (a comparable struct, so no dimension
+// can be silently dropped) invalidates the entry on any BTC-view change. See TestBtcAttrCacheKey.
 type btcAttrCacheKey struct {
 	evmTip   common.Hash    // the EVM block the next block is built on top of
 	lightTip chainhash.Hash // lightweight TBC node's best BTC header at build time
@@ -3008,7 +3237,7 @@ func finalizeHvmBtcAttrResult(tx *types.BtcAttributesDepositedTx, err error) (*t
 //   - nil (success or a legitimately idle cycle): clear the stuck gauge.
 //   - errHvmBtcAttrPendingBlocked: pending BTC work that did not advance this round (e.g. the
 //     next full block is not yet downloaded). Raise the stuck gauge but hide the sentinel from
-//     the caller (return nil) so it behaves like the old (nil, nil) return — no error log spam.
+//     the caller (return nil) so it surfaces as a plain (nil, nil) idle return — no error log spam.
 //   - shutdown (errChainStopped, or context.Canceled): not an hVM fault — leave metrics untouched
 //     to avoid a spurious alert during shutdown.
 //   - any other error: a genuine failure; mark the fail meter and raise the stuck gauge.
@@ -3048,6 +3277,25 @@ func btcAttrFutureSkewExceeded(timestamp, now uint64) bool {
 	return timestamp > now && timestamp-now > btcAttrFutureSkewWindow
 }
 
+// enforceableBTCBatch is the build-path difficulty-enforceability classifier used by longestEnforceableBTCHeaderPrefix to
+// truncate the sequencer's proposed BTC-header prefix at the first non-enforceable header. A DEFER-state node
+// (hvmDiffEnforceable=false: testnet3 params over the mainnet pair) must NOT truncate — it would judge real
+// mainnet headers under TestNet3Params (the 20-min rule) and drop honest headers a correctly-migrated sequencer
+// keeps, diverging the build path; it returns nil (accept the full prefix; the apply path is the enforcement
+// point and is also gated). When enforceable it checks proof-of-work first (a PoW RuleError truncates like a
+// contextual one, so the sequencer never proposes a header whose hash does not meet its target), then contextual
+// difficulty. Extracted so the deferred-vs-enforced gate is unit-testable on the real logic.
+func (bc *BlockChain) enforceableBTCBatch(batch []*wire.BlockHeader) error {
+	if !bc.hvmDiffEnforceable.Load() {
+		return nil
+	}
+	if e := vm.CheckBTCHeaderBatchPoWForNetwork(bc.tbcHeaderNodeConfig.Network, batch); e != nil {
+		return e
+	}
+	return vm.ValidateBTCHeaderBatchForNetwork(bc.ctx, bc.tbcHeaderNode,
+		bc.tbcHeaderNodeConfig.Network, bc.tbcHeaderNodeConfig.GenesisHeightOffset, batch)
+}
+
 func (bc *BlockChain) getBitcoinAttributesForNextBlock(timestamp uint64) (*types.BtcAttributesDepositedTx, error) {
 	// Lock the chain mutex - all other code that modifies lightweight TBC node respects this mutex
 	// and locking this resource ensures that we can safely modify the lightweight TBC node to ensure
@@ -3077,6 +3325,16 @@ func (bc *BlockChain) getBitcoinAttributesForNextBlock(timestamp uint64) (*types
 
 	if !bc.chainConfig.IsHvm0(timestamp) {
 		// hVM enabled but not yet at activation time, nothing to do
+		return nil, nil
+	}
+
+	if bc.isAwaitingHvmSnapSync() {
+		// During an hVM snap sync the lightweight TBC view is owned and rebuilt by SnapSyncHvm (via
+		// AddExternalHeaders), so reading its BTC tip here would race that rebuild and could emit a BtcAttr
+		// tx bound to a half-restored view. Skip the (optional) BtcAttr tx for this block and retry on the
+		// next; the post-snap catch-up re-syncs the view. Mirrors the same latch gate in ProcessBlock and
+		// updateHvmHeaderConsensus. Safe under chainmu: chainmu->hvmSnapMu is the established lock order
+		// (ProcessBlock takes this latch under chainmu too), and hvmSnapMu is a leaf.
 		return nil, nil
 	}
 
@@ -3512,17 +3770,7 @@ func (bc *BlockChain) getBitcoinAttributesForNextBlock(timestamp uint64) (*types
 	for i := range headersToAdd {
 		headerPtrsForValidation[i] = &headersToAdd[i]
 	}
-	validPrefix, skipBuild, verr := longestEnforceableBTCHeaderPrefix(headerPtrsForValidation,
-		func(batch []*wire.BlockHeader) error {
-			// Proof-of-work first (context-free; the apply path rejects a header that fails proof-of-work
-			// regardless of the floor). A PoW RuleError truncates the prefix like a contextual one, so the
-			// sequencer never proposes a header whose hash does not meet its target.
-			if e := vm.CheckBTCHeaderBatchPoWForNetwork(bc.tbcHeaderNodeConfig.Network, batch); e != nil {
-				return e
-			}
-			return vm.ValidateBTCHeaderBatchForNetwork(bc.ctx, bc.tbcHeaderNode,
-				bc.tbcHeaderNodeConfig.Network, bc.tbcHeaderNodeConfig.GenesisHeightOffset, batch)
-		})
+	validPrefix, skipBuild, verr := longestEnforceableBTCHeaderPrefix(headerPtrsForValidation, bc.enforceableBTCBatch)
 	if skipBuild {
 		// The validator collapses any read error into ErrBTCHeaderContextUnavailable, losing the underlying
 		// identity. Defensive guard: if the chain's context has been cancelled, surface that (so
@@ -3650,14 +3898,14 @@ func (bc *BlockChain) getBitcoinAttributesForNextBlock(timestamp uint64) (*types
 		"RemoveType=%d, prevHeader=%x", len(*headersToAddSerialized), lastTip.Hash().String(), lastTip.Number.Uint64(),
 		rt, prevHeader.Hash[:]))
 
-	// A post-revert assertion was deliberately not added. Asserting on the returned value (prevHeader)
-	// would be wrong: RemoveExternalHeaders returns parentToRemovalSet (the parent of the first removed
-	// header), which equals the original light tip only on the same-chain case — in a fork/reorg it is
-	// the common ancestor — so `prevHeader.Hash == lightTipHash` would false-positive and crash on normal
-	// reorg handling. A re-read via BlockHeaderBest() compared to lightTipHash would be correct (the
-	// canonical tip is written unconditionally to tipAfterRemoval==lightTipHeader in all geometries) but
-	// is omitted as redundant: a nil error from RemoveExternalHeaders already implies its canonical-tip
-	// commit landed, and the emitted tx uses `canonical` from AddExternalHeaders, not the post-revert state.
+	// No post-revert assertion here, by design. Asserting on the returned value (prevHeader) would be
+	// wrong: RemoveExternalHeaders returns parentToRemovalSet (the parent of the first removed header),
+	// which equals the original light tip only on the same-chain case — in a fork/reorg it is the common
+	// ancestor — so `prevHeader.Hash == lightTipHash` would false-positive and crash on normal reorg
+	// handling. A re-read via BlockHeaderBest() compared to lightTipHash would be correct (the canonical
+	// tip is written unconditionally to tipAfterRemoval==lightTipHeader in all geometries) but is
+	// redundant: a nil error from RemoveExternalHeaders already implies its canonical-tip commit landed,
+	// and the emitted tx uses `canonical` from AddExternalHeaders, not the post-revert state.
 	canonHashAfterDepTx := canonical.BlockHash()
 	btcAttrDepTx, err := types.MakeBtcAttributesDepositedTx(canonHashAfterDepTx, headersToAdd)
 	if err != nil {
@@ -3751,10 +3999,10 @@ func (bc *BlockChain) walkHvmHeaderConsensusForward(currentHead *types.Header, n
 					// return path above leaves the upstream state id at the parent, and the
 					// canonical-tip-mismatch path even removes the headers it added), so headers[index]
 					// itself must not be unwound. Only the successfully-applied headers[index-1]..headers[1]
-					// are rolled back, in reverse order (mirroring walkHvmHeaderConsensusBack). The original
-					// code passed the constant headers[index] every iteration, repeatedly "unapplying" the
-					// failed block while leaving the real predecessors applied, corrupting the lightweight
-					// view. headers[0] is currentHead (applied by a previous call) and is preserved by
+					// are rolled back, in reverse order (mirroring walkHvmHeaderConsensusBack). Unwinding the
+					// constant headers[index] each iteration instead would repeatedly "unapply" the failed
+					// block while leaving the real predecessors applied, corrupting the lightweight view.
+					// headers[0] is currentHead (applied by a previous call) and is preserved by
 					// backIndex >= 1.
 					err := bc.unapplyHvmHeaderConsensusUpdate(headers[backIndex])
 					if err != nil {
@@ -3919,11 +4167,11 @@ func (bc *BlockChain) calculateHvmIndexerTipLagTestnet3(cursorHeader *wire.Block
 				}
 
 				if tempCursor.Timestamp.Unix()+(3600*5) < tipTimestamp {
-					// If we encounter a header with a timestamp more than 3 hours behind current tip,
+					// If we encounter a header with a timestamp more than 5 hours behind current tip (3600*5),
 					// stop here to avoid overly long waits on false triggers of difficulty bomb
 					// due to low mining difficulty or mining 1-diff blocks on 20-min interval as regular
 					log.Info(fmt.Sprintf("while walking back during difficulty bomb, block %s has a timestamp "+
-						"more than 3 hours in the past, breaking at lookback=%d", tempCursor.BlockHash().String(),
+						"more than 5 hours in the past, breaking at lookback=%d", tempCursor.BlockHash().String(),
 						lookback))
 					break
 				}
@@ -4068,10 +4316,20 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 					// Prepend so headers are in correct (ascending) order
 					headers = append([]*wire.BlockHeader{headerCursor}, headers...)
 					vm.TBCAttemptBlockRefetch(bc.ctx, headerCursor)
-				} else {
+				}
+				// Do NOT break when the full node already has this header: continue the back-walk so a NON-CONTIGUOUS
+				// gap (a present block above a deeper absent one) is still re-injected/refetched, rather than stopping
+				// at the first present block and missing the deeper hole. (In practice the full node's headers are
+				// contiguous from genesis — BlockHeadersInsert enforces linkage — so present blocks are simply skipped
+				// down to genesis; this is defensive against any future non-contiguous state. Bounded by the
+				// 100-iteration cap and the genesis/PrevBlock-NotFound guard below.)
+				headerCursor, _, err = bc.tbcHeaderNode.BlockHeaderByHash(bc.ctx, headerCursor.PrevBlock)
+				if err != nil || headerCursor == nil {
+					// Reached genesis (zero PrevBlock -> NotFound) or the lightweight node errored mid-walk (e.g. ctx
+					// cancelled on shutdown). Stop here rather than letting the swallowed error leave headerCursor nil
+					// and nil-deref headerCursor.BlockHash() on the next iteration.
 					break
 				}
-				headerCursor, _, err = bc.tbcHeaderNode.BlockHeaderByHash(bc.ctx, headerCursor.PrevBlock)
 			}
 
 			msgHeaders := &wire.MsgHeaders{
@@ -4080,7 +4338,11 @@ func (bc *BlockChain) updateFullTBCToLightweight() error {
 
 			bc.setMissingProgressionBlocks(msgHeaders)
 
-			_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(bc.ctx, msgHeaders)
+			// Best-effort injection so the full node's P2P fetcher can re-request the missing headers; log (don't fail)
+			// if it errors, since this function already returns the missing-header sentinel below.
+			if _, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(bc.ctx, msgHeaders); err != nil {
+				log.Warn("Best-effort injection of missing progression headers into the full TBC node failed", "err", err)
+			}
 
 			hvmFullTBCBehindGauge.Update(1)
 			return consensus.ErrFullTBCMissingBTCHeader
@@ -4370,7 +4632,7 @@ func (bc *BlockChain) updateHvmHeaderConsensus(newHead *types.Header, updateFull
 // wrote to disk — a consensus-divergence window (hVM precompile reads served from a Bitcoin view derived
 // from a rejected block) until the next canonical head re-drives updateHvmHeaderConsensus or a restart
 // triggers a full restore. The TBC commit deliberately precedes EVM execution (the hVM precompiles read
-// the advanced view during Process), so the fix is to revert on failure rather than reorder.
+// the advanced view during Process), so the correct response is to revert on failure rather than reorder.
 //
 // The revert target is `tbcHeader` (the pre-insert EVM tip), not the rejected block's parent: a rejected
 // reorg block leaves the node on the old canonical chain that tbcHeader represents, so reverting there is
@@ -5641,10 +5903,10 @@ func (bc *BlockChain) insertChain(chain types.Blocks, setHead bool, makeWitness 
 	// chainmu (as does every pen reader), so clearing here cannot race a reader. The entries are only
 	// needed for the duration of this call: every successfully-processed block is written to rawdb within
 	// its ProcessBlock, so once this call returns the disk-first accessors find it without the pen; a
-	// failed/rejected block must not be found and is correctly dropped. Previously the maps were never
-	// evicted, growing unbounded for the node's lifetime (a full *types.Block + *types.Header per distinct
-	// hash ever imported) -> heap exhaustion / OOM. Clearing on return bounds the pen to a single in-flight
-	// batch without changing in-call behaviour: every entry stays present for the whole loop below.
+	// failed/rejected block must not be found and is correctly dropped. Clearing on return bounds the pen
+	// to a single in-flight batch; without it the maps grow unbounded for the node's lifetime (a full
+	// *types.Block + *types.Header per distinct hash ever imported) -> heap exhaustion / OOM. In-call
+	// behaviour is unchanged: every entry stays present for the whole loop below.
 	defer func() {
 		clear(bc.tempBlocks)
 		clear(bc.tempHeaders)
@@ -5881,9 +6143,9 @@ func (bpr *blockProcessingResult) Witness() *stateless.Witness {
 // EVM state. Taking chainmu here serializes witness generation against import. The lock is
 // `chainmu.TryLock()`, mirroring insertChain/SetCanonical: per syncx.ClosableMutex semantics it blocks until
 // chainmu is free — so a witness request during an in-flight import waits for it — and returns false only
-// when the mutex is closed (the chain is stopping), which we surface as errChainStopped. The pre-Hemi
-// upstream had no shared-mutable hVM node, so its witness RPC needed no lock; this wrapper restores the
-// invariant for the fork.
+// when the mutex is closed (the chain is stopping), which we surface as errChainStopped. Upstream
+// go-ethereum has no shared-mutable hVM node, so its witness RPC needs no lock; this wrapper adds the lock
+// that the fork's shared lightweight TBC node requires.
 //
 // State on return: ProcessBlock's setHead=false revert restores the lightweight view to the former
 // canonical state in every case except one — when the witnessed block is a direct child of the current
@@ -6034,6 +6296,16 @@ func (bc *BlockChain) ProcessBlock(parentRoot common.Hash, block *types.Block, s
 			if block.NumberU64() != 0 {
 				log.Debug(fmt.Sprintf("Block != 0, getting parent by hash %s", block.ParentHash()))
 				parent = bc.GetHeaderByHash(block.ParentHash())
+				if parent == nil {
+					// The EVM parent header is absent from the chain DB for a non-genesis block. This never
+					// happens on the import path (insertChain resolves and dereferences the parent before
+					// calling ProcessBlock), so reaching here means a torn/inconsistent store. Return the
+					// recoverable sentinel instead of nil-dereferencing parent.Time and crashing the process:
+					// the block import fails cleanly and the corruption is logged.
+					log.Error(fmt.Sprintf("Parent %s of hVM block %s @ %d is nil; treating as corrupt hVM state",
+						block.ParentHash().String(), block.Hash().String(), block.NumberU64()))
+					return nil, consensus.ErrCorruptHVMHeaderOnlyModeState
+				}
 				if !bc.chainConfig.IsHvm0(parent.Time) {
 					// Parent is not hVM0, meaning this block is first activation
 					log.Debug(fmt.Sprintf("Block %s @ %d is the hVM activation block",
@@ -6108,8 +6380,8 @@ func (bc *BlockChain) ProcessBlock(parentRoot common.Hash, block *types.Block, s
 								// canonical lineage but the enforce-on forward walk to this fork `parent` re-judges
 								// its committed history invalid, and restore cannot reach a non-canonical parent.
 								// We cannot contextualize `parent`, so we cannot process this fork block — reject
-								// this import (node-local) rather than halt the fleet, per the family policy of
-								// never fleet-halting on a recoverable reject. (Unreachable on verified-clean
+								// this import (node-local) rather than halt the fleet, consistent with the other
+								// re-apply sites: never fleet-halt on a recoverable reject. (Unreachable on verified-clean
 								// mainnet; the view remains on the canonical CurrentBlock() tip, consistent.)
 								log.Error(fmt.Sprintf("Cannot move lightweight TBC to fork parent %s @ %d after a "+
 									"full restore (grandfathered-dirty fork history); rejecting this block's import "+

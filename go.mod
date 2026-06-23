@@ -140,7 +140,7 @@ require (
 	github.com/kr/text v0.2.0 // indirect
 	github.com/mattn/go-runewidth v0.0.13 // indirect
 	github.com/minio/sha256-simd v1.0.0 // indirect
-	github.com/mitchellh/go-homedir v1.1.0 // indirect
+	github.com/mitchellh/go-homedir v1.1.0
 	github.com/mitchellh/mapstructure v1.4.1 // indirect
 	github.com/mitchellh/pointerstructure v1.2.0 // indirect
 	github.com/naoina/go-stringutil v0.1.0 // indirect

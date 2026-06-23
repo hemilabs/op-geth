@@ -23,6 +23,7 @@ import (
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/stretchr/testify/require"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus"
 	"github.com/ethereum/go-ethereum/core/types"
 )
@@ -40,21 +41,20 @@ func emptyPresentBtcAttrBlock(t *testing.T, num int64, time uint64, parent *type
 	return types.NewBlockWithHeader(h).WithBody(types.Body{Transactions: types.Transactions{types.NewTx(btcAttr)}})
 }
 
-// TestHvmForwardWalkRollbackUnwindsPredecessors is the regression for the wrong-index unapply in
-// walkHvmHeaderConsensusForward's error-recovery loop. It drives a multi-block forward walk that applies
-// two predecessors (block1, block2) and then fails on block3 with ErrInvalidHVMHeaders, and asserts the
-// loop rolls the live TBC upstream-state-id back exactly to currentHead — i.e. it unwinds the
-// genuinely-applied predecessors headers[index-1..1], not the failing block headers[index].
+// TestHvmForwardWalkRollbackUnwindsPredecessors covers the error-recovery loop in
+// walkHvmHeaderConsensusForward. It drives a multi-block forward walk that applies two predecessors
+// (block1, block2) and then fails on block3 with ErrInvalidHVMHeaders, and asserts the loop rolls the live TBC
+// upstream-state-id back exactly to currentHead — i.e. it unwinds the genuinely-applied predecessors
+// headers[index-1..1], not the failing block headers[index].
 //
-// Pre-fix the loop called unapplyHvmHeaderConsensusUpdate(headers[index]) — the constant failing block —
-// on every iteration instead of headers[backIndex]. With the btcAttrDepIsHeaderless guard also in place,
-// that loop would no-op-unapply block3 twice (rolling the state-id to block3's parent, block2) and leave
-// block1/block2 applied — so the state-id would end at block2, not currentHead. This test therefore fails
-// deterministically on the pre-fix (constant index) code and passes only once the loop walks back the
-// predecessors via backIndex.
+// The recovery loop must unapply headers[backIndex] (the applied predecessors, backIndex varying 2 then 1), NOT the
+// constant failing block headers[index]. Unapplying the constant index — with the btcAttrDepIsHeaderless guard in
+// place — would no-op-unapply block3 twice (rolling the state-id to block3's parent, block2) and leave block1/block2
+// applied, so the state-id would end at block2, not currentHead. This test fails deterministically under the
+// constant-index form and passes only when the loop walks back the predecessors via backIndex.
 //
 // Two predecessors (failure at slice index 3) are used so the recovery loop iterates twice with distinct
-// backIndex values (2 then 1), exercising the varying-vs-constant index that is the heart of the fix.
+// backIndex values (2 then 1), exercising the varying-vs-constant index distinction at the core of correct recovery.
 // Empty-but-present blocks keep the walk on the no-AddExternalHeaders path so no full TBC node is required;
 // header-removal mechanics on unapply are covered by the empty-but-present round-trip tests.
 func TestHvmForwardWalkRollbackUnwindsPredecessors(t *testing.T) {
@@ -109,19 +109,60 @@ func TestHvmForwardWalkRollbackUnwindsPredecessors(t *testing.T) {
 	require.ErrorIs(t, err, consensus.ErrInvalidHVMHeaders,
 		"block3's wrong canonical-tip claim must fail as ErrInvalidHVMHeaders")
 
-	// The wrong-index unapply assertion: the recovery loop unwound the applied predecessors (block1, block2)
-	// and the state-id is restored exactly to currentHead. Pre-fix (constant headers[index]) this would be
-	// block2 (predecessors left applied, block3 no-op-unapplied to its parent) -> assertion fails.
+	// The recovery loop must unwind the applied predecessors (block1, block2) and restore the state-id exactly to
+	// currentHead. A constant-headers[index] unapply would instead leave it at block2 (predecessors left applied,
+	// block3 no-op-unapplied to its parent).
 	sidEnd, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
 	require.NoError(t, err)
 	require.Equal(t, currentHead.Hash().Bytes(), sidEnd[:],
-		"wrong-index unapply fix: error-recovery must unwind the applied predecessors back to currentHead, not the failing block")
+		"error-recovery must unwind the applied predecessors back to currentHead, not the failing block")
 	require.NotEqual(t, block2.Hash().Bytes(), sidEnd[:],
-		"wrong-index unapply fix: a state-id left at block2 is the pre-fix signature (predecessors not unwound)")
+		"a state-id left at block2 means the predecessors were not unwound (constant-index unapply)")
 
 	// The lightweight tip never moved (empty-present blocks add no headers); it must still be the checkpoint.
 	_, tipEnd, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
 	require.NoError(t, err)
 	tipEndHash := tipEnd.BlockHash()
 	require.Equal(t, canonTip[:], tipEndHash[:], "tip must be unchanged after the rolled-back walk")
+}
+
+// TestWalkHvmHeaderConsensusForwardBadGeometry pins the operator-facing "bad geometry" diagnostic emitted by
+// walkHvmHeaderConsensusForward when currentHead is at or above newHead (blockchain.go ~3919). This guard is the
+// first line of the function — reached before any TBC interaction — so it is trivially corpus-free. The string is a
+// stable diagnostic external tooling may match; no test pinned it (existing walkForward tests pass valid geometry).
+func TestWalkHvmHeaderConsensusForwardBadGeometry(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	higher := &types.Header{Number: big.NewInt(20), Time: hvm0Time}
+	lower := &types.Header{Number: big.NewInt(15), Time: hvm0Time}
+	sidBefore, sErr := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, sErr)
+	err := chain.walkHvmHeaderConsensusForward(higher, lower)
+	require.Error(t, err)
+	sidAfter, sErr := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, sErr)
+	require.Equal(t, sidBefore[:], sidAfter[:], "the bad-geometry guard returns BEFORE any work; it must not mutate the state-id")
+	require.Contains(t, err.Error(), "Cannot walk hVM consensus forewards", "the bad-geometry diagnostic must be emitted")
+	require.Contains(t, err.Error(), "bad geometry")
+
+	// Equal height is also bad geometry (the guard is >=, not >).
+	require.ErrorContains(t, chain.walkHvmHeaderConsensusForward(lower, lower), "bad geometry",
+		"equal-height currentHead/newHead must also be rejected as bad geometry")
+}
+
+// TestWalkHvmHeaderConsensusForwardPathNotFound pins the "unable to find a path" diagnostic emitted when
+// headersBetweenBlocks cannot connect currentHead to newHead (a missing intermediate header; blockchain.go ~3936).
+// Corpus-free: newHead's parent hash resolves to nothing in disk + holding pen, so headersBetweenBlocks fails on the
+// first walk-back step.
+func TestWalkHvmHeaderConsensusForwardPathNotFound(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	currentHead := &types.Header{Number: big.NewInt(10), Time: hvm0Time}
+	// newHead is 2 above currentHead, but its parent (the intermediate at #11) is absent from disk + holding pen.
+	newHead := &types.Header{Number: big.NewInt(12), Time: hvm0Time + 2, ParentHash: common.HexToHash("0xdeadbeefdeadbeef")}
+	err := chain.walkHvmHeaderConsensusForward(currentHead, newHead)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "unable to find a path", "the path-not-found diagnostic must be emitted")
 }

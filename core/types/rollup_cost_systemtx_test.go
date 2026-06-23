@@ -359,3 +359,35 @@ func TestCalcDAFootprintJovianActivationBlock(t *testing.T) {
 		})
 	}
 }
+
+// TestSystemTxPredicateConsistency pins the gas-exempt routing that keeps every hVM block from halting. The PoP
+// (0x7D) and BtcAttr (0x7C) inner txs define isSystemTx()->false (annotated "Compatibility - Unused" — the comment
+// is WRONG: it is load-bearing). state_transition's gas-exempt branch (entered by deposit/PoP/BtcAttr) returns
+// ErrSystemTxNotSupported post-Regolith iff IsSystemTx()==true. Every hVM block force-includes a BtcAttr and many a
+// PoP, and production runs Regolith, so a flip of either isSystemTx() to true would halt the fleet on essentially
+// every block. No test asserts IsSystemTx() for these types. Also pin the dual the gas-exempt branch relies on:
+// IsZeroDAFootprintTx()==true AND IsSystemTx()==false together; and that the DepositTx field IS honored (not a
+// constant false).
+func TestSystemTxPredicateConsistency(t *testing.T) {
+	pop := systemTxPopTx()
+	btc := systemTxBtcAttrTx(t)
+
+	// The load-bearing routing: 0x7D/0x7C must NOT be OP system txs (else preCheck -> ErrSystemTxNotSupported).
+	require.False(t, pop.IsSystemTx(), "PoP-payout (0x7D) must not be an OP system tx (would halt post-Regolith)")
+	require.False(t, btc.IsSystemTx(), "BtcAttr (0x7C) must not be an OP system tx (would halt every hVM block)")
+
+	// The gas-exempt branch consumes these three types; each must be zero-DA AND non-system simultaneously.
+	depNonSys := NewTx(&DepositTx{Value: big.NewInt(0), Gas: 21000})
+	for _, tc := range []struct {
+		name string
+		tx   *Transaction
+	}{{"deposit", depNonSys}, {"pop", pop}, {"btcAttr", btc}} {
+		require.Truef(t, tc.tx.IsZeroDAFootprintTx(), "%s must be zero-DA (gas-exempt system tx)", tc.name)
+		require.Falsef(t, tc.tx.IsSystemTx(), "%s must NOT be an OP system tx (gas-exempt routing)", tc.name)
+	}
+
+	// The DepositTx.IsSystemTransaction field IS honored — proving IsSystemTx is genuinely wired, not constant-false.
+	require.True(t, NewTx(&DepositTx{Value: big.NewInt(0), Gas: 21000, IsSystemTransaction: true}).IsSystemTx(),
+		"a DepositTx with IsSystemTransaction=true must report IsSystemTx()==true")
+	require.False(t, NewTx(&LegacyTx{}).IsSystemTx(), "a normal LegacyTx is not a system tx")
+}
