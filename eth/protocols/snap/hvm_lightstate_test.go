@@ -65,7 +65,7 @@ func newHvmTestSyncer(t *testing.T) (*Syncer, *[]hvmSnapCall) {
 	var calls []hvmSnapCall
 	s := NewSyncer(rawdb.NewMemoryDatabase(), rawdb.HashScheme, func(btcTip *chainhash.Hash, hvmTip *types.Header) {
 		calls = append(calls, hvmSnapCall{btcTip: btcTip, hvmTip: hvmTip})
-	})
+	}, nil)
 	return s, &calls
 }
 
@@ -454,7 +454,7 @@ func TestOnHvmLightStateConcurrentValidResponses(t *testing.T) {
 	var count int64
 	s := NewSyncer(rawdb.NewMemoryDatabase(), rawdb.HashScheme, func(*chainhash.Hash, *types.Header) {
 		atomic.AddInt64(&count, 1)
-	})
+	}, nil)
 	const id = uint64(77)
 
 	btcTip := nonZeroTip()

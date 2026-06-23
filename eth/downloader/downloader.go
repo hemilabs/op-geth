@@ -239,7 +239,7 @@ type BlockChain interface {
 }
 
 // New creates a new downloader to fetch hashes and blocks from remote peers.
-func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func()) *Downloader {
+func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer peerDropFn, success func(), requestBtcBlocksFunc func(hash common.Hash)) *Downloader {
 	// quitCh is closed by Terminate() (during handler.Stop(), before it waits on the snap peer-handler
 	// goroutines). Pass it into SnapSyncHvm so a snap-sync attempt wedged on an unreachable Bitcoin tip
 	// aborts on shutdown rather than blocking it.
@@ -260,7 +260,7 @@ func New(stateDb ethdb.Database, mux *event.TypeMux, chain BlockChain, dropPeer 
 		dropPeer:          dropPeer,
 		headerProcCh:      make(chan *headerTask, 1),
 		quitCh:            quitCh,
-		SnapSyncer:        snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc),
+		SnapSyncer:        snap.NewSyncer(stateDb, chain.TrieDB().Scheme(), hVMSnapFunc, requestBtcBlocksFunc),
 		stateSyncStart:    make(chan *stateSync),
 		syncStartBlock:    chain.CurrentSnapBlock().Number.Uint64(),
 	}

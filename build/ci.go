@@ -386,7 +386,7 @@ func doTest(cmdline []string) {
 	gotest.Args = append(gotest.Args, "-tags=ckzg")
 
 	// Enable integration-tests
-	gotest.Args = append(gotest.Args, "-tags=integrationtests")
+	gotest.Args = append(gotest.Args, "-tags=integrationtests,eth_test")
 
 	// Test a single package at a time. CI builders are slow
 	// and some tests run into timeouts under load.

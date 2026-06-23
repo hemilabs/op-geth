@@ -52,7 +52,7 @@ func newHvmWaitDownloader(t *testing.T) (*Downloader, *hvmStubChain) {
 	chain := &hvmStubChain{}
 	d := &Downloader{
 		blockchain: chain,
-		SnapSyncer: snap.NewSyncer(rawdb.NewMemoryDatabase(), rawdb.HashScheme, nil),
+		SnapSyncer: snap.NewSyncer(rawdb.NewMemoryDatabase(), rawdb.HashScheme, nil, nil),
 		cancelCh:   make(chan struct{}),
 		quitCh:     make(chan struct{}),
 	}

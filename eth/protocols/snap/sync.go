@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	gomath "math"
 	"math/big"
 	"math/rand"
@@ -514,7 +515,8 @@ type Syncer struct {
 	pend sync.WaitGroup // Tracks network request goroutines for graceful shutdown
 	lock sync.RWMutex   // Protects fields that can change outside of sync (peers, reqs, root)
 
-	snapSyncHvm func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
+	snapSyncHvm              func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
+	requestBtcBlockFromPeers func(hash common.Hash)
 
 	// hvmLightStateReqs maps each in-flight hVM light-state request ID to the L2 tip (pivot) hash it
 	// was issued for (RequestHvmState broadcasts one ID to all peers). OnHvmLightState only processes a
@@ -525,7 +527,7 @@ type Syncer struct {
 
 // NewSyncer creates a new snapshot syncer to download the Ethereum state over the
 // snap protocol.
-func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)) *Syncer {
+func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header), requestBtcBlocksFunc func(hash common.Hash)) *Syncer {
 	return &Syncer{
 		db:     db,
 		scheme: scheme,
@@ -554,8 +556,9 @@ func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTi
 
 		extProgress: new(SyncProgress),
 
-		snapSyncHvm:       snapSyncHvmFunc,
-		hvmLightStateReqs: make(map[uint64]common.Hash),
+		snapSyncHvm:              snapSyncHvmFunc,
+		requestBtcBlockFromPeers: requestBtcBlocksFunc,
+		hvmLightStateReqs:        make(map[uint64]common.Hash),
 	}
 }
 
@@ -2998,6 +3001,18 @@ func (s *Syncer) OnHvmLightState(peer SyncPeer, id uint64, headers []*types.Head
 		// dereferencing a nil pointer below.
 		log.Warn(fmt.Sprintf("hVM light state response block has no Bitcoin Attributes Deposited tx from peer %s", peer.ID()))
 		return fmt.Errorf("hVM light state response block has no Bitcoin Attributes Deposited tx")
+	}
+
+	if s.requestBtcBlockFromPeers != nil {
+		go s.requestBtcBlockFromPeers(common.Hash(btcAttrDep.CanonicalTip))
+		for _, rawHeader := range btcAttrDep.Headers {
+			var bh wire.BlockHeader
+			if err := bh.Deserialize(bytes.NewReader(rawHeader[:])); err != nil {
+				log.Warn("hVM light state failed to parse Bitcoin header for peer request", "err", err)
+				continue
+			}
+			go s.requestBtcBlockFromPeers(common.Hash(bh.BlockHash()))
+		}
 	}
 
 	canonicalTip := btcAttrDep.CanonicalTip

@@ -543,6 +543,26 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	return eth, nil
 }
 
+func (e *Ethereum) SendRequestForHashToAllPeers(hash common.Hash) {
+	log.Trace("BTC block not found in TBC, making peer requests for block", "hash", hash)
+
+	for _, peer := range e.handler.peers.all() {
+		if err := peer.RequestBtcBlocks([]common.Hash{hash}); err != nil {
+			log.Error("Failed to request BTC block from peer", "peer", peer.ID(), "hash", hash, "err", err)
+		}
+	}
+}
+
+func (e *Ethereum) RequestBitcoinBlocksFromPeers(hash common.Hash) bool {
+	if available := vm.BlockAvailableByCommonHash(hash); available {
+		return true
+	}
+
+	go e.SendRequestForHashToAllPeers(hash)
+
+	return false
+}
+
 func makeExtraData(extra []byte) []byte {
 	if len(extra) == 0 {
 		// create default extradata

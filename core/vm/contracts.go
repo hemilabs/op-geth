@@ -226,6 +226,24 @@ func SetupTBCFullNode(ctx context.Context, cfg *tbc.Config) error {
 	return nil
 }
 
+func BlockAvailableByCommonHash(hash common.Hash) bool {
+	var ch chainhash.Hash
+	if err := ch.SetBytes(hash.Bytes()); err != nil {
+		// should not happen, fail loudly if it does
+		log.Crit("Failed to convert hash for TBC lookup", "hash", hash, "err", err)
+	}
+	available, err := TBCFullNode.FullBlockAvailable(MainCtx, ch)
+	if err != nil {
+		// also should not happen, fail loudly if it does
+		log.Crit("Failed to check BTC block availability before peer request", "hash", hash, "err", err)
+	} else if available {
+		log.Trace("BTC block already in TBC, skipping peer request", "hash", hash)
+		return true
+	}
+
+	return false
+}
+
 // Equality function which can be used to compare hashes in-line without needing to store in a variable
 // to get pointer for using the built-in IsEqual function.
 // TODO: review, better way to compare hashes where this is called?
@@ -571,8 +589,11 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 
 	missingFullBlocks := make([]wire.BlockHeader, 0)
 
-	log.Info(fmt.Sprintf("TBCBlocksAvailableToHeader called with endingHeader=%s, UTXOs synced to: "+
-		"%s and Txs synced to: %s", endingHeader.BlockHash().String(), utxoSync.Hash.String(), txSync.Hash.String()))
+	log.Trace("TBCBlocksAvailableToHeader called with",
+		"endingHeader", endingHeader.BlockHash().String(),
+		"UTXOS Synced to", utxoSync.Hash.String(),
+		"Txs synced to", txSync.Hash.String(),
+	)
 
 	// When both indexers are at the same header, this will be that header.
 	// If the indexers are at different positions, this will be the common
