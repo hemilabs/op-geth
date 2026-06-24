@@ -5,18 +5,6 @@
 
 package core
 
-// Shared body of the apply-path differential-replay gate, parameterized by network. Both the mainnet and testnet3
-// replay tests call replayBtcAttrThroughApplyPath, running real committed history end-to-end through the full apply
-// path: AddExternalHeaders, cumulative-work canonical-tip selection, the per-block cbh==CanonicalTip claim check,
-// the contextual-difficulty validator (enforce=true), and upstream-state-id chaining. The validator-only vm
-// harnesses do NOT recompute the canonical tip, so this is the only lane covering that computation plus the
-// per-block cbh==CanonicalTip identity over real history.
-//
-// The committed fixtures are a single LINEAR chain, so this exercises only the trivial extend-the-tip case — not
-// the competing-branch / equal-work tie-break selection arm (real committed history has no forks). The
-// wrong-CanonicalTip REJECT/rollback side is covered by the synthetic regtest tests
-// (TestHvmApplyPathRollsBackOnWrongCanonicalTipRegtest and the curTip!=CanonicalTip self-heal tests).
-
 import (
 	"bufio"
 	"bytes"
@@ -32,18 +20,55 @@ import (
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
 	"github.com/btcsuite/btcd/wire"
-	"github.com/stretchr/testify/require"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/consensus/ethash"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/params"
-
 	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/stretchr/testify/require"
 )
 
+// Apply-path gate (mainnet): replay Bitcoin Attributes Deposited transactions committed on Hemi mainnet
+// through the full hVM apply path applyHvmHeaderConsensusUpdate (enforce=true): the contextual-difficulty
+// validator, AddExternalHeaders, the cumulative-work canonical-tip claim check, and upstream-state-id chaining.
+// Unlike the validator-only check in core/vm/btcdiff_mainnet_history_verify_test.go, this exercises the entire
+// hVM state transition against a real lightweight TBC node seeded at the mainnet hVM genesis. The shared body
+// lives in blockchain_hvm_replay_common_test.go; see blockchain_hvm_testnet3_replay_test.go for the shipped
+// network.
+//
+// By default replays the bounded fixture vm/testdata/btcattr_mainnet_history.ndjson (relative to ./core),
+// FAILING (not skipping) if absent. HEMI_MAINNET_VERIFY overrides the path for the live-tip reconstruction lane
+// (history rebuilt by cmd/hvm-btcattr-reconstruct from a node's real L2 chaindata).
+func TestHvmReplaysAllMainnetBtcAttrThroughApplyPath(t *testing.T) {
+	replayBtcAttrThroughApplyPath(t, replayParams{
+		envPrefix: "HEMI_MAINNET",
+		// The only lane that runs real committed history through the canonical-tip computation
+		// (AddExternalHeaders + cumulative-work CanonicalTip selection + per-block tip-claim). The
+		// linear fixture exercises only the extend-the-tip case; the tie-break/reject side is covered
+		// by synthetic regtest tests. Path is relative to the ./core package dir.
+		defaultPath:      "vm/testdata/btcattr_mainnet_history.ndjson",
+		defaultCommitted: true,                                                               // absence FAILS, never skips
+		expectTipHash:    "00000000000000000002358da40837b121dbf6974a73980728781562258f40d3", // real mainnet block 887040
+		network:          "mainnet",
+		genesisHeight:    vm.MainnetHvmGenesisHeight, // shared source of truth (core/vm/hvm_genesis.go)
+		genesisHeader:    vm.MainnetHvmGenesisHeader,
+		genesisHash:      vm.MainnetHvmGenesisHash,
+	})
+}
+
+// Shared body of the apply-path differential-replay gate, parameterized by network. Both the mainnet and testnet3
+// replay tests call replayBtcAttrThroughApplyPath, running real committed history end-to-end through the full apply
+// path: AddExternalHeaders, cumulative-work canonical-tip selection, the per-block cbh==CanonicalTip claim check,
+// the contextual-difficulty validator (enforce=true), and upstream-state-id chaining. The validator-only vm
+// harnesses do NOT recompute the canonical tip, so this is the only lane covering that computation plus the
+// per-block cbh==CanonicalTip identity over real history.
+//
+// The committed fixtures are a single LINEAR chain, so this exercises only the trivial extend-the-tip case — not
+// the competing-branch / equal-work tie-break selection arm (real committed history has no forks). The
+// wrong-CanonicalTip REJECT/rollback side is covered by the synthetic regtest tests
+// (TestHvmApplyPathRollsBackOnWrongCanonicalTipRegtest and the curTip!=CanonicalTip self-heal tests).
 type replayParams struct {
 	envPrefix        string // "HEMI_MAINNET" / "HEMI_TESTNET3" (drives _VERIFY/_EXPECT_TIP_HEIGHT/_EXPECT_TIP_HASH)
 	defaultPath      string // default fixture path when _VERIFY is unset
@@ -256,4 +281,46 @@ func replayBtcAttrThroughApplyPath(t *testing.T, p replayParams) {
 		"replay span [%d,%d] reaches no ENFORCED retarget boundary: highest boundary %d < enforce floor %d (genesis+clearance) — the difficulty RECOMPUTE was deferred, never enforced; fixture must span a boundary above the floor-clearance band", p.genesisHeight, tipHeight, highestBoundary, enforceFrom)
 	t.Logf("REPLAYED %s: %d BtcAttr txs (%d headers) through applyHvmHeaderConsensusUpdate (enforce=true); all accepted; final hVM BTC tip = %s @ height %d",
 		p.network, n, sumHeaders, tipAfter.BlockHash().String(), tipHeight)
+}
+
+// Testnet3 apply-path differential-replay gate. testnet3 is the shipped default network (eth/backend.go defaults
+// the consensus node to it via config.TBCNetwork -> ethconfig.DefaultTBCNetwork). It replays every committed
+// BtcAttr batch through the byte-identical apply path used by the mainnet replay (shared body in
+// blockchain_hvm_replay_common_test.go), so the cumulative-work canonical-tip selection and the per-block
+// cbh==CanonicalTip reject — neither of which the validator-only vm harness recomputes — are differentially
+// re-validated on the network nodes actually run. testnet3 is the only network whose params enable
+// ReduceMinDifficulty, so applying its committed history is the only apply-path run that exercises that rule
+// end-to-end. The bounded fixture includes 116 diff-1 headers above the floor, pinned by the validator integrity
+// guard TestTestnet3HistoryFixtureIsContiguousAndConnectsToGenesis (which asserts the count, not this gate).
+//
+// Orphans: early testnet3 history contains a few genuinely non-contiguous (orphaned-parent) committed headers
+// (see core/vm/btcdiff_testnet3_history_verify_test.go). The apply path REJECTS an unconnected batch
+// (ErrBTCBatchUnconnected -> ErrInvalidHVMHeaders), so a full-history replay fatals at the first such batch.
+// That fatal is the authoritative signal (the validator-only gate only diagnoses it); resolving it means either
+// adding the missing canonical link to the fixture (a benign reconstruction gap) or confirming a genuine orphan.
+// Defaults to the committed bounded fixture vm/testdata/btcattr_testnet3_history.ndjson (contiguous, so no orphan
+// fatal), FAILING if absent; HEMI_TESTNET3_VERIFY overrides for the live-tip lane.
+// Single-sourced from the shared vm.Testnet3HvmGenesis* symbols so every testnet3-genesis copy (this apply-path
+// replay, the validator gate, and — transitively via TestDifferentialReplayGateTestnet3GenesisMatchesProductionDefault —
+// ethconfig.Defaults/the checkpoint) tracks one constant. A re-genesis then fails with a clear compile/parity
+// signal instead of a confusing "fixture unconnected" error.
+const (
+	testnet3HvmGenesisHeightReplay = vm.Testnet3HvmGenesisHeight
+	testnet3HvmGenesisHeaderReplay = vm.Testnet3HvmGenesisHeader
+	testnet3HvmGenesisHashReplay   = vm.Testnet3HvmGenesisHash
+)
+
+func TestHvmReplaysAllTestnet3BtcAttrThroughApplyPath(t *testing.T) {
+	replayBtcAttrThroughApplyPath(t, replayParams{
+		envPrefix: "HEMI_TESTNET3",
+		// CI-resident: replay the committed testnet3 bounded fixture through the apply path. Path is
+		// relative to the ./core package dir.
+		defaultPath:      "vm/testdata/btcattr_testnet3_history.ndjson",
+		defaultCommitted: true,                                                               // absence FAILS, never skips
+		expectTipHash:    "0000000000003b8315976d4a9412a8bc6a3a2cbdb9e748d886987b82e89aa68f", // real testnet3 block 3525984
+		network:          "testnet3",
+		genesisHeight:    testnet3HvmGenesisHeightReplay,
+		genesisHeader:    testnet3HvmGenesisHeaderReplay,
+		genesisHash:      testnet3HvmGenesisHashReplay,
+	})
 }

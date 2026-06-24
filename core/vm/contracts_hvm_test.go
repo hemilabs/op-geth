@@ -18,17 +18,15 @@ package vm
 
 import (
 	"crypto/sha256"
+	"math/big"
 	"testing"
 
 	"github.com/btcsuite/btcd/wire"
-	"github.com/stretchr/testify/require"
-
-	"math/big"
-
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/state"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
+	"github.com/stretchr/testify/require"
 )
 
 // These tests lock in the recover() boundary that contains faults reached through hVM precompiles on
@@ -453,4 +451,20 @@ func TestHvmPrecompileNameDistinctAndNonEmpty(t *testing.T) {
 		names[n] = true
 	}
 	require.Len(t, names, 10, "all 10 hVM precompile Name() values must be distinct")
+}
+
+// BlockAvailableByCommonHash is a best-effort peer-fetch helper (not a consensus path), so when the full
+// node is not initialized it must degrade to "available" (skip the futile peer request) rather than
+// log.Crit-ing like the precompiles or nil-dereferencing TBCFullNode. This pins that guard against a
+// true->false flip or its removal.
+func TestBlockAvailableByCommonHashNilFullNode(t *testing.T) {
+	orig := TBCFullNode
+	TBCFullNode = nil
+	defer func() { TBCFullNode = orig }()
+
+	var available bool
+	require.NotPanics(t, func() {
+		available = BlockAvailableByCommonHash(common.Hash{0x01})
+	}, "must not nil-deref TBCFullNode when the full node is not initialized")
+	require.True(t, available, "with no full node, the helper must return true (skip the peer request), not false")
 }

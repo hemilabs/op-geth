@@ -16,6 +16,35 @@
 
 package core
 
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"log/slog"
+	"math/big"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/consensus"
+	"github.com/ethereum/go-ethereum/consensus/ethash"
+	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
+	"github.com/ethereum/go-ethereum/log"
+	"github.com/hemilabs/heminetwork/database"
+	"github.com/hemilabs/heminetwork/service/tbc"
+	"github.com/stretchr/testify/require"
+	"github.com/syndtr/goleveldb/leveldb"
+)
+
 // Corrupt-state classification of tbc.AddExternalHeaders errors on the hVM apply path.
 //
 // History (verified against git):
@@ -27,31 +56,11 @@ package core
 //     *errorString that can never equal the TBC node's typed database.NotFoundError/DuplicateError, so the
 //     corrupt branch was dead and every AddExternalHeaders error collapsed to ErrInvalidHVMHeaders,
 //     false-rejecting canonical blocks (duplicate re-applies and torn stores) instead of self-healing.
+//
 // The fix uses typed errors.As matching plus a connectivity discriminator (NotFound->corrupt only when
 // connectivity was confirmed, else bad-block) plus idempotent DuplicateError handling. Do not collapse it
 // back to a single errors.Is(NotFoundError(...)) shortcut: that drops the discriminator and reintroduces
 // the #31 orphan self-heal loop. These tests pin the typed, connectivity-aware mapping.
-
-import (
-	"context"
-	"errors"
-	"fmt"
-	"math/big"
-	"sync"
-	"testing"
-	"time"
-
-	"github.com/btcsuite/btcd/wire"
-	"github.com/stretchr/testify/require"
-	"github.com/syndtr/goleveldb/leveldb"
-
-	"github.com/ethereum/go-ethereum/consensus"
-	"github.com/ethereum/go-ethereum/core/types"
-	"github.com/ethereum/go-ethereum/core/vm"
-
-	"github.com/hemilabs/heminetwork/database"
-)
-
 // TestClassifyAddExternalHeadersError pins the pure consensus-binding classifier without a torn leveldb.
 // Decisive cases: a database.NotFoundError maps to corrupt only when connectivity was confirmed (else bad
 // block); a database.DuplicateError is always idempotent regardless of connectivity; and a plain
@@ -705,4 +714,906 @@ func TestGetMissingBtcBlocksRaceWithReset(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// Bad-block ROUTING side-effect (the caller-side disposition of the apply error classes). walkHvmHeaderConsensusForward
+// must reportBlock (rawdb.WriteBadBlock) a block that fails with ErrInvalidHVMHeaders/Format — so it is recorded as
+// permanently bad and never retried — while UNWOUND recoverable predecessors and an ErrCorrupt (torn store) must NOT
+// be banned (a permanent ban would defeat the self-heal). The apply-side returns are pinned elsewhere; the
+// caller-side reportBlock disposition is what this covers (no other hVM test references ReadBadBlock/WriteBadBlock).
+func TestHvmForwardWalkBadBlockRouting(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a real lightweight TBC node")
+	}
+	const hvm0Time = uint64(1000)
+
+	// POSITIVE: a wrong-canonical-tip block (ErrInvalidHVMHeaders) is reportBlock'd; the unwound recoverable
+	// predecessors are NOT.
+	t.Run("invalid-headers-bans-only-the-offending-block", func(t *testing.T) {
+		chain, lightTip := newHvmTestChainWithLightTBC(t, hvm0Time)
+		canonTip := lightTip.BlockHash()
+		var wrongTip chainhash.Hash
+		for i := range wrongTip {
+			wrongTip[i] = 0x42
+		}
+		preActivation := &types.Header{Number: big.NewInt(10), Time: hvm0Time - 1}
+		currentHead := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: preActivation.Hash()})
+		block1 := emptyPresentBtcAttrBlock(t, 12, hvm0Time+1, currentHead.Header(), canonTip)
+		block2 := emptyPresentBtcAttrBlock(t, 13, hvm0Time+2, block1.Header(), canonTip)
+		block3 := emptyPresentBtcAttrBlock(t, 14, hvm0Time+3, block2.Header(), wrongTip)
+		for _, b := range []*types.Block{currentHead, block1, block2, block3} {
+			chain.tempBlocks[b.Hash().String()] = b
+			chain.tempHeaders[b.Hash().String()] = b.Header()
+		}
+		chain.tempHeaders[preActivation.Hash().String()] = preActivation
+		chain.tempBlocks[preActivation.Hash().String()] = types.NewBlockWithHeader(preActivation)
+		require.NoError(t, chain.applyHvmHeaderConsensusUpdate(currentHead.Header(), false, true))
+
+		require.ErrorIs(t, chain.walkHvmHeaderConsensusForward(currentHead.Header(), block3.Header()), consensus.ErrInvalidHVMHeaders)
+
+		require.NotNil(t, rawdb.ReadBadBlock(chain.db, block3.Hash()), "the offending (invalid-headers) block must be reportBlock'd")
+		require.Nil(t, rawdb.ReadBadBlock(chain.db, block1.Hash()), "an unwound recoverable predecessor must NOT be banned")
+		require.Nil(t, rawdb.ReadBadBlock(chain.db, block2.Hash()), "an unwound recoverable predecessor must NOT be banned")
+		require.Nil(t, rawdb.ReadBadBlock(chain.db, currentHead.Hash()), "the common-ancestor head must NOT be banned")
+	})
+
+	// NEGATIVE: an ErrCorrupt (torn store / orphaned prior-state) must NOT ban the block — a permanent ban would
+	// defeat the self-heal that recovers from a corrupt view.
+	t.Run("corrupt-state-does-not-ban", func(t *testing.T) {
+		chain, lightTip := newHvmTestChainWithLightTBC(t, hvm0Time)
+		canonTip := lightTip.BlockHash()
+		// Point the upstream-state-id at an orphaned hash whose block is absent -> the next apply's prior-state
+		// guard returns ErrCorruptHVMHeaderOnlyModeState.
+		var orphan [32]byte
+		orphan[0] = 0x77
+		require.NoError(t, chain.tbcHeaderNode.SetUpstreamStateId(chain.ctx, orphan))
+
+		preActivation := &types.Header{Number: big.NewInt(10), Time: hvm0Time - 1}
+		currentHead := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: preActivation.Hash()})
+		target := emptyPresentBtcAttrBlock(t, 12, hvm0Time+1, currentHead.Header(), canonTip)
+		for _, b := range []*types.Block{currentHead, target} {
+			chain.tempBlocks[b.Hash().String()] = b
+			chain.tempHeaders[b.Hash().String()] = b.Header()
+		}
+		chain.tempHeaders[preActivation.Hash().String()] = preActivation
+		chain.tempBlocks[preActivation.Hash().String()] = types.NewBlockWithHeader(preActivation)
+
+		err := chain.walkHvmHeaderConsensusForward(currentHead.Header(), target.Header())
+		require.ErrorIs(t, err, consensus.ErrCorruptHVMHeaderOnlyModeState, "an orphaned prior-state must surface as recoverable corrupt")
+		require.Nil(t, rawdb.ReadBadBlock(chain.db, target.Hash()), "a corrupt-state (recoverable) error must NOT permanently ban the block")
+	})
+}
+
+// Upstream-state-id chaining strictness: the apply path's last-line backstop. When the prior-state block resolves
+// (check != nil) but its hash != the target block's ParentHash — a skipped block (apply N+2 while the view is at N)
+// or a stale/forked parent — applyHvmHeaderConsensusUpdate must FAIL-STOP (hvmMigrationAwareCrit -> log.Crit ->
+// os.Exit), never silently commit the target's BTC headers onto the wrong prior state. The check==nil arm
+// (orphaned prior-state) is covered; this sibling arm (resolves-but-mismatches) is the chaining enforcement and is
+// asserted by no other test (the empty-present sibling test only proves the crit is AVOIDED). A deleted/weakened guard would
+// silently mis-commit and the suite would stay green; log.Crit cannot be caught in-process, hence the re-exec.
+const hvmChainingCritChildEnv = "HVM_APPLY_PARENT_MISMATCH_CHILD"
+
+// TestApplyHvmHeaderParentMismatchCritChild is the subprocess child for TestApplyHvmHeaderParentMismatchCrit.
+func TestApplyHvmHeaderParentMismatchCritChild(t *testing.T) {
+	if os.Getenv(hvmChainingCritChildEnv) == "" {
+		t.Skip("child-only: driven by TestApplyHvmHeaderParentMismatchCrit via subprocess re-exec")
+	}
+	log.SetDefault(log.NewLogger(log.NewTerminalHandler(os.Stderr, false)))
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// Prior-state block P (activation block, parent pre-hVM). Applying it sets the upstream-state-id to P.
+	preP := &types.Header{Number: big.NewInt(10), Time: hvm0Time - 1}
+	p := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: preP.Hash()})
+	chain.tempHeaders[preP.Hash().String()] = preP
+	chain.tempBlocks[preP.Hash().String()] = types.NewBlockWithHeader(preP)
+	chain.tempHeaders[p.Hash().String()] = p.Header()
+	chain.tempBlocks[p.Hash().String()] = p
+	require.NoError(t, chain.applyHvmHeaderConsensusUpdate(p.Header(), false, false))
+	sid, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, p.Hash().Bytes(), sid[:], "precondition: state-id is P")
+
+	// Target T whose ParentHash is NOT P (a skipped/forked parent): the prior-state P resolves, but P.Hash() !=
+	// T.ParentHash -> the chaining backstop must fire.
+	target := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(12), Time: hvm0Time + 1, ParentHash: common.Hash{0x99}})
+	chain.tempHeaders[target.Hash().String()] = target.Header()
+	chain.tempBlocks[target.Hash().String()] = target
+
+	chain.applyHvmHeaderConsensusUpdate(target.Header(), false, false)
+	t.Fatalf("applyHvmHeaderConsensusUpdate returned for a parent-mismatch block; expected the chaining backstop to os.Exit")
+}
+
+// TestApplyHvmHeaderParentMismatchCrit drives the chaining backstop via subprocess re-exec.
+func TestApplyHvmHeaderParentMismatchCrit(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestApplyHvmHeaderParentMismatchCritChild$", "-test.v")
+	cmd.Env = append(os.Environ(), hvmChainingCritChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "the chaining backstop must os.Exit non-zero, output:\n%s", string(out))
+	require.False(t, ee.Success(), "child must report failure")
+	require.Contains(t, string(out), "but parent of updated block",
+		"the crit must be the parent-mismatch chaining backstop, not another log.Crit site")
+	require.NotContains(t, string(out), "applyHvmHeaderConsensusUpdate returned for a parent-mismatch block",
+		"the backstop must os.Exit BEFORE returning; the returned-marker means it was downgraded to log.Warn")
+}
+
+// The apply-path extract-error arm: an Hvm0-ACTIVE block carrying a 0x7C tx whose calldata is CORRUPT (fails
+// BtcAttributesDepositData.UnmarshalBinary) must reject as ErrInvalidHVMBlockFormat (the block is permanently
+// invalid), distinct from (a) the pre-Hvm0 format-reject (valid calldata, wrong activation time) and (b) the
+// wrong-difficulty ErrInvalidHVMHeaders. The corrupt-calldata extract-error arm (applyHvmHeaderConsensusUpdate
+// where ExtractBtcAttrData itself errors) was uncovered. The caller-side reportBlock disposition of this class is
+// covered separately by TestHvmForwardWalkBadBlockRouting.
+func TestHvmApplyPathCorruptBtcAttrCalldataIsFormatReject(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a real lightweight TBC node")
+	}
+	chain, genesis := newRegtestChainWithLightTBC(t, btcDiffTestHvm0Time)
+
+	// A 0x7C tx whose calldata is too short to parse (just the selector) -> ExtractBtcAttrData errors.
+	corrupt := types.NewTx(&types.BtcAttributesDepositedTx{
+		To:   &types.BtcAttributesDepositedSenderAddress,
+		Gas:  1_000_000,
+		Data: types.UpdateHvmStateFuncBytes4[:], // 4 bytes, far below the minimum serialized length
+	})
+	blk := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: btcDiffTestHvm0Time}).
+		WithBody(types.Body{Transactions: types.Transactions{corrupt}})
+	require.True(t, chain.chainConfig.IsHvm0(blk.Time()), "precondition: the block is Hvm0-active (isolates the extract-error arm from the pre-Hvm0 gate)")
+	chain.tempHeaders[blk.Hash().String()] = blk.Header()
+	chain.tempBlocks[blk.Hash().String()] = blk
+	require.NoError(t, chain.tbcHeaderNode.SetUpstreamStateId(chain.ctx, hVMGenesisUpstreamId))
+
+	err := chain.applyHvmHeaderConsensusUpdate(blk.Header(), false, true)
+	require.ErrorIs(t, err, consensus.ErrInvalidHVMBlockFormat, "a corrupt-calldata BtcAttr must be a permanently-invalid format reject")
+	require.NotErrorIs(t, err, consensus.ErrInvalidHVMHeaders, "it is a format reject, not a difficulty/header reject")
+	require.NotErrorIs(t, err, consensus.ErrCorruptHVMHeaderOnlyModeState, "a malformed block is NOT a recoverable corrupt-store error")
+
+	// No commit: tip + state-id unchanged.
+	_, tip, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, genesis.BlockHash(), tip.BlockHash(), "no commit on a format reject")
+	sid, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, hVMGenesisUpstreamId, *sid, "no state-id advance on a format reject")
+}
+
+// TestUpdateHvmHeaderConsensusCorruptStateRecoverable pins the two currentHead==nil recoverable guards in
+// updateHvmHeaderConsensus: when the lightweight TBC's upstream-state-id references an EVM header that is
+// absent from both disk and the holding pen (orphaned by a rewind/deep-reorg), the function must return the
+// recoverable consensus.ErrCorruptHVMHeaderOnlyModeState sentinel — NOT nil-deref/crash, and NOT silently
+// return nil (which would leave a divergent committed view). Both guards had zero coverage; a mutation
+// flipping `return ErrCorruptHVMHeaderOnlyModeState` to `return nil`, or removing a guard (re-introducing
+// the nil-deref), fails here.
+func TestUpdateHvmHeaderConsensusCorruptStateRecoverable(t *testing.T) {
+	const hvm0Time = uint64(1000)
+
+	// --- General (non-genesis) branch: upstream-state-id points at a block that is later orphaned. ---
+	t.Run("general-branch-orphaned-upstream", func(t *testing.T) {
+		chain, lightTip := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+		// Advance the upstream-state-id off genesis to a real block N via an empty-but-present BtcAttr apply
+		// (the same mechanism the live apply path uses).
+		canon := lightTip.BlockHash()
+		btcAttr, err := types.MakeBtcAttributesDepositedTx(&canon, nil)
+		require.NoError(t, err)
+		tx := types.NewTx(btcAttr)
+		parent := &types.Header{Number: big.NewInt(10), Time: hvm0Time - 1}
+		nHeader := &types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: parent.Hash()}
+		blockN := types.NewBlockWithHeader(nHeader).WithBody(types.Body{Transactions: types.Transactions{tx}})
+		chain.tempHeaders[parent.Hash().String()] = parent
+		chain.tempBlocks[parent.Hash().String()] = types.NewBlockWithHeader(parent)
+		chain.tempHeaders[blockN.Hash().String()] = blockN.Header()
+		chain.tempBlocks[blockN.Hash().String()] = blockN
+		require.NoError(t, chain.applyHvmHeaderConsensusUpdate(blockN.Header(), false, true),
+			"empty-but-present apply must advance the upstream-state-id to N")
+		sid, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+		require.Equal(t, blockN.Hash().Bytes(), sid[:], "upstream-state-id must be block N")
+
+		// Orphan N: remove it from disk + holding pen so getHeaderFromDiskOrHoldingPen(N) returns nil.
+		delete(chain.tempHeaders, blockN.Hash().String())
+		delete(chain.tempBlocks, blockN.Hash().String())
+
+		// A subsequent head-move now finds the upstream-state-id header unresolvable.
+		newHead := &types.Header{Number: big.NewInt(20), Time: hvm0Time + 100, ParentHash: common.Hash{0xde, 0xad}}
+		var got error
+		require.NotPanics(t, func() { got = chain.updateHvmHeaderConsensus(newHead, false) },
+			"an unresolvable upstream-state-id must not nil-deref")
+		require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+			"an unresolvable upstream-state-id must return the recoverable corrupt-state sentinel")
+	})
+
+	// --- Genesis branch: upstream-state-id is genesis (first hVM block) but the parent is unresolvable. ---
+	t.Run("genesis-branch-orphaned-parent", func(t *testing.T) {
+		chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+		sid0, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+		require.Equal(t, hVMGenesisUpstreamId[:], sid0[:], "fresh node must be at the genesis upstream-state-id")
+
+		// First hVM block whose parent is absent from disk + holding pen → genesis branch's
+		// getHeaderFromDiskOrHoldingPen(ParentHash) is nil.
+		firstHvm := &types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: common.Hash{0xab, 0xcd}}
+		var got error
+		require.NotPanics(t, func() { got = chain.updateHvmHeaderConsensus(firstHvm, false) },
+			"an unresolvable first-hVM-block parent must not nil-deref in the genesis branch")
+		require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+			"the genesis-branch nil-parent must return the recoverable corrupt-state sentinel")
+	})
+}
+
+// TestUpdateHvmHeaderConsensusEarlyReturns pins the two consensus-gate early-returns of
+// updateHvmHeaderConsensus that must advance NOTHING in the lightweight TBC view: a PRE-activation head
+// (IsHvm0(newHead.Time) == false) and a head whose hash already equals the upstream-state-id (the
+// idempotent no-op). Both branches had zero coverage. They are load-bearing: the pre-activation gate keeps
+// pre-Phase-0 head-moves from ever entering the apply/reorg machinery, and the no-op short-circuit makes
+// re-driving the same head (e.g. a duplicate writeHeadBlock) a true no-op rather than a double-apply. A
+// mutation dropping the `!IsHvm0` guard, or inverting/removing the `bytes.Equal(upstream, newHead)` no-op,
+// changes the upstream-state-id (or errors) and fails here.
+func TestUpdateHvmHeaderConsensusEarlyReturns(t *testing.T) {
+	const hvm0Time = uint64(1000)
+
+	t.Run("pre-activation-head-is-no-op", func(t *testing.T) {
+		chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+		sid0, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+		require.Equal(t, hVMGenesisUpstreamId[:], sid0[:], "fresh node must be at the genesis upstream-state-id")
+
+		// A head whose time is BEFORE hVM Phase-0 activation must return nil without consulting (let alone
+		// advancing) the lightweight view — even though its parent is unresolvable, which WOULD trip the
+		// corrupt-state sentinel if the pre-activation gate were removed.
+		preAct := &types.Header{Number: big.NewInt(5), Time: hvm0Time - 1, ParentHash: common.Hash{0x11, 0x22}}
+		require.NoError(t, chain.updateHvmHeaderConsensus(preAct, false),
+			"a pre-activation head must be a clean no-op")
+		sid1, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+		require.Equal(t, sid0[:], sid1[:], "a pre-activation head must NOT advance the upstream-state-id")
+		require.Equal(t, hVMGenesisUpstreamId[:], sid1[:], "still at genesis")
+	})
+
+	t.Run("already-reflected-head-is-no-op", func(t *testing.T) {
+		chain, lightTip := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+		// Advance the upstream-state-id to a real block N via an empty-but-present apply (same mechanism the
+		// live path uses), so the upstream-state-id equals blockN.Hash().
+		canon := lightTip.BlockHash()
+		btcAttr, err := types.MakeBtcAttributesDepositedTx(&canon, nil)
+		require.NoError(t, err)
+		parent := &types.Header{Number: big.NewInt(10), Time: hvm0Time - 1}
+		nHeader := &types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: parent.Hash()}
+		blockN := types.NewBlockWithHeader(nHeader).WithBody(types.Body{Transactions: types.Transactions{types.NewTx(btcAttr)}})
+		chain.tempHeaders[parent.Hash().String()] = parent
+		chain.tempBlocks[parent.Hash().String()] = types.NewBlockWithHeader(parent)
+		chain.tempHeaders[blockN.Hash().String()] = blockN.Header()
+		chain.tempBlocks[blockN.Hash().String()] = blockN
+		require.NoError(t, chain.applyHvmHeaderConsensusUpdate(blockN.Header(), false, true))
+		sidN, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+		require.Equal(t, blockN.Hash().Bytes(), sidN[:], "upstream-state-id must be block N")
+
+		// Re-driving updateHvmHeaderConsensus for the SAME head (upstream-state-id already == newHead.Hash())
+		// must short-circuit to a no-op, NOT re-enter the apply machinery.
+		require.NoError(t, chain.updateHvmHeaderConsensus(blockN.Header(), false),
+			"the already-reflected head must be an idempotent no-op")
+		sidAfter, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+		require.Equal(t, sidN[:], sidAfter[:],
+			"re-driving the already-reflected head must NOT change the upstream-state-id")
+	})
+
+	t.Run("awaiting-snap-sync-is-no-op", func(t *testing.T) {
+		chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+		sid0, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+
+		// While awaiting an in-flight hVM snap sync the lightweight TBC view is owned by SnapSyncHvm, so
+		// updateHvmHeaderConsensus must short-circuit for EVERY caller (writeHeadBlock/setHeadBeyondRoot/
+		// SetCanonical/reorg/build) — this is the latch's single consensus chokepoint. A real hVM head whose
+		// parent is unresolvable (which WOULD trip the corrupt-state sentinel if the awaiting gate were
+		// removed) must still be a clean no-op that does not advance the upstream-state-id.
+		chain.SetAwaitingHvmSnapSync()
+		require.True(t, chain.isAwaitingHvmSnapSync())
+		head := &types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: common.Hash{0x11, 0x22}}
+		require.NoError(t, chain.updateHvmHeaderConsensus(head, false),
+			"while awaiting snap, updateHvmHeaderConsensus must short-circuit to a no-op")
+		sid1, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, err)
+		require.Equal(t, sid0[:], sid1[:], "awaiting snap must NOT advance the upstream-state-id")
+		require.False(t, chain.HvmSnapSyncCompleted(), "while awaiting snap, the finished flag must remain false")
+	})
+}
+
+// TestUnapplyHvmHeaderConsensusUpdateOrphanedParentRecoverable pins the unapply-side nil-parent guard that
+// mirrors the apply-side currentHead==nil guards: when the parent of the block being unapplied is absent from
+// both disk and the holding pen (a deep reorg/rewind orphaned it), unapplyHvmHeaderConsensusUpdate must return
+// the recoverable consensus.ErrCorruptHVMHeaderOnlyModeState sentinel — NOT nil-deref prevBlock.Time/.Hash()
+// and crash the process. The walkHvmHeaderConsensusBack caller routes this sentinel through recovery, not crit.
+// A mutation removing the guard (re-introducing the nil-deref) panics and fails here.
+func TestUnapplyHvmHeaderConsensusUpdateOrphanedParentRecoverable(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// A block present in the holding pen, but whose parent is absent from both disk and the holding pen.
+	blk := types.NewBlockWithHeader(&types.Header{
+		Number: big.NewInt(11), Time: hvm0Time, ParentHash: common.Hash{0xab, 0xcd},
+	})
+	chain.tempHeaders[blk.Hash().String()] = blk.Header()
+	chain.tempBlocks[blk.Hash().String()] = blk
+
+	var got error
+	require.NotPanics(t, func() { got = chain.unapplyHvmHeaderConsensusUpdate(blk.Header()) },
+		"an unresolvable parent on the unapply path must not nil-deref")
+	require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+		"unapply with an unresolvable parent must return the recoverable corrupt-state sentinel")
+}
+
+// TestUnapplyHvmHeaderConsensusUpdateMissingTargetBlockRecoverable pins the guard for the unapply TARGET's
+// own body: unapplyHvmHeaderConsensusUpdate first fetches the block being unapplied (header.Hash()); if that
+// body is absent from disk + holding pen (a deep reorg/rewind orphaned an already-applied block), it must
+// return the recoverable consensus.ErrCorruptHVMHeaderOnlyModeState — NOT a plain error, which makes the
+// walkHvmHeaderConsensusBack caller log.Crit (a node halt) instead of rebuilding the lightweight view from
+// genesis. This mirrors the prevBlock/cursor orphaned-store guards. A mutation reverting it to a plain
+// fmt.Errorf fails here (ErrorIs on the recoverable sentinel).
+func TestUnapplyHvmHeaderConsensusUpdateMissingTargetBlockRecoverable(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// A header whose own block is absent from both disk and the holding pen (never seeded into tempBlocks).
+	orphan := &types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: common.Hash{0xab, 0xcd}}
+
+	var got error
+	require.NotPanics(t, func() { got = chain.unapplyHvmHeaderConsensusUpdate(orphan) },
+		"an absent unapply-target block must not nil-deref")
+	require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+		"unapply of a block whose body is absent must return the recoverable corrupt-state sentinel, not a plain error")
+}
+
+// TestApplyHvmHeaderConsensusUpdateOrphanedPriorStateRecoverable pins the APPLY-side mirror of the
+// orphaned-store guards: applyHvmHeaderConsensusUpdate's parent-sanity check resolves the upstream-state-id's
+// block via the BLOCK store (getBlockFromDiskOrHoldingPen) and dereferences check.Hash(). The upstream
+// currentHead==nil guard uses the HEADER store, so a parent whose header resolves but whose body is orphaned
+// (a deep reorg/rewind) passes that guard yet leaves check==nil here. That must return the recoverable
+// consensus.ErrCorruptHVMHeaderOnlyModeState, not nil-deref the process. A mutation removing the guard panics here.
+func TestApplyHvmHeaderConsensusUpdateOrphanedPriorStateRecoverable(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// Point the upstream-state-id at a non-genesis hash whose block is absent from disk + holding pen.
+	var fake [32]byte
+	fake[0] = 0x77
+	require.NoError(t, chain.tbcHeaderNode.SetUpstreamStateId(chain.ctx, fake))
+
+	// A present target block to apply (its body is in the holding pen, so the target-block guard does not fire);
+	// its parent is the orphaned prior-state hash, so the else-branch parent-sanity check.Hash() is reached.
+	target := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: common.Hash{0x99}})
+	chain.tempHeaders[target.Hash().String()] = target.Header()
+	chain.tempBlocks[target.Hash().String()] = target
+
+	var got error
+	require.NotPanics(t, func() { got = chain.applyHvmHeaderConsensusUpdate(target.Header(), false, false) },
+		"an orphaned prior-state block body must not nil-deref the apply parent-sanity check")
+	require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+		"apply with an orphaned upstream-state-id block must return the recoverable corrupt-state sentinel")
+}
+
+// TestUpdateHvmHeaderConsensusUpstreamStateIdErrorRecoverable pins the entry-point guard in
+// updateHvmHeaderConsensus: it reads the lightweight TBC view's upstream-state-id as its first step. When that
+// read faults — a torn/IO-failed leveldb, or a node not in external-header mode — UpstreamStateId returns a NIL
+// pointer, and the subsequent currentHeadHashRaw[:] dereference would nil-panic BEFORE any of this function's
+// currentHead==nil recovery guards run. That faulted read must instead return the recoverable
+// consensus.ErrCorruptHVMHeaderOnlyModeState so the re-apply callers self-heal via recoverReapplyHvmState. A
+// mutation removing the err/nil guard nil-panics here.
+func TestUpdateHvmHeaderConsensusUpstreamStateIdErrorRecoverable(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// Swap in a non-external-header-mode server: its UpstreamStateId returns (nil, error) on its first check
+	// (before any db access), deterministically simulating a faulted lightweight-store read. Restore the
+	// healthy node before returning so the harness's teardown cleanup operates on it.
+	orig := chain.tbcHeaderNode
+	defer func() { chain.tbcHeaderNode = orig }()
+
+	badCfg := tbc.NewDefaultConfig()
+	badCfg.ExternalHeaderMode = false
+	badCfg.Network = "testnet3"
+	badCfg.LevelDBHome = t.TempDir()
+	badServer, err := tbc.NewServer(badCfg)
+	require.NoError(t, err)
+	chain.tbcHeaderNode = badServer
+
+	sid, sidErr := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.Error(t, sidErr, "non-external-header-mode UpstreamStateId must error")
+	require.Nil(t, sid, "UpstreamStateId must return a nil pointer on error")
+
+	newHead := &types.Header{Number: big.NewInt(11), Time: hvm0Time + 100, ParentHash: common.Hash{0x42}}
+	var got error
+	var logBuf bytes.Buffer
+	prevLogger := log.Root()
+	log.SetDefault(log.NewLogger(log.NewTerminalHandlerWithLevel(&logBuf, slog.LevelDebug, false)))
+	require.NotPanics(t, func() { got = chain.updateHvmHeaderConsensus(newHead, false) },
+		"a faulted UpstreamStateId read must not nil-deref")
+	log.SetDefault(prevLogger)
+	require.ErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+		"a faulted UpstreamStateId read must return the recoverable corrupt-state sentinel")
+	require.Contains(t, logBuf.String(), "unable to get upstream state id from lightweight TBC",
+		"the faulted-store diagnostic must be logged before returning the sentinel")
+}
+
+// TestApplyHvmHeaderConsensusUpdateMissingTargetBlockBehavior pins the APPLY-side TARGET-block-absent guard: when
+// the to-be-applied block's header resolves (the caller holds it) but its BODY is absent from BOTH disk and the
+// holding pen, applyHvmHeaderConsensusUpdate returns a PLAIN error ("unable to get block"), NOT a sentinel. This is
+// the dual-store-duality mirror of TestUnapplyHvmHeaderConsensusUpdateMissingTargetBlockRecoverable — and it is
+// deliberately ASYMMETRIC: the unapply side returns the recoverable sentinel, the apply side does not. Lock both the
+// non-panic (the nil-check must fire before block.Transactions()) and the exact classification, so the asymmetry is
+// a test-visible contract and a dropped nil-check (re-introducing the panic) fails here.
+func TestApplyHvmHeaderConsensusUpdateMissingTargetBlockBehavior(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// A header whose own block is NEVER seeded into tempBlocks and is not on disk -> getBlockFromDiskOrHoldingPen
+	// returns nil: the header exists but its body is orphaned from both stores.
+	orphan := &types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: common.Hash{0xab, 0xcd}}
+
+	var got error
+	require.NotPanics(t, func() { got = chain.applyHvmHeaderConsensusUpdate(orphan, false, false) },
+		"an absent apply-target block must not nil-deref")
+	require.Error(t, got)
+	require.ErrorContains(t, got, "unable to get block", "the apply target-absent guard returns the plain error")
+	require.NotErrorIs(t, got, consensus.ErrCorruptHVMHeaderOnlyModeState,
+		"apply-side target-absent is asymmetric with the unapply side: a plain error, not the recoverable sentinel")
+	require.NotErrorIs(t, got, consensus.ErrInvalidHVMHeaders, "target-absent is not a bad-block classification")
+}
+
+// crash-window CONVERGENCE: a node that dies mid-migration must, on the next boot, classify the partial on-disk
+// state correctly and RE-MIGRATE to convergence — never crit-loop, never silently keep a headerless store, never
+// destroy the legacy fallback. The classification leaf (classifyMigratedMainnetStore, hvmMigrationNeeded torn-store
+// case) and the single-shot SUCCESS are tested in isolation; this drives the full orchestration across each
+// simulated crash window, proving the detection->rebuild loop converges and that a re-run is idempotent. Uses real
+// mainnet genesis + synthetic children + a lightweight in-process tbc.Server + an in-memory EVM chain.
+func TestMigrate_CrashWindowsConverge(t *testing.T) {
+	if testing.Short() {
+		t.Skip("heavy: builds real lightweight TBC nodes + EVM chains per crash window")
+	}
+	ctx := context.Background()
+	mainnetGen := decodeMainnetGenesisHeader(t)
+
+	const N = 4
+	children := make([]*wire.BlockHeader, N)
+	prev := mainnetGen
+	for i := 0; i < N; i++ {
+		h := &wire.BlockHeader{Version: prev.Version, PrevBlock: prev.BlockHash(), MerkleRoot: mainnetGen.MerkleRoot,
+			Timestamp: prev.Timestamp.Add(time.Duration(i+1) * 10 * time.Minute), Bits: mainnetGen.Bits, Nonce: uint32(i + 1)}
+		children[i] = h
+		prev = h
+	}
+	tipHash := prev.BlockHash()
+
+	newSrv := func(home, network string, stateId [32]byte) *tbc.Server {
+		cfg := tbc.NewDefaultConfig()
+		cfg.ExternalHeaderMode = true
+		cfg.EffectiveGenesisBlock = mainnetGen
+		cfg.GenesisHeightOffset = vm.MainnetHvmGenesisHeight
+		cfg.LevelDBHome = home
+		cfg.BlockheaderCacheSize, cfg.BlockCacheSize = "0", "0"
+		cfg.AutoIndex, cfg.BlockSanity, cfg.MaxCachedTxs, cfg.MempoolEnabled = false, false, 0, false
+		cfg.Network = network
+		srv, e := tbc.NewServer(cfg)
+		require.NoError(t, e)
+		require.NoError(t, srv.ExternalHeaderSetup(ctx, hVMGenesisUpstreamId[:]))
+		_, _, _, _, addErr := srv.AddExternalHeaders(ctx, &wire.MsgHeaders{Headers: children}, stateId[:])
+		require.NoError(t, addErr)
+		return srv
+	}
+
+	// stage builds the standard migrate inputs at a fresh home: an EVM chain whose canonical tip == S (catch-up
+	// no-op), a mainnet full node holding genesis..T, and a torn-down legacy testnet3 store committed to T with S.
+	// `crash` is invoked AFTER the legacy/full are in place but BEFORE maybeMigrate, to plant the partial on-disk
+	// <home>/mainnet state of a crash window. Returns the chain, cfg, home, and S.
+	stage := func(t *testing.T, crash func(home string, S [32]byte)) (*BlockChain, *tbc.Config, string, [32]byte) {
+		_, _, bc, err := newCanonical(ethash.NewFaker(), 5, true, rawdb.HashScheme)
+		require.NoError(t, err)
+		t.Cleanup(bc.Stop)
+		S := [32]byte(bc.CurrentBlock().Hash())
+
+		home := t.TempDir()
+		full := newSrv(t.TempDir(), "mainnet", [32]byte{0x01})
+		t.Cleanup(func() { _ = full.ExternalHeaderTearDown() })
+		prevFN, prevCfg := vm.TBCFullNode, vm.TBCFullNodeConfig
+		vm.TBCFullNode, vm.TBCFullNodeConfig = full, &tbc.Config{Network: "mainnet"}
+		t.Cleanup(func() { vm.TBCFullNode, vm.TBCFullNodeConfig = prevFN, prevCfg })
+
+		legacy := newSrv(home, "testnet3", S)
+		require.NoError(t, legacy.ExternalHeaderTearDown())
+		if crash != nil {
+			crash(home, S)
+		}
+		return bc, mainnetMigrateConfig(mainnetGen, home), home, S
+	}
+
+	assertConverged := func(t *testing.T, bc *BlockChain, home string, S [32]byte) {
+		postH, postTip, err := bc.tbcHeaderNode.BlockHeaderBest(ctx)
+		require.NoError(t, err)
+		require.Equal(t, tipHash.String(), postTip.BlockHash().String(), "rebuilt tip must be the committed tip T")
+		require.Equal(t, vm.MainnetHvmGenesisHeight+uint64(N), postH)
+		postId, err := bc.tbcHeaderNode.UpstreamStateId(ctx)
+		require.NoError(t, err)
+		require.Equal(t, S, *postId, "rebuilt state-id must be S")
+		require.True(t, dirHasEntries(hvmHeaderStoreDir(home, "mainnet")), "the mainnet store must exist")
+		require.False(t, dirHasEntries(hvmHeaderStoreDir(home, "testnet3")), "the legacy store must be retired")
+		require.DirExists(t, filepath.Join(home, fmt.Sprintf("testnet3.migrated-%x", S[:])), "legacy renamed to backup")
+	}
+
+	// (a) CRASH AFTER THE RESET, BEFORE FILL: a version-only (no best header) mainnet store -> torn -> ReMigrate.
+	t.Run("crash-after-reset-torn-mainnet", func(t *testing.T) {
+		bc, cfg, home, S := stage(t, func(home string, _ [32]byte) {
+			require.NoError(t, openStoreGuardFree(t, ctx, home, "mainnet").Close()) // creates+version, no headers
+		})
+		require.True(t, dirHasEntries(hvmHeaderStoreDir(home, "mainnet")), "precondition: the torn store has entries")
+		handled := bc.maybeMigrateHvmHeaderNode(cfg)
+		t.Cleanup(func() {
+			if bc.tbcHeaderNode != nil {
+				_ = bc.tbcHeaderNode.ExternalHeaderTearDown()
+			}
+		})
+		require.True(t, handled, "a torn (post-reset) mainnet store must RE-MIGRATE to convergence")
+		assertConverged(t, bc, home, S)
+	})
+
+	// (b) CRASH MID FILL: headers committed but the state-id never written -> torn -> ReMigrate.
+	t.Run("crash-mid-fill-no-stateid", func(t *testing.T) {
+		bc, cfg, home, S := stage(t, func(home string, S [32]byte) {
+			srv := newSrv(home, "mainnet", S) // headers + state-id...
+			require.NoError(t, srv.ExternalHeaderTearDown())
+			db := openStoreGuardFree(t, ctx, home, "mainnet")
+			require.NoError(t, db.MetadataDel(ctx, upstreamStateIdMetaKey)) // ...then drop the state-id (torn)
+			require.NoError(t, db.Close())
+		})
+		handled := bc.maybeMigrateHvmHeaderNode(cfg)
+		t.Cleanup(func() {
+			if bc.tbcHeaderNode != nil {
+				_ = bc.tbcHeaderNode.ExternalHeaderTearDown()
+			}
+		})
+		require.True(t, handled, "a mid-fill (no state-id) mainnet store must RE-MIGRATE")
+		assertConverged(t, bc, home, S)
+	})
+
+	// (c) IDEMPOTENT RE-RUN: a second boot over an already-migrated store must NOT re-migrate or re-count completed.
+	t.Run("idempotent-rerun", func(t *testing.T) {
+		bc, cfg, home, S := stage(t, nil)
+		require.True(t, bc.maybeMigrateHvmHeaderNode(cfg), "first run migrates")
+		assertConverged(t, bc, home, S)
+		// Release the migrated store's exclusive lock so the second boot can read it guard-free.
+		require.NoError(t, bc.tbcHeaderNode.ExternalHeaderTearDown())
+
+		_, _, bc2, err := newCanonical(ethash.NewFaker(), 5, true, rawdb.HashScheme)
+		require.NoError(t, err)
+		t.Cleanup(bc2.Stop)
+		compBefore := hvmMigrationCompletedMeter.Snapshot().Count()
+		handled2 := bc2.maybeMigrateHvmHeaderNode(mainnetMigrateConfig(mainnetGen, home))
+		t.Cleanup(func() {
+			if bc2.tbcHeaderNode != nil {
+				_ = bc2.tbcHeaderNode.ExternalHeaderTearDown()
+			}
+		})
+		require.False(t, handled2, "a re-run over a valid migrated store must be a no-op (ValidMigrated), not handled")
+		require.Equal(t, compBefore, hvmMigrationCompletedMeter.Snapshot().Count(), "a no-op re-run must NOT re-count completed")
+		require.True(t, dirHasEntries(hvmHeaderStoreDir(home, "mainnet")), "the migrated store must remain intact")
+	})
+}
+
+// The updateHvmHeaderConsensus dispatcher's UNRECOGNIZED-error backstop (the single-block-apply arm, ~blockchain.go
+// 4477): when applyHvmHeaderConsensusUpdate returns an error that is NOT one of the three handled sentinels
+// (ErrInvalidHVMBlockFormat / ErrInvalidHVMHeaders / ErrCorruptHVMHeaderOnlyModeState), the dispatcher log.Crits
+// ("Encountered an error applying hVM header state transition") rather than silently swallowing a torn-write. Reached
+// here via a direct-child block whose BODY is absent from disk+pen (apply returns the plain "unable to get block"
+// error). Downgrading the crit to log.Warn+return-nil would keep the suite green; log.Crit can't be caught in-process,
+// hence the re-exec.
+const hvmDispatchUnrecognizedCritChildEnv = "HVM_DISPATCH_UNRECOGNIZED_ERR_CHILD"
+
+func TestUpdateHvmHeaderConsensusUnrecognizedErrorCritChild(t *testing.T) {
+	if os.Getenv(hvmDispatchUnrecognizedCritChildEnv) == "" {
+		t.Skip("child-only: driven by TestUpdateHvmHeaderConsensusUnrecognizedErrorCrit via subprocess re-exec")
+	}
+	log.SetDefault(log.NewLogger(log.NewTerminalHandler(os.Stderr, false)))
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	// currentHead P (activation block @11). Apply it -> state-id = P. P is also written to rawdb so the dispatcher's
+	// findCommonAncestor (rawdb-only GetHeader) can resolve it.
+	preP := &types.Header{Number: big.NewInt(10), Time: hvm0Time - 1}
+	p := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: preP.Hash()})
+	chain.tempHeaders[preP.Hash().String()] = preP
+	chain.tempBlocks[preP.Hash().String()] = types.NewBlockWithHeader(preP)
+	chain.tempHeaders[p.Hash().String()] = p.Header()
+	chain.tempBlocks[p.Hash().String()] = p
+	rawdb.WriteBlock(chain.db, p)
+	require.NoError(t, chain.applyHvmHeaderConsensusUpdate(p.Header(), false, false))
+
+	// newHead T: a DIRECT CHILD of P (so the single-apply arm runs), but its BLOCK is absent from disk + pen, so
+	// apply returns the plain "unable to get block" error (a non-sentinel) -> the unrecognized-error crit fires.
+	target := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(12), Time: hvm0Time + 1, ParentHash: p.Hash()})
+	// Deliberately do NOT seed target's block anywhere.
+	chain.updateHvmHeaderConsensus(target.Header(), false)
+	t.Fatalf("updateHvmHeaderConsensus returned for an unrecognized apply error; expected the dispatcher backstop to os.Exit")
+}
+
+func TestUpdateHvmHeaderConsensusUnrecognizedErrorCrit(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestUpdateHvmHeaderConsensusUnrecognizedErrorCritChild$", "-test.v")
+	cmd.Env = append(os.Environ(), hvmDispatchUnrecognizedCritChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "the dispatcher unrecognized-error backstop must os.Exit non-zero, output:\n%s", string(out))
+	require.False(t, ee.Success(), "child must report failure")
+	require.Contains(t, string(out), "Encountered an error applying hVM header state transition",
+		"the crit must be the dispatcher's unrecognized-error backstop")
+	require.NotContains(t, string(out), "updateHvmHeaderConsensus returned for an unrecognized apply error",
+		"the backstop must os.Exit BEFORE returning (a returned-marker means it was downgraded)")
+}
+
+const hvmRestoreApplyErrCritChildEnv = "HVM_RESTORE_APPLY_ERR_CHILD"
+
+// TestPerformFullHvmHeaderStateRestoreApplyErrorCritChild is the subprocess child: it seeds a disk chain whose
+// activation block carries CORRUPT BtcAttr calldata, so the restore forward-walk's first apply fails with
+// ErrInvalidHVMBlockFormat -> performFullHvmHeaderStateRestore log.Crits ("Failed to fully restore hVM state").
+func TestPerformFullHvmHeaderStateRestoreApplyErrorCritChild(t *testing.T) {
+	if os.Getenv(hvmRestoreApplyErrCritChildEnv) == "" {
+		t.Skip("child-only: driven by TestPerformFullHvmHeaderStateRestoreApplyErrorCrit via subprocess re-exec")
+	}
+	log.SetDefault(log.NewLogger(log.NewTerminalHandler(os.Stderr, false)))
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	gen := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(0), Time: hvm0Time - 500}) // pre-hVM0
+	// Activation block (#1, Hvm0-active) carrying a 0x7C tx whose calldata is just the 4-byte selector — far below the
+	// minimum serialized length, so ExtractBtcAttrData fails and apply returns ErrInvalidHVMBlockFormat.
+	corrupt := types.NewTx(&types.BtcAttributesDepositedTx{
+		To:   &types.BtcAttributesDepositedSenderAddress,
+		Gas:  1_000_000,
+		Data: types.UpdateHvmStateFuncBytes4[:],
+	})
+	block1 := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(1), Time: hvm0Time, ParentHash: gen.Hash()}).
+		WithBody(types.Body{Transactions: types.Transactions{corrupt}})
+	for _, b := range []*types.Block{gen, block1} {
+		rawdb.WriteBlock(chain.db, b)
+		rawdb.WriteCanonicalHash(chain.db, b.Hash(), b.NumberU64())
+	}
+	rawdb.WriteHeadBlockHash(chain.db, block1.Hash())
+	chain.currentBlock.Store(block1.Header())
+
+	chain.performFullHvmHeaderStateRestore()
+	t.Fatalf("performFullHvmHeaderStateRestore returned despite a corrupt-calldata activation block; expected log.Crit")
+}
+
+func TestPerformFullHvmHeaderStateRestoreApplyErrorCrit(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=^TestPerformFullHvmHeaderStateRestoreApplyErrorCritChild$", "-test.v")
+	cmd.Env = append(os.Environ(), hvmRestoreApplyErrCritChildEnv+"=1")
+	out, err := cmd.CombinedOutput()
+
+	var ee *exec.ExitError
+	require.ErrorAs(t, err, &ee, "a restore apply error must os.Exit non-zero, output:\n%s", string(out))
+	require.False(t, ee.Success(), "child must report failure")
+	require.Contains(t, string(out), "Failed to fully restore hVM state",
+		"the restore apply-error crit must fire on a corrupt block during the disk forward-walk")
+	require.NotContains(t, string(out), "performFullHvmHeaderStateRestore returned despite",
+		"the restore must os.Exit on the apply error, not return")
+}
+
+// Corrupt-state self-heal CONVERGENCE + IDEMPOTENCY. recoverReapplyHvmState responds to a suspected-corrupt
+// lightweight view (fired from writeHeadBlock / setHeadBeyondRoot / SetCanonical when the EVM head is multi-block).
+// Its contract: from ANY corrupt view, the wipe-and-rebuild lands byte-exact on the view a never-corrupted node
+// holds, and recovering twice == once. This injects real corruption over replayed blocks, forcing the wipe-and-
+// rebuild path. Tests that restore from a clean/genesis view never reach that path: re-applying onto an already-
+// golden store takes the idempotent duplicate arm, so they would not catch a reset that is content-dependent,
+// skipped, or early-stopping.
+func TestRecoverReapplyHvmStateConvergesFromCorruption(t *testing.T) {
+	if testing.Short() {
+		t.Skip("heavy: mines regtest headers + drives two full restore disk-walks")
+	}
+	const hvm0Time = uint64(1000)
+	chain, regGenesis := newRegtestChainWithLightTBC(t, hvm0Time)
+	evmGenesis := chain.GetHeaderByNumber(0)
+
+	mineSeg := func(prev *wire.BlockHeader, n int, nonceBase uint32) ([]wire.BlockHeader, *wire.BlockHeader) {
+		hs := make([]wire.BlockHeader, 0, n)
+		p := prev
+		for i := 0; i < n; i++ {
+			h := mineRegtestChild(t, p, nonceBase+uint32(i))
+			hs = append(hs, *h)
+			p = h
+		}
+		return hs, p
+	}
+	seg1, t1 := mineSeg(regGenesis, 2, 100)
+	seg2, t2 := mineSeg(t1, 2, 200)
+	seg3, t3 := mineSeg(t2, 1, 300)
+
+	mkBlock := func(num int64, parent *types.Header, seg []wire.BlockHeader, tip *wire.BlockHeader) *types.Block {
+		c := tip.BlockHash()
+		btc, err := types.MakeBtcAttributesDepositedTx(&c, seg)
+		require.NoError(t, err)
+		return types.NewBlockWithHeader(&types.Header{Number: big.NewInt(num), Time: hvm0Time + uint64(num), ParentHash: parent.Hash()}).
+			WithBody(types.Body{Transactions: types.Transactions{types.NewTx(btc)}})
+	}
+	b1 := mkBlock(1, evmGenesis, seg1, t1)
+	b2 := mkBlock(2, b1.Header(), seg2, t2)
+	b3 := mkBlock(3, b2.Header(), seg3, t3)
+	for _, b := range []*types.Block{b1, b2, b3} {
+		rawdb.WriteBlock(chain.db, b)
+		rawdb.WriteCanonicalHash(chain.db, b.Hash(), b.NumberU64())
+	}
+	rawdb.WriteHeadBlockHash(chain.db, b3.Hash())
+	chain.currentBlock.Store(b3.Header())
+
+	// PHASE A — golden: forward-apply b1..b3 and snapshot the clean view.
+	for _, b := range []*types.Block{b1, b2, b3} {
+		require.NoError(t, chain.applyHvmHeaderConsensusUpdate(b.Header(), false, true))
+	}
+	goldH, goldTip, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
+	require.NoError(t, err)
+	goldSid, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	goldTipHash := goldTip.BlockHash()
+
+	assertGolden := func(stage string) {
+		h, tip, e := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
+		require.NoError(t, e)
+		sid, e := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+		require.NoError(t, e)
+		tipHash := tip.BlockHash()
+		require.Equalf(t, goldTipHash[:], tipHash[:], "%s: tip must converge to golden", stage)
+		require.Equalf(t, goldH, h, "%s: height must converge to golden", stage)
+		require.Equalf(t, goldSid[:], sid[:], "%s: upstream-state-id must converge to golden", stage)
+	}
+
+	// PHASE B — corrupt the live view WITHOUT touching disk: a torn state-id that disagrees with the committed
+	// headers (the reliable corruption signal; reset wipes it).
+	require.NoError(t, chain.tbcHeaderNode.SetUpstreamStateId(chain.ctx, hVMGenesisUpstreamId))
+	tornSid, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, hVMGenesisUpstreamId[:], tornSid[:], "the set upstream-state-id must be read back exactly")
+	require.NotEqual(t, goldSid[:], tornSid[:], "anti-vacuity: the corruption took (state-id no longer golden)")
+
+	// PHASE C — self-heal via the real production entry point.
+	chain.recoverReapplyHvmState("corrupt-recovery convergence test", consensus.ErrCorruptHVMHeaderOnlyModeState)
+	assertGolden("after first recovery")
+
+	// PHASE D — idempotency: recovering again leaves the (already-golden) view byte-exact.
+	chain.recoverReapplyHvmState("idempotency re-run", consensus.ErrCorruptHVMHeaderOnlyModeState)
+	assertGolden("after second recovery")
+}
+
+// TestHvmRevertUndoesHeaderBearingBlockAdvance is the consensus-critical regression for the revert path:
+// when a block advances the TBC consensus state (upstream-state-id + BTC headers) but is then rejected by
+// EVM Process/ValidateState, the revert must roll the lightweight TBC node fully back to the pre-insert EVM
+// tip (tbcHeader) — restoring the upstream-state-id and removing every BTC header the rejected block added.
+//
+// Reproduces the insert sequence the revert path handles, at the lightweight (consensus) seam:
+//  1. apply currentHead (activation block) -> state-id = currentHead   (this is "tbcHeader", the EVM tip
+//     the TBC represents at insert entry, captured in production via getHeaderModeTBCEVMHeader).
+//  2. apply a header-bearing block N -> AddExternalHeaders advances the tip and state-id to N (mirrors the
+//     insert's forward updateHvmHeaderConsensus(block) advance).
+//  3. "EVM rejects N" -> revert via walkHvmHeaderConsensusBack(N, tbcHeader).
+//
+// Step 3 is the unwind the revert helper drives: revertHvmStateAfterInvalidBlock calls
+// updateHvmHeaderConsensus(tbcHeader, true), which for a linear rejected block (tbcHeader is N's ancestor,
+// the common case) dispatches to walkHvmHeaderConsensusBack to remove N's headers and roll the state-id
+// back. Two parts of updateHvmHeaderConsensus are not exercised: findCommonAncestor (pure geometry routing,
+// and it reads headers via GetHeader from disk — in production it walks persisted canonical headers, not
+// this test's holding-pen-only blocks), and the trailing full-node indexer sync
+// (updateFullTBCToLightweight, gated by bool=true) which needs a live vm.TBCFullNode — out of scope, the
+// same reason related tests use attemptPrefetch=false. Full-node-lag is covered by TestIsHvmFullNodeBehind.
+//
+// Scope: this locks in the revert unwind, not the wiring. The novel surface is the two
+// revertHvmStateAfterInvalidBlock call sites in insertChain's EVM-failure paths (after processor.Process
+// and validator.ValidateState, under the isHvmActivated guard); deleting both would leave this green. That
+// wiring cannot run in a unit test (needs the full insert path -> a live vm.TBCFullNode, plus
+// findCommonAncestor's disk reads); this test guards the behavior the wiring invokes — that the revert
+// fully undoes a rejected block's TBC advance (state-id + headers).
+//
+// The assertion that the added BTC headers are removed (tip restored to the checkpoint), not just the
+// state-id rolled back, is what makes this a revert regression rather than a generic state-id check: a
+// refactor that left the rejected block's headers in the lightweight leveldb would leave the consensus view
+// diverged, and this would catch it.
+func TestHvmRevertUndoesHeaderBearingBlockAdvance(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	// Regtest harness: the apply path enforces PoW, so the header-bearing block's headers must be really
+	// mined (regtest PoW is mineable in ~2 nonces). Near-genesis => contextual defers; PoW passes.
+	chain, genesis := newRegtestChainWithLightTBC(t, hvm0Time)
+
+	// Pre-insert state: currentHead is the activation block (no BtcAttr). Applying it sets the
+	// upstream-state-id to currentHead — this is the "tbcHeader" the revert must restore to.
+	preActivation := &types.Header{Number: big.NewInt(10), Time: hvm0Time - 1}
+	currentHead := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: hvm0Time, ParentHash: preActivation.Hash()})
+
+	// Block N: a header-bearing BtcAttr block built on currentHead, carrying 3 mined contiguous regtest
+	// headers chained off the lightweight checkpoint. Near-genesis => the contextual validator defers; the
+	// apply-path PoW gate requires real work, so they are really mined (cheap on regtest).
+	headers := make([]wire.BlockHeader, 0, 3)
+	prev := genesis
+	for i := 0; i < 3; i++ {
+		h := mineRegtestChild(t, prev, uint32(2000+i)*101+1)
+		headers = append(headers, *h)
+		prev = h
+	}
+	newTip := headers[len(headers)-1].BlockHash()
+	btcAttr, err := types.MakeBtcAttributesDepositedTx(&newTip, headers)
+	require.NoError(t, err)
+	blockN := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(12), Time: hvm0Time + 1, ParentHash: currentHead.Hash()}).
+		WithBody(types.Body{Transactions: types.Transactions{types.NewTx(btcAttr)}})
+
+	// Seed the holding pen so the revert walk (updateHvmHeaderConsensus -> findCommonAncestor ->
+	// walkHvmHeaderConsensusBack -> unapply) can resolve every block/header it traverses.
+	chain.tempHeaders[preActivation.Hash().String()] = preActivation
+	chain.tempBlocks[preActivation.Hash().String()] = types.NewBlockWithHeader(preActivation)
+	for _, b := range []*types.Block{currentHead, blockN} {
+		chain.tempBlocks[b.Hash().String()] = b
+		chain.tempHeaders[b.Hash().String()] = b.Header()
+	}
+
+	checkpoint := genesis.BlockHash()
+
+	// Step 1: establish the pre-insert state (tbcHeader == currentHead).
+	require.NoError(t, chain.applyHvmHeaderConsensusUpdate(currentHead.Header(), false, true))
+	sidPre, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, currentHead.Hash().Bytes(), sidPre[:], "pre-insert state-id must be currentHead (tbcHeader)")
+	_, tipPre, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
+	require.NoError(t, err)
+	tipPreHash := tipPre.BlockHash()
+	require.Equal(t, checkpoint[:], tipPreHash[:], "pre-insert tip must be the genesis checkpoint")
+
+	// Step 2: forward advance for block N (state-id -> N, tip -> newTip, 3 headers added).
+	require.NoError(t, chain.applyHvmHeaderConsensusUpdate(blockN.Header(), false, true))
+	sidAdvanced, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, blockN.Hash().Bytes(), sidAdvanced[:], "after forward-apply the state-id must point at block N")
+	_, tipAdvanced, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
+	require.NoError(t, err)
+	tipAdvancedHash := tipAdvanced.BlockHash()
+	require.Equal(t, newTip[:], tipAdvancedHash[:], "after forward-apply the tip must be N's claimed canonical tip")
+
+	// Step 3: "EVM rejects N" -> revert to tbcHeader (the unwind the revert helper drives for a linear block).
+	require.NoError(t, chain.walkHvmHeaderConsensusBack(blockN.Header(), currentHead.Header()),
+		"revert to the pre-insert tip must succeed")
+
+	// ASSERTIONS: both the state-id and the added BTC headers are fully undone.
+	sidReverted, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, currentHead.Hash().Bytes(), sidReverted[:],
+		"revert must restore the upstream-state-id to the pre-insert tip (not leave it at the rejected block)")
+	require.NotEqual(t, blockN.Hash().Bytes(), sidReverted[:],
+		"a state-id left at block N means the rejected block's advance was not undone")
+	_, tipReverted, err := chain.tbcHeaderNode.BlockHeaderBest(chain.ctx)
+	require.NoError(t, err)
+	tipRevertedHash := tipReverted.BlockHash()
+	require.Equal(t, checkpoint[:], tipRevertedHash[:],
+		"revert must REMOVE the BTC headers the rejected block added (tip back to the checkpoint)")
+	for _, h := range headers {
+		_, _, err := chain.tbcHeaderNode.BlockHeaderByHash(chain.ctx, h.BlockHash())
+		require.Error(t, err, "revert must remove header %s from the store", h.BlockHash())
+	}
+}
+
+// TestHvmRevertFirstHvmBlockNilGuard exercises revertHvmStateAfterInvalidBlock on its tbcHeader==nil branch
+// (the first-hVM/activation block case): the pre-state is TBC genesis, which cannot be expressed as an
+// EVM-header revert target, so the helper must safely no-op (log + return) and rely on restart recovery —
+// not panic and not mutate the consensus state. This branch takes no full-TBC-node path, so it runs
+// directly. Guards against a change that dereferences a nil tbcHeader or reverts the activation block in
+// place.
+func TestHvmRevertFirstHvmBlockNilGuard(t *testing.T) {
+	const hvm0Time = uint64(1000)
+	chain, _ := newHvmTestChainWithLightTBC(t, hvm0Time)
+
+	sidBefore, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+
+	block := types.NewBlockWithHeader(&types.Header{Number: big.NewInt(11), Time: hvm0Time})
+	require.NotPanics(t, func() { chain.revertHvmStateAfterInvalidBlock(nil, block) },
+		"the first-hVM-block (nil tbcHeader) branch must be a safe no-op, never a nil deref")
+
+	sidAfter, err := chain.tbcHeaderNode.UpstreamStateId(chain.ctx)
+	require.NoError(t, err)
+	require.Equal(t, sidBefore[:], sidAfter[:], "the nil-tbcHeader branch must not mutate the upstream-state-id")
 }
