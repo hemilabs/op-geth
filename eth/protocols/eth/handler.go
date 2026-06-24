@@ -252,14 +252,15 @@ func handleMessage(backend Backend, peer *Peer) error {
 		if msg.Code == BtcBlocksMsg {
 			log.Debug(fmt.Sprintf("Raw BTC block message: %s", msg.String()))
 		}
-		// The Hemi BTC-gossip codes exist only on eth/68. Gate on the version explicitly: code
-		// 0x11 is GetBtcBlocksMsg on eth/68 but BlockRangeUpdateMsg on eth/69 (shared constant),
-		// and only the eth/68 BTC handlers process peer-supplied Bitcoin data through the embedded node.
+		// The Hemi BTC-gossip codes (GetBtcBlocksMsg 0x11, BtcBlocksMsg 0x12) exist only on eth/68.
+		// Gate on the version explicitly so only the eth/68 BTC handlers process peer-supplied Bitcoin
+		// data through the embedded node. BlockRangeUpdateMsg lives at 0x13 on eth/69, so these codes no
+		// longer share a constant with it; the per-version handler maps already disambiguate by code.
 		if peer.version == ETH68 && (msg.Code == GetBtcBlocksMsg || msg.Code == BtcBlocksMsg) {
 			// Process peer-supplied Bitcoin data behind a recover boundary: the per-peer handler
 			// goroutine has no recover() upstream, so a fault on a single malformed message would
-			// otherwise crash the whole process. The guard drops only the offending peer (eth/69's
-			// BlockRangeUpdateMsg on code 0x11 is not wrapped).
+			// otherwise crash the whole process. The guard wraps only these eth/68 BTC codes and drops
+			// only the offending peer; all other eth/68 and eth/69 messages run unwrapped.
 			return handleHvmBTCMessageGuarded(handler, backend, msg, peer)
 		}
 		return handler(backend, msg, peer)

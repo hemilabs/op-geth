@@ -668,29 +668,75 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 	return nil
 }
 
-func requestMissingAncestors(peer *Peer, parentHash *wire.BlockHeader) {
-	_, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(vm.MainCtx, parentHash)
-	if err != nil {
-		log.Error("Failed to check BTC ancestor availability", "hash", parentHash.BlockHash().String(), "err", err)
+// maxConcurrentAncestorWalks caps how many ancestor-fetch store-walks run at once. handleBTCBlocks spawns
+// one detached walk per inserted block (up to maxBtcBlocksServe per message), and each walk reads the
+// process-wide vm.TBCFullNode store; capping concurrency bounds contention on that single shared store.
+const maxConcurrentAncestorWalks = 4
+
+// ancestorWalkGate is a PROCESS-GLOBAL admission control (deliberately not per-peer): the cap must bound
+// contention on the single process-wide vm.TBCFullNode store, so per-handler caps would not compose. It
+// also dedups concurrent walks for the same parent. Anything it drops is re-requested by the 5s
+// prefetchBTCBlocks backstop, so it is a pure load limiter (see walkGate).
+var ancestorWalkGate = newWalkGate(maxConcurrentAncestorWalks)
+
+// tbcBlocksAvailableToHeader is a seam over vm.TBCBlocksAvailableToHeader so the ancestor-walk request
+// wiring (batching/chunking) is unit-testable without a live TBC full node. Never reassigned in production.
+var tbcBlocksAvailableToHeader = vm.TBCBlocksAvailableToHeader
+
+// requestMissingAncestors, on receiving a gossiped BTC block, requests from peer any ancestor blocks the
+// full node is still missing on the path to header (header is the inserted block's own *wire.BlockHeader).
+func requestMissingAncestors(peer *Peer, header *wire.BlockHeader) {
+	// This runs in a detached goroutine spawned from handleBTCBlocks, OUTSIDE the
+	// handleHvmBTCMessageGuarded recover boundary that contains faults in peer-supplied Bitcoin-data
+	// processing. A panic here (e.g. the goleveldb panic raised by a closed/torn TBC store during
+	// shutdown or a full-node restart) would otherwise crash the whole process, so contain it: log and
+	// drop this best-effort ancestor request.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("recovered from panic while requesting missing BTC ancestors", "peer", peer.ID(), "panic", r)
+		}
+	}()
+	if vm.TBCFullNode == nil {
 		return
 	}
+	// Admit this speculative walk only if a walk for the same parent is not already running and we are
+	// under the concurrency cap; otherwise drop it (the 5s prefetchBTCBlocks backstop re-requests anything
+	// dropped here, so this never strands a block). release also runs on the recover path above.
+	release, ok := ancestorWalkGate.tryEnter(common.Hash(header.BlockHash()))
+	if !ok {
+		return
+	}
+	defer release()
+	requestMissingAncestorBlocks(peer, header)
+}
 
+// requestMissingAncestorBlocks walks the missing ancestors of header and requests them from peer in
+// maxBtcBlocksServe-sized batches. Split from the gated/recovered wrapper above so the walk + batch +
+// chunk logic is unit-testable with a stubbed tbcBlocksAvailableToHeader and a pipe peer.
+func requestMissingAncestorBlocks(peer *Peer, header *wire.BlockHeader) {
+	_, blocksMissing, _, err := tbcBlocksAvailableToHeader(vm.MainCtx, header)
+	if err != nil {
+		log.Error("Failed to check BTC ancestor availability", "hash", header.BlockHash().String(), "err", err)
+		return
+	}
 	if blocksMissing == nil || len(*blocksMissing) == 0 {
 		return
 	}
-
-	log.Info("Requesting missing BTC ancestor blocks from peer", "count", len(*blocksMissing), "peer", peer.ID())
-
-	// request each block missing in its own request.  I don't know how large
-	// blocksMissing will be, so I don't want to request all at once.
-	// we could "batch" the requests, but that's not as readable as this for
-	// loop
+	hashes := make([]common.Hash, 0, len(*blocksMissing))
 	for _, bm := range *blocksMissing {
-		log.Info("requesting missing block from peer", "hash", common.Hash(bm.BlockHash()), "peer", peer.ID())
-		if err := peer.RequestBtcBlocks([]common.Hash{
-			common.Hash(bm.BlockHash()),
-		}); err != nil {
-			log.Error("could not request btc blocks from peer: %s", err)
+		hashes = append(hashes, common.Hash(bm.BlockHash()))
+	}
+	log.Info("Requesting missing BTC ancestor blocks from peer", "count", len(hashes), "peer", peer.ID())
+	// Chunk into maxBtcBlocksServe-sized requests. The serve side returns at most maxBtcBlocksServe blocks
+	// per response, so asking for more in one message is wasted; chunking also preserves a per-message
+	// bound (a single gossip block can imply an arbitrarily long missing ancestor run during catch-up).
+	for start := 0; start < len(hashes); start += maxBtcBlocksServe {
+		end := start + maxBtcBlocksServe
+		if end > len(hashes) {
+			end = len(hashes)
+		}
+		if err := peer.RequestBtcBlocks(hashes[start:end]); err != nil {
+			log.Error("could not request btc blocks from peer", "err", err, "count", end-start)
 		}
 	}
 }

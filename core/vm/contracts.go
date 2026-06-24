@@ -227,6 +227,14 @@ func SetupTBCFullNode(ctx context.Context, cfg *tbc.Config) error {
 }
 
 func BlockAvailableByCommonHash(hash common.Hash) bool {
+	if TBCFullNode == nil {
+		// Best-effort peer-fetch availability check, not a consensus path, so unlike the precompiles do
+		// not log.Crit and halt here: a node whose full node is not initialized (non-hVM, or mid
+		// full-node restart) has nothing to fetch, so report "available" to skip the futile peer request
+		// instead of nil-dereferencing TBCFullNode below.
+		log.Warn("BTC block availability checked but the TBC Full Node is not setup; skipping peer request", "hash", hash)
+		return true
+	}
 	var ch chainhash.Hash
 	if err := ch.SetBytes(hash.Bytes()); err != nil {
 		// should not happen, fail loudly if it does
@@ -234,8 +242,11 @@ func BlockAvailableByCommonHash(hash common.Hash) bool {
 	}
 	available, err := TBCFullNode.FullBlockAvailable(MainCtx, ch)
 	if err != nil {
-		// also should not happen, fail loudly if it does
-		log.Crit("Failed to check BTC block availability before peer request", "hash", hash, "err", err)
+		// Best-effort availability check on a NON-consensus path (reached synchronously from the engine-API
+		// forkchoice path, not under a recover): unlike the consensus precompiles, do not log.Crit/os.Exit
+		// on a transient store read error. Log and fall through to return false so the caller proceeds to
+		// request the block from peers — harmless if it is already present, and a genuine need is still met.
+		log.Warn("Failed to check BTC block availability before peer request; proceeding to request from peers", "hash", hash, "err", err)
 	} else if available {
 		log.Trace("BTC block already in TBC, skipping peer request", "hash", hash)
 		return true

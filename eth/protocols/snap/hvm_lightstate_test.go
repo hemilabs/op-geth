@@ -17,6 +17,7 @@
 package snap
 
 import (
+	"bytes"
 	"fmt"
 	"math/big"
 	"sync"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"github.com/btcsuite/btcd/chaincfg/chainhash"
+	"github.com/btcsuite/btcd/wire"
 	"github.com/stretchr/testify/require"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -163,6 +165,116 @@ func TestOnHvmLightStateHappyPath(t *testing.T) {
 	require.Equal(t, wantTip, (*calls)[0].btcTip, "canonical tip must be forwarded")
 	require.Equal(t, headers[len(headers)-1], (*calls)[0].hvmTip, "the last header must be forwarded")
 	require.Contains(t, s.hvmLightStateReqs, id, "the request ID is NOT consumed (so a later valid response can still complete the round)")
+}
+
+// A solicited, fully-validated response triggers a best-effort peer request for the BtcAttr canonical tip
+// block AND every BTC header carried in the BtcAttr tx. The requests are issued from detached goroutines,
+// so they only fire after the request-ID + pin validation gauntlet has accepted the response (a malicious
+// unsolicited packet cannot drive them). Pins the requestBtcBlockFromPeers wiring threaded through
+// NewSyncer (the merged hemi snap-sync block-fetch path).
+func TestOnHvmLightStateRequestsBtcBlocksFromPeers(t *testing.T) {
+	// BtcAttr carrying a canonical tip + two distinct serialized BTC headers.
+	btcTip := nonZeroTip()
+	hdr1 := wire.BlockHeader{Version: 1, Nonce: 111}
+	hdr2 := wire.BlockHeader{Version: 1, Nonce: 222}
+	var raw1, raw2 [types.BitcoinHeaderLengthBytes]byte
+	var b1, b2 bytes.Buffer
+	require.NoError(t, hdr1.Serialize(&b1))
+	require.NoError(t, hdr2.Serialize(&b2))
+	copy(raw1[:], b1.Bytes())
+	copy(raw2[:], b2.Bytes())
+
+	data, err := (&types.BtcAttributesDepositData{CanonicalTip: btcTip, Headers: [][types.BitcoinHeaderLengthBytes]byte{raw1, raw2}}).MarshalBinary()
+	require.NoError(t, err)
+	to := common.HexToAddress("0x4200000000000000000000000000000000000015")
+	tx := types.NewTx(&types.BtcAttributesDepositedTx{To: &to, Gas: 0, Data: data})
+	block := blockFromTxs(types.Transactions{tx})
+	require.True(t, block.Transactions()[0].IsBtcAttributesDepositedTx())
+
+	// Record every hash the syncer asks peers for (issued from detached goroutines).
+	var mu sync.Mutex
+	requested := map[common.Hash]int{}
+	s := NewSyncer(rawdb.NewMemoryDatabase(), rawdb.HashScheme,
+		func(*chainhash.Hash, *types.Header) {},
+		func(h common.Hash) { mu.Lock(); requested[h]++; mu.Unlock() })
+
+	reqTip, headers := pinnedHeaders(t, block, 2)
+	s.RequestHvmState(reqTip)
+	var id uint64
+	for k := range s.hvmLightStateReqs {
+		id = k
+	}
+
+	require.NoError(t, s.OnHvmLightState(&hvmLightStatePeer{id: "honest"}, id, headers, block))
+
+	want := map[common.Hash]struct{}{
+		common.Hash(btcTip):           {},
+		common.Hash(hdr1.BlockHash()): {},
+		common.Hash(hdr2.BlockHash()): {},
+	}
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		if len(requested) != len(want) {
+			return false
+		}
+		for h := range want {
+			if requested[h] == 0 {
+				return false
+			}
+		}
+		return true
+	}, 2*time.Second, 10*time.Millisecond, "must request the canonical tip + each BTC header block from peers")
+}
+
+// An unsolicited response must NOT trigger any peer BTC-block request: the request-ID presence check drops
+// it before the requestBtcBlockFromPeers fan-out, so a peer cannot use light-state packets to make us spam
+// block requests.
+func TestOnHvmLightStateUnsolicitedDoesNotRequestBtcBlocks(t *testing.T) {
+	var mu sync.Mutex
+	requested := 0
+	s := NewSyncer(rawdb.NewMemoryDatabase(), rawdb.HashScheme,
+		func(*chainhash.Hash, *types.Header) {},
+		func(common.Hash) { mu.Lock(); requested++; mu.Unlock() })
+
+	block := consistentBtcAttrBlock(t, nonZeroTip())
+	_, headers := pinnedHeaders(t, block, 2)
+	require.NoError(t, s.OnHvmLightState(&hvmLightStatePeer{id: "attacker"}, 999 /* never requested */, headers, block))
+
+	// Give any (erroneously) spawned goroutine a chance to run before asserting none did.
+	require.Never(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return requested > 0
+	}, 200*time.Millisecond, 20*time.Millisecond, "an unsolicited packet must not trigger peer BTC-block requests")
+}
+
+// A solicited, fully-validated response whose BtcAttr CanonicalTip is all-zeros must be rejected BEFORE the
+// BTC-block fan-out, so no (futile) all-zeros peer request is issued. Pins the zero-tip-before-fan-out
+// ordering: with the fan-out placed ahead of the zero-tip reject, the recorder would fire.
+func TestOnHvmLightStateZeroTipDoesNotFanOut(t *testing.T) {
+	var mu sync.Mutex
+	requested := 0
+	s := NewSyncer(rawdb.NewMemoryDatabase(), rawdb.HashScheme,
+		func(*chainhash.Hash, *types.Header) {},
+		func(common.Hash) { mu.Lock(); requested++; mu.Unlock() })
+
+	block := consistentBtcAttrBlock(t, [32]byte{}) // valid BtcAttr tx, but an all-zeros canonical tip
+	reqTip, headers := pinnedHeaders(t, block, 2)
+	s.RequestHvmState(reqTip)
+	var id uint64
+	for k := range s.hvmLightStateReqs {
+		id = k
+	}
+
+	err := s.OnHvmLightState(&hvmLightStatePeer{id: "honest"}, id, headers, block)
+	require.Error(t, err, "a solicited response with an all-zeros canonical tip must be rejected")
+	require.Contains(t, err.Error(), "canonical tip is zero")
+	require.Never(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return requested > 0
+	}, 200*time.Millisecond, 20*time.Millisecond, "a zero-tip response must be rejected before any peer BTC-block fan-out")
 }
 
 // Boundary: a response carrying EXACTLY maxHvmLightHeaders headers (the honest server's walk-back cap) must

@@ -544,6 +544,15 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 }
 
 func (e *Ethereum) SendRequestForHashToAllPeers(hash common.Hash) {
+	// Spawned as a detached goroutine by RequestBitcoinBlocksFromPeers, outside any recover boundary;
+	// contain panics so a fault in this best-effort peer fetch cannot crash the process, matching the
+	// sibling detached BTC-request goroutines (requestMissingAncestors, the requestBtcBlocksFromPeers
+	// closure).
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("recovered from panic while requesting BTC block from peers", "hash", hash, "panic", r)
+		}
+	}()
 	log.Trace("BTC block not found in TBC, making peer requests for block", "hash", hash)
 
 	for _, peer := range e.handler.peers.all() {

@@ -3003,8 +3003,18 @@ func (s *Syncer) OnHvmLightState(peer SyncPeer, id uint64, headers []*types.Head
 		return fmt.Errorf("hVM light state response block has no Bitcoin Attributes Deposited tx")
 	}
 
+	canonicalTip := btcAttrDep.CanonicalTip
+	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
+		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", peer.ID()))
+		return fmt.Errorf("error, hVM light state canonical tip is zero")
+	}
+
+	// Best-effort: ask peers for the BTC blocks this response references (the canonical tip + each BtcAttr
+	// header) so a full node lagging on bodies catches up faster. Placed AFTER the request-ID/pin
+	// validation and the zero-tip reject, so only a solicited, fully-validated, non-zero-tip response
+	// triggers any peer fan-out (and no dedup slot is spent on the all-zeros hash).
 	if s.requestBtcBlockFromPeers != nil {
-		go s.requestBtcBlockFromPeers(common.Hash(btcAttrDep.CanonicalTip))
+		go s.requestBtcBlockFromPeers(common.Hash(canonicalTip))
 		for _, rawHeader := range btcAttrDep.Headers {
 			var bh wire.BlockHeader
 			if err := bh.Deserialize(bytes.NewReader(rawHeader[:])); err != nil {
@@ -3013,12 +3023,6 @@ func (s *Syncer) OnHvmLightState(peer SyncPeer, id uint64, headers []*types.Head
 			}
 			go s.requestBtcBlockFromPeers(common.Hash(bh.BlockHash()))
 		}
-	}
-
-	canonicalTip := btcAttrDep.CanonicalTip
-	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
-		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", peer.ID()))
-		return fmt.Errorf("error, hVM light state canonical tip is zero")
 	}
 
 	ctHash, err := chainhash.NewHash(canonicalTip[:])
