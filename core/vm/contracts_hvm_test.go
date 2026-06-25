@@ -403,23 +403,43 @@ func TestEVMPrecompileDispatchHvm0Gate(t *testing.T) {
 	require.False(t, okOff, "an hVM precompile address must NOT dispatch when !IsHvm0")
 }
 
-// TestActivePrecompilesHvm0PragueWithoutJovian pins the distinct ActivePrecompiles sub-branch where, when
-// IsHvm0 && IsPrague && !IsOptimismJovian, the active set is ONLY the hVM precompiles — the upstream Prague
-// precompiles (e.g. BLS G1ADD at 0x0b) are excluded. TestActivePrecompilesHvm0Inclusion exercises the default
-// (!IsPrague) append branch; this exclusion behavior is structurally different. Pure params.Rules -> []Address.
-func TestActivePrecompilesHvm0PragueWithoutJovian(t *testing.T) {
-	active := ActivePrecompiles(params.Rules{IsHvm0: true, IsPrague: true, IsOptimismJovian: false})
-
-	require.Len(t, active, len(PrecompiledAddressesHvm0), "Prague+IsHvm0+!Jovian must return ONLY the hVM precompiles")
-	hvmSet := map[common.Address]bool{}
-	for _, a := range PrecompiledAddressesHvm0 {
-		hvmSet[a] = true
+// TestActivePrecompilesHvm0AppendsToUpstream pins that ActivePrecompiles, when IsHvm0 is active, returns the
+// active upstream precompile set with the hVM set appended — for EVERY rules combination, including the
+// IsPrague && !IsOptimismJovian window. The active set must equal activePrecompiles(rules) + the hVM set with
+// no special-casing, matching the deployed binary; an only-hVM warm set in that window would drop the standard
+// precompiles (e.g. ecrecover 0x01) and the upstream Prague precompiles (e.g. BLS G1ADD 0x0b) from the
+// EIP-2929 warm-address set, diverging from mainnet on access gas and the state root. This guards against
+// re-introducing that divergence.
+func TestActivePrecompilesHvm0AppendsToUpstream(t *testing.T) {
+	contains := func(addrs []common.Address, a common.Address) bool {
+		for _, x := range addrs {
+			if x == a {
+				return true
+			}
+		}
+		return false
 	}
-	for _, a := range active {
-		require.Truef(t, hvmSet[a], "only hVM addresses may be present in this branch, found %s", a)
+	for _, rules := range []params.Rules{
+		{IsHvm0: true, IsPrague: true, IsOptimismJovian: false}, // the (formerly special-cased) Prague-pre-Jovian window
+		{IsHvm0: true, IsPrague: true, IsOptimismJovian: true},
+		{IsHvm0: true},
+	} {
+		upstream := activePrecompiles(rules)
+		active := ActivePrecompiles(rules)
+		require.Len(t, active, len(upstream)+len(PrecompiledAddressesHvm0),
+			"active set must be exactly the upstream set plus the hVM set (no special-casing) to match mainnet")
+		for _, a := range upstream {
+			require.Truef(t, contains(active, a), "upstream precompile %s must remain in the warm set", a)
+		}
+		for _, a := range PrecompiledAddressesHvm0 {
+			require.Truef(t, contains(active, a), "hVM precompile %s must be in the warm set", a)
+		}
 	}
-	require.NotContains(t, active, common.BytesToAddress([]byte{0x0b}),
-		"the upstream Prague BLS precompile (0x0b) must be excluded in the IsHvm0+Prague+!Jovian branch")
+	// Concretely, in the Prague-pre-Jovian window the standard ecrecover (0x01) and the upstream Prague BLS
+	// precompile (0x0b) must NOT be dropped.
+	pragueActive := ActivePrecompiles(params.Rules{IsHvm0: true, IsPrague: true, IsOptimismJovian: false})
+	require.True(t, contains(pragueActive, common.BytesToAddress([]byte{0x01})), "ecrecover (0x01) must stay warm (mainnet-compatible)")
+	require.True(t, contains(pragueActive, common.BytesToAddress([]byte{0x0b})), "Prague BLS precompile (0x0b) must stay warm (mainnet-compatible)")
 }
 
 // TestHvmPrecompileNameDistinctAndNonEmpty pins that every hVM precompile's Name() is non-empty and the 10 names are

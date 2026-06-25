@@ -1122,9 +1122,11 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 
 	switch {
 	case rules.IsHvm0:
-		if rules.IsPrague && !rules.IsOptimismJovian {
-			return append([]common.Address{}, PrecompiledAddressesHvm0...)
-		}
+		// Append the hVM precompiles to the active upstream set. The active upstream set is whatever
+		// activePrecompiles selects for the chain's current fork (an OP L2 returns its OP-fork set, e.g.
+		// Isthmus, before any L1-only fork). This must match the deployed binary's behavior exactly so a
+		// node re-executing live history produces the same EIP-2929 warm-address set and thus the same gas
+		// and state root.
 		return append(nonHvmPrecompiles, PrecompiledAddressesHvm0...)
 	default:
 		return nonHvmPrecompiles
