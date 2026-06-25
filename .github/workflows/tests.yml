@@ -37,13 +37,13 @@ jobs:
       - name: "test"
         run: make test
 
-      # I2 differential-replay gate (mainnet), run UNDER ENFORCEMENT so the enforcement path the gate is built
+      # differential-replay gate (mainnet), run UNDER ENFORCEMENT so the enforcement path the gate is built
       # around is actually exercised in CI: HEMI_HISTORY_GATE_REQUIRED turns an absent fixture into a hard FAIL
       # (never a silent skip), and the EXPECT_TIP_* coverage pins bind the committed bounded fixture to the real
       # chain (tip 887040). Replays real mainnet headers 883093..887040 under MainNetParams; any contextual-
       # difficulty/PoW RuleError above floor+clearance — or a missing/truncated/substituted fixture — reddens CI.
-      - name: "hVM I2 differential-replay gate (mainnet, enforced)"
-        if: always()  # run the I2 gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
+      - name: "hVM differential-replay gate (mainnet, enforced)"
+        if: always()  # run the gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
         env:
           HEMI_HISTORY_GATE_REQUIRED: "1"
           HEMI_MAINNET_VERIFY: "testdata/btcattr_mainnet_history.ndjson"
@@ -55,15 +55,15 @@ jobs:
           set -o pipefail
           out=$(go test ./core/vm/ -run '^TestBtcDiffValidatorAcceptsAllMainnetCommittedHistory$|^TestMainnetHistoryFixtureIsContiguousAndConnectsToGenesis$' -count=1 -v 2>&1) || true
           echo "$out"
-          echo "$out" | grep -q -- '--- PASS: TestBtcDiffValidatorAcceptsAllMainnetCommittedHistory (' || { echo "I2 GATE ERROR: mainnet replay test did not run+PASS (renamed/misfiltered? a non-matching -run exits 0)"; exit 1; }
-          echo "$out" | grep -q -- '--- PASS: TestMainnetHistoryFixtureIsContiguousAndConnectsToGenesis (' || { echo "I2 GATE ERROR: mainnet integrity guard did not run+PASS"; exit 1; }
+          echo "$out" | grep -q -- '--- PASS: TestBtcDiffValidatorAcceptsAllMainnetCommittedHistory (' || { echo "HISTORY GATE ERROR: mainnet replay test did not run+PASS (renamed/misfiltered? a non-matching -run exits 0)"; exit 1; }
+          echo "$out" | grep -q -- '--- PASS: TestMainnetHistoryFixtureIsContiguousAndConnectsToGenesis (' || { echo "HISTORY GATE ERROR: mainnet integrity guard did not run+PASS"; exit 1; }
 
-      # testnet3 I2 gate (the SHIPPED DEFAULT network; the only lane exercising ReduceMinDifficulty), enforced
+      # testnet3 differential-replay gate (the SHIPPED DEFAULT network; the only lane exercising ReduceMinDifficulty), enforced
       # against its committed bounded fixture (real headers 3522420..3525984, incl. 116 diff-1 headers). Same
       # enforcement contract as mainnet: REQUIRED turns an absent fixture into a hard FAIL; coverage pins bind to
       # the real chain (tip 3525984).
-      - name: "hVM I2 differential-replay gate (testnet3, enforced)"
-        if: always()  # run the I2 gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
+      - name: "hVM differential-replay gate (testnet3, enforced)"
+        if: always()  # run the gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
         env:
           HEMI_HISTORY_GATE_REQUIRED: "1"
           HEMI_TESTNET3_VERIFY: "testdata/btcattr_testnet3_history.ndjson"
@@ -73,16 +73,16 @@ jobs:
           set -o pipefail
           out=$(go test ./core/vm/ -run '^TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory$|^TestTestnet3HistoryFixtureIsContiguousAndConnectsToGenesis$' -count=1 -v 2>&1) || true
           echo "$out"
-          echo "$out" | grep -q -- '--- PASS: TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory (' || { echo "I2 GATE ERROR: testnet3 replay test did not run+PASS (renamed/misfiltered? a non-matching -run exits 0)"; exit 1; }
-          echo "$out" | grep -q -- '--- PASS: TestTestnet3HistoryFixtureIsContiguousAndConnectsToGenesis (' || { echo "I2 GATE ERROR: testnet3 integrity guard did not run+PASS"; exit 1; }
+          echo "$out" | grep -q -- '--- PASS: TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory (' || { echo "HISTORY GATE ERROR: testnet3 replay test did not run+PASS (renamed/misfiltered? a non-matching -run exits 0)"; exit 1; }
+          echo "$out" | grep -q -- '--- PASS: TestTestnet3HistoryFixtureIsContiguousAndConnectsToGenesis (' || { echo "HISTORY GATE ERROR: testnet3 integrity guard did not run+PASS"; exit 1; }
 
-      # I2 APPLY-PATH differential-replay gate (round-4): replay the SAME committed fixtures through the real apply
+      # apply-path differential-replay gate: replay the SAME committed fixtures through the real apply
       # path (AddExternalHeaders + cumulative-work CanonicalTip selection + per-block tip-claim, enforce=true) — the
       # only lane that runs REAL committed history through the canonical-tip computation (the linear fixture
       # exercises extend-the-tip; the tie-break/reject side is covered by synthetic regtest tests). Enforced with
       # coverage pins + a run+PASS vacuity guard. Paths are relative to the ./core package dir (vm/testdata/...).
-      - name: "hVM I2 apply-path replay gate (mainnet + testnet3, enforced)"
-        if: always()  # run the I2 gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
+      - name: "hVM apply-path replay gate (mainnet + testnet3, enforced)"
+        if: always()  # run the gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
         env:
           HEMI_HISTORY_GATE_REQUIRED: "1"
           HEMI_MAINNET_VERIFY: "vm/testdata/btcattr_mainnet_history.ndjson"
@@ -95,5 +95,5 @@ jobs:
           set -o pipefail
           out=$(go test ./core/ -run '^TestHvmReplaysAllMainnetBtcAttrThroughApplyPath$|^TestHvmReplaysAllTestnet3BtcAttrThroughApplyPath$' -count=1 -v 2>&1) || true
           echo "$out"
-          echo "$out" | grep -q -- '--- PASS: TestHvmReplaysAllMainnetBtcAttrThroughApplyPath (' || { echo "I2 GATE ERROR: mainnet apply-path replay did not run+PASS (renamed/misfiltered? a non-matching -run exits 0)"; exit 1; }
-          echo "$out" | grep -q -- '--- PASS: TestHvmReplaysAllTestnet3BtcAttrThroughApplyPath (' || { echo "I2 GATE ERROR: testnet3 apply-path replay did not run+PASS"; exit 1; }
+          echo "$out" | grep -q -- '--- PASS: TestHvmReplaysAllMainnetBtcAttrThroughApplyPath (' || { echo "HISTORY GATE ERROR: mainnet apply-path replay did not run+PASS (renamed/misfiltered? a non-matching -run exits 0)"; exit 1; }
+          echo "$out" | grep -q -- '--- PASS: TestHvmReplaysAllTestnet3BtcAttrThroughApplyPath (' || { echo "HISTORY GATE ERROR: testnet3 apply-path replay did not run+PASS"; exit 1; }

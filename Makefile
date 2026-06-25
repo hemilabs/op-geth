@@ -28,7 +28,7 @@ all:
 test: all
 	$(GORUN) build/ci.go test
 
-#? hvm-history-gate: Run the I2 differential-replay gate (proves committed hVM BTC history is clean).
+#? hvm-history-gate: Run the differential-replay gate (proves committed hVM BTC history is clean).
 # Provisions the reconstructed NDJSON from CHAINDATA, then runs the gate ENFORCED (HEMI_HISTORY_GATE_REQUIRED=1)
 # with the coverage + real-chain pins.
 # Required vars (mainnet): CHAINDATA (a FULL-history node), MAINNET_TIP_HEIGHT (real BTC tip HEIGHT, coverage
@@ -55,7 +55,7 @@ hvm-history-gate:
 	@if [ -n "$(TESTNET3_CHAINDATA)" ]; then $(MAKE) hvm-history-gate-testnet3; \
 	else echo "WARNING: testnet3 lane SKIPPED. The shipped default node runs testnet3 (ReduceMinDifficulty=true); the mainnet-only gate (ReduceMinDifficulty=false) CANNOT exercise the min-difficulty rule. Set TESTNET3_CHAINDATA + TESTNET3_TIP_HEIGHT/HASH to gate the shipped network."; fi
 
-#? hvm-history-gate-testnet3: Run the I2 gate for testnet3 (the shipped default network; exercises ReduceMinDifficulty).
+#? hvm-history-gate-testnet3: Run the differential-replay gate for testnet3 (the shipped default network; exercises ReduceMinDifficulty).
 hvm-history-gate-testnet3:
 	@test -n "$(TESTNET3_CHAINDATA)" || { echo "set TESTNET3_CHAINDATA=<datadir>/geth/chaindata (a FULL-history testnet3 node)"; exit 1; }
 	@case '$(TESTNET3_TIP_HEIGHT)' in ''|*[!0-9]*|0) echo "TESTNET3_TIP_HEIGHT must be a positive integer (real testnet3 BTC tip height)"; exit 1;; esac
