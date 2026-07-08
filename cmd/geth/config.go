@@ -373,6 +373,13 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 
 		fullNodeTbcCfg.PeersWanted = 16
 
+		// The full node only answers hVM precompile queries against CONFIRMED, indexed Bitcoin state; no
+		// hVM consensus path reads the mempool (the sole mempool consumer, UtxosByAddress' filterMempool
+		// branch, is only reached with filterMempool=true, which the precompile call site never passes).
+		// NewDefaultConfig enables the mempool by default; disable it here to drop the extra P2P/indexing
+		// work and failure surface it would otherwise carry.
+		fullNodeTbcCfg.MempoolEnabled = false
+
 		logLevel := "INFO"  // Anything 0-3 (silent to info) maps to "INFO" for TBC
 		if verbosity == 4 { // Geth debug = TBC DEBUG
 			logLevel = "DEBUG"
