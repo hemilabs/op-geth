@@ -307,6 +307,19 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 		return nil, 0, &b.Hash, false, err
 	}
 
+	// A caller-supplied height that disagrees with the stored height means the caller paired a hash with the
+	// wrong height. A block's height is fixed for a given hash, so this is a genuine inconsistency, not a
+	// reorg artifact. The walk uses the fetched heights and is unaffected; surface the mismatch so a
+	// regressed caller (e.g. an indexer tracking a stale sync position) does not stay silently masked.
+	if a.Height != aHeight {
+		log.Warn("FindCommonAncestor: caller-supplied height does not match stored height; using stored height",
+			"hash", a.Hash.String(), "supplied", a.Height, "stored", aHeight)
+	}
+	if b.Height != bHeight {
+		log.Warn("FindCommonAncestor: caller-supplied height does not match stored height; using stored height",
+			"hash", b.Hash.String(), "supplied", b.Height, "stored", bHeight)
+	}
+
 	highCursorHeader, highCursorHeight := aHeader, aHeight
 	lowCursorHeader, lowCursorHeight := bHeader, bHeight
 	if bHeight > aHeight {
