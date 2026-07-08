@@ -153,8 +153,9 @@ func (r *tbcCtxResolver) fetch(hash chainhash.Hash) (*wire.BlockHeader, uint64, 
 	return hdr, height, true
 }
 
-// fetchContiguousParent resolves childHash (the PrevBlock of a node at childHeight) and additionally
-// height-contiguity cross-checks it: a resolved parent's stored height must be exactly childHeight-1.
+// fetchContiguousParent resolves parentHash (the PrevBlock of a node at childHeight — i.e. the hash of
+// that node's parent) and additionally height-contiguity cross-checks it: a resolved parent's stored
+// height must be exactly childHeight-1.
 // This is the free per-hop hardening that every height-driven ancestry walk (retarget anchor,
 // testnet3 min-difficulty, median-time-past) shares — each walk fetches a parent given its child's
 // height, so the check costs nothing extra and catches a round-tripping height corruption at any hop,
@@ -162,8 +163,8 @@ func (r *tbcCtxResolver) fetch(hash chainhash.Hash) (*wire.BlockHeader, uint64, 
 // existing fail-closed handling (returns !ok with no heightInconsistent set), so Parent()'s legitimate
 // floor-stop is preserved. A height mismatch (or a childHeight of 0 that nonetheless resolved a parent)
 // latches heightInconsistent and returns !ok, so the caller skips rather than computing a verdict.
-func (r *tbcCtxResolver) fetchContiguousParent(childHash chainhash.Hash, childHeight uint64) (*wire.BlockHeader, uint64, bool) {
-	phdr, pheight, ok := r.fetch(childHash)
+func (r *tbcCtxResolver) fetchContiguousParent(parentHash chainhash.Hash, childHeight uint64) (*wire.BlockHeader, uint64, bool) {
+	phdr, pheight, ok := r.fetch(parentHash)
 	if !ok {
 		return nil, 0, false
 	}
