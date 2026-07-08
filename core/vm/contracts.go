@@ -361,8 +361,7 @@ var ErrTBCMissingHeader = errors.New("full TBC node is missing a required BTC he
 // or the distinct database.BlockNotFoundError for block-body reads), so those remain fail-stop rather
 // than being laundered into an endless deferral.
 func isTBCMissingHeader(err error) bool {
-	var notFound database.NotFoundError
-	return errors.As(err, &notFound)
+	return errors.Is(err, database.ErrNotFound)
 }
 
 // TBCIndexToHashHeight first checks to make sure the UTXO and Tx indexers
@@ -612,7 +611,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	// blocks were available to index to the two different tips
 	commonIndexTip, commonIndexTipHeight, missingHeaderHashIndexerAncestorSearch, _, err := FindCommonAncestor(&utxoSync, &txSync)
 	if err != nil {
-		if errors.Is(err, database.ErrNotFound) {
+		if isTBCMissingHeader(err) {
 			// A header wasn't found when looking for the common ancestor.
 			return false, nil, missingHeaderHashIndexerAncestorSearch, nil
 		}
@@ -623,7 +622,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 
 	targetHH, err := hashHeightForHeader(ctx, endingHeader)
 	if err != nil {
-		if errors.Is(err, database.ErrNotFound) {
+		if isTBCMissingHeader(err) {
 			endingHeaderHash := endingHeader.BlockHash()
 			log.Warn(fmt.Sprintf("Header %s not found", endingHeaderHash.String()), "err", err)
 			// TBC full node does not know about the ending header
@@ -635,7 +634,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	// Find common ancestor between current common index ancestor tip and target header
 	ancestorToTarget, _, missingHeaderHashTargetAncestorSearch, _, err := FindCommonAncestor(tipHH, targetHH)
 	if err != nil {
-		if errors.Is(err, database.ErrNotFound) {
+		if isTBCMissingHeader(err) {
 			return false, nil, missingHeaderHashTargetAncestorSearch, nil
 		}
 		return false, nil, nil, err
@@ -644,7 +643,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 	ancestorToTargetHash := ancestorToTarget.BlockHash()
 	_, ancestorHeight, err := TBCFullNode.BlockHeaderByHash(ctx, ancestorToTargetHash)
 	if err != nil {
-		if errors.Is(err, database.ErrNotFound) {
+		if isTBCMissingHeader(err) {
 			// Should be impossible, as if the ancestor header is not available FindCommonAncestor
 			// would have returned an error already.
 			return false, nil, &ancestorToTargetHash, nil
@@ -696,7 +695,7 @@ func TBCBlocksAvailableToHeader(ctx context.Context, endingHeader *wire.BlockHea
 		if err != nil {
 			// Should be impossible as a missing header would have been identified when finding the
 			// common ancestor between target and lowest indexed tip.
-			if errors.Is(err, database.ErrNotFound) {
+			if isTBCMissingHeader(err) {
 				return false, nil, &prevBlockHash, nil
 			}
 			log.Warn(fmt.Sprintf("Unable to get block header for cursor's previous block %s, got error other "+

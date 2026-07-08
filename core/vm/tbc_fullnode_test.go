@@ -1564,10 +1564,90 @@ func TestIsTBCMissingHeader(t *testing.T) {
 		fmt.Errorf("block decode data corruption: %w", errors.New("boom")),
 		database.ErrBlockNotFound,
 		fmt.Errorf("wrapped: %w", database.ErrBlockNotFound),
+		// The other database sentinel with a custom Is (own-type only); must not be mistaken for a header.
+		database.ErrDuplicate,
+		fmt.Errorf("wrapped: %w", database.ErrDuplicate),
 	} {
 		if isTBCMissingHeader(err) {
 			t.Errorf("isTBCMissingHeader(%v) = true, want false (only header NotFound is deferrable)", err)
 		}
+	}
+}
+
+// foreignNotFoundMatcher is an adversarial error type whose Is method reports true for ANY
+// database.NotFoundError target while not being a database.NotFoundError itself. It is one of exactly two
+// constructions under which isTBCMissingHeader's errors.Is(err, database.ErrNotFound) form could disagree
+// with the older errors.As(err, &database.NotFoundError{}) form (the other being a *NotFoundError pointer,
+// exercised below): errors.Is consults each node's Is method (so it matches this type), while errors.As
+// matches only by concrete type (so it does not). Neither construction is reachable from the TBC
+// header-read call sites today — the leaf error is a bare value NotFoundError, no heminetwork code takes
+// its address, and every database error type and the underlying goleveldb use strict own-type Is guards —
+// so the two forms are co-extensive in production.
+type foreignNotFoundMatcher struct{}
+
+func (foreignNotFoundMatcher) Error() string { return "foreign type matching NotFoundError targets" }
+
+func (foreignNotFoundMatcher) Is(target error) bool {
+	_, ok := target.(database.NotFoundError)
+	return ok
+}
+
+// asMissingHeader is the pre-refactor form of isTBCMissingHeader (errors.As against a NotFoundError
+// value). isTBCMissingHeader now uses errors.Is(err, database.ErrNotFound); the two must classify every
+// error that can actually reach the TBC header-read call sites identically.
+func asMissingHeader(err error) bool {
+	var notFound database.NotFoundError
+	return errors.As(err, &notFound)
+}
+
+// TestIsTBCMissingHeaderEquivalentToErrorsAs pins that the errors.Is form of isTBCMissingHeader is
+// co-extensive with the older errors.As form on every error shape reachable at the header-read sites, and
+// isolates the two (unreachable) constructions under which they could diverge: a foreign type whose Is
+// matches a NotFoundError target, and a *NotFoundError pointer (errors.Is matches it via the promoted
+// value-receiver Is; errors.As does not, since a pointer is not assignable to the value type). If a future
+// dependency bump makes either reachable — e.g. the header store starts returning &NotFoundError, or a new
+// error type gains an Is that matches a NotFoundError target — this test is where that regression surfaces.
+func TestIsTBCMissingHeaderEquivalentToErrorsAs(t *testing.T) {
+	reachable := []error{
+		nil,
+		database.ErrNotFound,
+		database.NotFoundError("block header not found: deadbeef"),
+		fmt.Errorf("db block header by hash: %w", database.NotFoundError("x")),
+		fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", database.ErrNotFound)),
+		errors.New("io error"),
+		fmt.Errorf("corruption: %w", errors.New("boom")),
+		database.ErrBlockNotFound,
+		fmt.Errorf("wrapped: %w", database.ErrBlockNotFound),
+		database.ErrDuplicate,
+		fmt.Errorf("wrapped: %w", database.ErrDuplicate),
+		context.Canceled,
+		fmt.Errorf("ctx: %w", context.DeadlineExceeded),
+	}
+	for _, err := range reachable {
+		if got, want := isTBCMissingHeader(err), asMissingHeader(err); got != want {
+			t.Errorf("isTBCMissingHeader(%v)=%v but the errors.As form=%v; the refactor must be co-extensive on every reachable error shape", err, got, want)
+		}
+	}
+
+	// The two constructions where the forms diverge — neither reachable from the header-read paths —
+	// asserted here so a dependency that later makes either reachable cannot land silently.
+	// (1) a foreign type whose Is matches a NotFoundError target.
+	foreign := foreignNotFoundMatcher{}
+	if !isTBCMissingHeader(foreign) {
+		t.Error("errors.Is form should match the adversarial foreign matcher (documents a divergence class)")
+	}
+	if asMissingHeader(foreign) {
+		t.Error("errors.As form should NOT match the adversarial foreign matcher (it is not a NotFoundError)")
+	}
+	// (2) a *NotFoundError pointer: errors.Is matches via the promoted value-receiver Is; errors.As does
+	// not (a *NotFoundError is not assignable to a NotFoundError value target). The real leaf is a value,
+	// so this only diverges if heminetwork ever starts returning the address of a NotFoundError.
+	nfe := database.NotFoundError("ptr not found")
+	if ptr := &nfe; !isTBCMissingHeader(ptr) {
+		t.Error("errors.Is form should match a *NotFoundError via the promoted Is method")
+	}
+	if ptr := &nfe; asMissingHeader(ptr) {
+		t.Error("errors.As form should NOT match a *NotFoundError (a pointer is not assignable to the value type)")
 	}
 }
 
