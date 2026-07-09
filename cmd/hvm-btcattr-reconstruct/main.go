@@ -57,6 +57,9 @@ var (
 	errVacuousFixture = errors.New("reconstruction produced a vacuous fixture: zero BTC headers across the emitted BtcAttr lines")
 )
 
+// progressLogInterval is the number of emitted BtcAttr lines between reconstruction progress log lines.
+const progressLogInterval = 5000
+
 // scanResult holds the counters scanBtcAttrHistory accumulates while walking the canonical chain.
 type scanResult struct {
 	emitted, scanned, missing, rawHeaders int
@@ -107,7 +110,7 @@ func scanBtcAttrHistory(db ethdb.Database, cfg *params.ChainConfig, start, end u
 		}
 		res.emitted++
 		res.rawHeaders += len(hdrs)
-		if res.emitted%5000 == 0 {
+		if res.emitted%progressLogInterval == 0 {
 			log.Info("reconstructing", "L2height", n, "btcattr_lines", res.emitted)
 		}
 	}
