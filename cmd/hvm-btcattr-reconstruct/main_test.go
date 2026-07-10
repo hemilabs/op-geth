@@ -51,7 +51,7 @@ func serializeHdr(t *testing.T, h wire.BlockHeader) string {
 	t.Helper()
 	var buf bytes.Buffer
 	require.NoError(t, h.Serialize(&buf))
-	require.Equal(t, 80, buf.Len(), "a BTC header must serialize to 80 bytes")
+	require.Equal(t, types.BitcoinHeaderLengthBytes, buf.Len(), "a BTC header must serialize to 80 bytes")
 	return hex.EncodeToString(buf.Bytes())
 }
 
