@@ -1213,9 +1213,11 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		log.Crit("hVM Precompile called but the TBC Full Node is not setup")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: return the error rather than log.Crit/halt the node on this otherwise-unreachable internal
@@ -1280,9 +1282,11 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -1307,7 +1311,7 @@ func (c *btcTxConfirmations) Run(input []byte, blockContext common.Hash) ([]byte
 	slices.Reverse(txid)
 
 	txHash := chainhash.Hash{}
-	err := txHash.SetBytes(txid[:])
+	err = txHash.SetBytes(txid[:])
 	if err != nil {
 		log.Warn("Unable to lookup tx confirmations by Txid; unable to convert txid %x to chainhash!", "txid", txid, "err", err)
 	}
@@ -1375,9 +1379,11 @@ func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, e
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -1437,9 +1443,11 @@ func (c *btcLastHeader) Run(input []byte, blockContext common.Hash) ([]byte, err
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -1540,9 +1548,11 @@ func (c *btcHeaderN) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -1656,9 +1666,11 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -1743,9 +1755,11 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -1779,7 +1793,7 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 	log.Debug(fmt.Sprintf("Looking up input %d for txid %x", inputIdx, txid))
 
 	ch := chainhash.Hash{}
-	err := ch.SetBytes(txid)
+	err = ch.SetBytes(txid)
 	if err != nil {
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
@@ -1885,9 +1899,11 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -1920,7 +1936,7 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 	log.Info(fmt.Sprintf("Looking up output %d for txid %x", outputIdx, txid))
 
 	ch := chainhash.Hash{}
-	err := ch.SetBytes(txid)
+	err = ch.SetBytes(txid)
 	if err != nil {
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
@@ -1995,9 +2011,11 @@ func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]by
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -2032,7 +2050,7 @@ func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]by
 	log.Debug(fmt.Sprintf("Looking up witness %d for input %d in txid %x", inputWitnessIndex, inputIdx, txid))
 
 	ch := chainhash.Hash{}
-	err := ch.SetBytes(txid)
+	err = ch.SetBytes(txid)
 	if err != nil {
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
@@ -2101,9 +2119,11 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		log.Crit("TBCIndexer is nil!")
 	}
 
-	var k hVMQueryKey
+	var (
+		k   hVMQueryKey
+		err error
+	)
 	if isValidBlock(blockContext) {
-		var err error
 		k, err = calculateHVMQueryKey(input, hvmContractsToAddress[reflect.TypeOf(c)][0], blockContext)
 		if err != nil {
 			// Fail-closed: do NOT proceed with a zero/garbage key (which would poison the cache under key{} on a
@@ -2163,7 +2183,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 	maxOutputScriptSize := 0x01 << (4 + maxOutputScriptSizeExponent)
 
 	ch := chainhash.Hash{}
-	err := ch.SetBytes(txid)
+	err = ch.SetBytes(txid)
 	if err != nil {
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
