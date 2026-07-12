@@ -1,4 +1,5 @@
 // Copyright 2024 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 
 package types

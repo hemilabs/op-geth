@@ -1,4 +1,6 @@
-// Copyright 2025 The go-ethereum Authors
+// Copyright 2021 The go-ethereum Authors
+// Copyright 2023 Bloq, Inc.
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
