@@ -360,15 +360,6 @@ func FindCommonAncestor(a *tbc.HashHeight, b *tbc.HashHeight) (*wire.BlockHeader
 	return lowCursorHeader, lowCursorHeight, nil, true, nil
 }
 
-// ErrTBCMissingHeader is returned by TBCIndexToHashHeight when the full TBC node is missing a BTC
-// header required to move its indexers to the requested target. It is transient and recoverable: the
-// full TBC node is a P2P crawler that never prunes headers (not in ExternalHeaderMode), so the missing
-// header is one it has not synced yet and ongoing header sync will deliver it. core/vm cannot import
-// the consensus package (import cycle), so callers in core/blockchain.go translate this sentinel to
-// consensus.ErrFullTBCMissingBTCHeader, which the block-import path treats as a deferrable retry.
-// Genuine corruption / I/O errors are not mapped to this sentinel; they remain fail-stop.
-var ErrTBCMissingHeader = errors.New("full TBC node is missing a required BTC header")
-
 // isTBCMissingHeader reports whether err is a TBC "header not found"
 // (database.NotFoundError) — the transient, recoverable condition where the full TBC node has not
 // synced a header yet. It deliberately does not match other faults (corruption / I/O / context errors,
