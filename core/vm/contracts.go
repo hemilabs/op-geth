@@ -1032,16 +1032,24 @@ func init() {
 	for k := range PrecompiledContractsHvm0 {
 		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
 	}
-	// The Prague, Osaka, and OP-stack (Fjord/Granite/Isthmus/Jovian) precompile-address
-	// lists are intentionally left unpopulated. On the Hemi network these addresses are NOT
-	// pre-warmed into the EIP-2929 access list at transaction start, so ActivePrecompiles
-	// must not return them: warming a standard precompile that the network keeps cold makes
-	// the first CALL to it cost 100 (warm) instead of 2600 (cold), a 2500-gas undercharge
-	// that diverges gasUsed and the state root from live history. Populating these — e.g. by
-	// mirroring an upstream change that ranges over the PrecompiledContracts* maps here —
-	// would reintroduce that consensus split; TestActivePrecompilesHvm0AppendsToUpstream
-	// pins all six lists empty to catch exactly that. The precompiles remain callable; only
-	// the EIP-2929 warm set is affected, and it is sourced solely from these address lists.
+	// Pure-Ethereum fork precompile-address lists (Prague, Osaka) ARE populated, so the standard
+	// EIP-2929 warm-precompile behavior applies on the non-OP execution path (the one upstream
+	// state tests exercise). The OP-stack fork lists (Fjord/Granite/Isthmus/Jovian) are
+	// intentionally left EMPTY: on the Hemi network these precompiles are NOT pre-warmed into the
+	// access list at transaction start, so ActivePrecompiles must not return them. Every real Hemi
+	// block runs under an OP-stack fork (Fjord onward), so it uses these empty lists and charges the
+	// first CALL to a precompile cold (2600) rather than warm (100); populating them would undercharge
+	// by 2500 gas and split gasUsed and the state root from live history. A real Hemi block never
+	// reaches the Prague/Osaka cases in activePrecompiles (an OP-stack fork always matches first), so
+	// populating those lists is consensus-invisible on-chain and only restores standard behavior for
+	// the pure-Ethereum path. Mirroring an upstream change that also ranges over the OP-stack
+	// PrecompiledContracts* maps here would reintroduce the split; the guard test pins those empty.
+	for k := range PrecompiledContractsPrague {
+		PrecompiledAddressesPrague = append(PrecompiledAddressesPrague, k)
+	}
+	for k := range PrecompiledContractsOsaka {
+		PrecompiledAddressesOsaka = append(PrecompiledAddressesOsaka, k)
+	}
 }
 
 func activePrecompiledContracts(rules params.Rules) PrecompiledContracts {

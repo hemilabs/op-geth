@@ -404,14 +404,14 @@ func TestEVMPrecompileDispatchHvm0Gate(t *testing.T) {
 	require.False(t, okOff, "an hVM precompile address must NOT dispatch when !IsHvm0")
 }
 
-// TestActivePrecompilesHvm0AppendsToUpstream pins two things. First, the structural invariant: when IsHvm0 is
-// active, ActivePrecompiles returns activePrecompiles(rules) with the hVM set appended, for every rules
-// combination, with no special-casing. Second, the value invariant that makes the result match deployed Hemi
-// mainnet: the Prague and OP-stack (Fjord/Granite/Isthmus/Jovian) precompile-address lists are intentionally
-// left empty (see init), so in those fork windows the warm EIP-2929 set is exactly the hVM set and the standard
-// precompiles (ecrecover 0x01, BLS G1ADD 0x0b, ...) are NOT pre-warmed — they cost cold (2600) on first access,
-// not warm (100). Populating those lists would warm the standard precompiles and undercharge the first access by
-// 2500 gas, splitting gasUsed and the state root from live history. This test guards against that regression.
+// TestActivePrecompilesHvm0AppendsToUpstream pins the warm EIP-2929 set matches deployed Hemi mainnet: on every
+// OP-stack fork window (the ones real Hemi blocks run under — Fjord/Granite/Isthmus/Jovian), the warm set is
+// EXACTLY the hVM set, because those precompile-address lists are intentionally left empty (see init). The
+// standard precompiles (ecrecover 0x01, BLS G1ADD 0x0b, ...) are therefore NOT pre-warmed and cost cold (2600) on
+// first access, not warm (100) — populating an OP-stack list would undercharge the first access by 2500 gas and
+// split gasUsed and the state root from live history. The pure-Ethereum fork lists (Prague, Osaka) stay populated,
+// so the non-OP path keeps standard warming; a real Hemi block never reaches those cases (an OP-stack fork always
+// matches first in activePrecompiles), so that is consensus-invisible on-chain. This test guards both directions.
 func TestActivePrecompilesHvm0AppendsToUpstream(t *testing.T) {
 	contains := func(addrs []common.Address, a common.Address) bool {
 		for _, x := range addrs {
@@ -421,42 +421,39 @@ func TestActivePrecompilesHvm0AppendsToUpstream(t *testing.T) {
 		}
 		return false
 	}
+	// Every realistic Hemi window runs under an OP-stack fork; the warm set must be EXACTLY the hVM set, with the
+	// standard precompiles cold, matching mainnet.
 	for _, rules := range []params.Rules{
 		{IsHvm0: true, IsOptimismIsthmus: true, IsPrague: true}, // the live Hemi fork window
-		{IsHvm0: true, IsPrague: true, IsOptimismJovian: false},
-		{IsHvm0: true, IsPrague: true, IsOptimismJovian: true},
-		{IsHvm0: true},
+		{IsHvm0: true, IsOptimismGranite: true},
+		{IsHvm0: true, IsOptimismFjord: true},
+		{IsHvm0: true, IsOptimismJovian: true, IsPrague: true},
 	} {
-		upstream := activePrecompiles(rules)
 		active := ActivePrecompiles(rules)
-		require.Len(t, active, len(upstream)+len(PrecompiledAddressesHvm0),
-			"active set must be exactly the upstream set plus the hVM set (no special-casing)")
-		for _, a := range upstream {
-			require.Truef(t, contains(active, a), "upstream precompile %s must remain in the warm set", a)
-		}
+		require.Lenf(t, active, len(PrecompiledAddressesHvm0),
+			"on an OP-stack fork the warm set must be exactly the hVM set (standard precompiles cold, matching mainnet); rules=%+v", rules)
 		for _, a := range PrecompiledAddressesHvm0 {
 			require.Truef(t, contains(active, a), "hVM precompile %s must be in the warm set", a)
 		}
+		require.Falsef(t, contains(active, common.BytesToAddress([]byte{0x01})),
+			"ecrecover (0x01) must NOT be pre-warmed on an OP-stack fork (mainnet-compatible: cold on first access); rules=%+v", rules)
+		require.Falsef(t, contains(active, common.BytesToAddress([]byte{0x0b})),
+			"BLS G1ADD (0x0b) must NOT be pre-warmed on an OP-stack fork (mainnet-compatible: cold on first access); rules=%+v", rules)
 	}
-	// In the live Hemi window (Isthmus + Prague + Hvm0) the warm set must be EXACTLY the hVM set: the standard
-	// precompiles stay cold, matching mainnet. ecrecover (0x01) and BLS G1ADD (0x0b) must not be pre-warmed.
-	live := ActivePrecompiles(params.Rules{IsHvm0: true, IsOptimismIsthmus: true, IsPrague: true})
-	require.Len(t, live, len(PrecompiledAddressesHvm0),
-		"the live Hemi warm set must be exactly the hVM set (standard precompiles stay cold, matching mainnet)")
-	require.False(t, contains(live, common.BytesToAddress([]byte{0x01})),
-		"ecrecover (0x01) must NOT be pre-warmed (mainnet-compatible: cold on first access)")
-	require.False(t, contains(live, common.BytesToAddress([]byte{0x0b})),
-		"BLS G1ADD (0x0b) must NOT be pre-warmed (mainnet-compatible: cold on first access)")
-	// All six fork precompile-address lists must stay empty. The per-rules length assertion above is
-	// self-referential (upstream and active both grow together if a list is repopulated), so it cannot
-	// catch a re-added loop on its own — these direct emptiness checks are what pin every list, in any
-	// fork window, against an upstream pull re-ranging over the PrecompiledContracts* maps.
-	require.Empty(t, PrecompiledAddressesPrague, "PrecompiledAddressesPrague must stay empty (not pre-warmed on Hemi)")
-	require.Empty(t, PrecompiledAddressesOsaka, "PrecompiledAddressesOsaka must stay empty (not pre-warmed on Hemi)")
-	require.Empty(t, PrecompiledAddressesFjord, "PrecompiledAddressesFjord must stay empty (not pre-warmed on Hemi)")
-	require.Empty(t, PrecompiledAddressesGranite, "PrecompiledAddressesGranite must stay empty (not pre-warmed on Hemi)")
-	require.Empty(t, PrecompiledAddressesIsthmus, "PrecompiledAddressesIsthmus must stay empty (not pre-warmed on Hemi)")
-	require.Empty(t, PrecompiledAddressesJovian, "PrecompiledAddressesJovian must stay empty (not pre-warmed on Hemi)")
+	// The OP-stack fork precompile-address lists must stay EMPTY — this is the Hemi cold-precompile consensus.
+	// The per-window length checks above are self-referential (active grows with the selected list on
+	// re-population), so these direct emptiness checks are what pin each OP-stack list against an upstream pull
+	// re-ranging over the PrecompiledContracts* maps.
+	require.Empty(t, PrecompiledAddressesFjord, "PrecompiledAddressesFjord must stay empty (OP-stack fork: not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesGranite, "PrecompiledAddressesGranite must stay empty (OP-stack fork: not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesIsthmus, "PrecompiledAddressesIsthmus must stay empty (OP-stack fork: not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesJovian, "PrecompiledAddressesJovian must stay empty (OP-stack fork: not pre-warmed on Hemi)")
+	// The pure-Ethereum fork lists stay POPULATED so the non-OP path keeps standard EIP-2929 warming (upstream
+	// state tests run these forks); a plain-Prague block warms ecrecover as on stock go-ethereum.
+	require.NotEmpty(t, PrecompiledAddressesPrague, "PrecompiledAddressesPrague must stay populated (standard warming on the non-OP path)")
+	require.NotEmpty(t, PrecompiledAddressesOsaka, "PrecompiledAddressesOsaka must stay populated (standard warming on the non-OP path)")
+	require.True(t, contains(ActivePrecompiles(params.Rules{IsPrague: true}), common.BytesToAddress([]byte{0x01})),
+		"on the pure-Ethereum Prague path ecrecover (0x01) MUST be pre-warmed (standard go-ethereum behavior)")
 }
 
 // TestHvmPrepareLeavesStandardPrecompilesCold pins the actual EIP-2929 outcome at the mechanism level. It runs
