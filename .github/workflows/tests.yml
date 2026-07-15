@@ -7,14 +7,25 @@ name: "Tests"
 on:
   push:
 
+# Supersede an in-flight run when a newer commit lands on the same ref, so the two jobs below don't pile
+# up runner minutes on push bursts (mirrors the sibling docker.yml/release.yml workflows).
+concurrency:
+  group: "tests-${{ github.ref }}"
+  cancel-in-progress: true
+
 env:
   GO_VERSION: "1.24.x"
   GOLICENSER_VERSION: "0.3"
 
 permissions:
   contents: read
-  
+
 jobs:
+  # Fast lane: run the suite with -short for quick feedback (slow integration tests carry a
+  # testing.Short() guard and skip here), then the enforced hVM differential-replay history gates.
+  # The gates are invoked via explicit `go test -run` WITHOUT -short, so they always run and are never
+  # vacuously skipped by the short flag — keeping the consensus-enforcement check in this job while the
+  # full unguarded suite runs in test-long below.
   test:
     name: "Test"
     runs-on: "ubuntu-latest"
@@ -32,18 +43,19 @@ jobs:
       - name: "clone submodules"
         run: git submodule update --init --recursive
 
-      # tests are not currently reliable; we need to add testing packages
-      # back in, one by one
-      - name: "test"
-        run: make test
+      # -short skips the slow integration tests (they carry a testing.Short() guard); the full unguarded
+      # suite runs in the test-long job below.
+      - name: "test (short)"
+        run: make test-short
 
       # differential-replay gate (mainnet), run UNDER ENFORCEMENT so the enforcement path the gate is built
       # around is actually exercised in CI: HEMI_HISTORY_GATE_REQUIRED turns an absent fixture into a hard FAIL
       # (never a silent skip), and the EXPECT_TIP_* coverage pins bind the committed bounded fixture to the real
       # chain (tip 887040). Replays real mainnet headers 883093..887040 under MainNetParams; any contextual-
       # difficulty/PoW RuleError above floor+clearance — or a missing/truncated/substituted fixture — reddens CI.
+      # Invoked via explicit -run (no -short), so the gate always runs regardless of the short flag above.
       - name: "hVM differential-replay gate (mainnet, enforced)"
-        if: always()  # run the gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
+        if: always()  # run the gate even if the (admittedly-unreliable) `make test-short` step above fails — never silently skip it
         env:
           HEMI_HISTORY_GATE_REQUIRED: "1"
           HEMI_MAINNET_VERIFY: "testdata/btcattr_mainnet_history.ndjson"
@@ -63,7 +75,7 @@ jobs:
       # enforcement contract as mainnet: REQUIRED turns an absent fixture into a hard FAIL; coverage pins bind to
       # the real chain (tip 3525984).
       - name: "hVM differential-replay gate (testnet3, enforced)"
-        if: always()  # run the gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
+        if: always()  # run the gate even if the (admittedly-unreliable) `make test-short` step above fails — never silently skip it
         env:
           HEMI_HISTORY_GATE_REQUIRED: "1"
           HEMI_TESTNET3_VERIFY: "testdata/btcattr_testnet3_history.ndjson"
@@ -82,7 +94,7 @@ jobs:
       # exercises extend-the-tip; the tie-break/reject side is covered by synthetic regtest tests). Enforced with
       # coverage pins + a run+PASS vacuity guard. Paths are relative to the ./core package dir (vm/testdata/...).
       - name: "hVM apply-path replay gate (mainnet + testnet3, enforced)"
-        if: always()  # run the gate even if the (admittedly-unreliable) `make test` step above fails — never silently skip it
+        if: always()  # run the gate even if the (admittedly-unreliable) `make test-short` step above fails — never silently skip it
         env:
           HEMI_HISTORY_GATE_REQUIRED: "1"
           HEMI_MAINNET_VERIFY: "vm/testdata/btcattr_mainnet_history.ndjson"
@@ -97,3 +109,26 @@ jobs:
           echo "$out"
           echo "$out" | grep -q -- '--- PASS: TestHvmReplaysAllMainnetBtcAttrThroughApplyPath (' || { echo "HISTORY GATE ERROR: mainnet apply-path replay did not run+PASS (renamed/misfiltered? a non-matching -run exits 0)"; exit 1; }
           echo "$out" | grep -q -- '--- PASS: TestHvmReplaysAllTestnet3BtcAttrThroughApplyPath (' || { echo "HISTORY GATE ERROR: testnet3 apply-path replay did not run+PASS"; exit 1; }
+
+  # Full lane: run the entire suite WITHOUT -short (nothing is skipped by the short flag) for exhaustive coverage on every
+  # push. The enforced hVM history gates live in the `test` job above (kept in the required check), so they
+  # are not repeated here.
+  test-long:
+    name: "Test (long)"
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: "Setup Go ${{ env.GO_VERSION }}"
+        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache: true
+          check-latest: true
+
+      - name: "clone submodules"
+        run: git submodule update --init --recursive
+
+      - name: "test (full, no -short)"
+        run: make test

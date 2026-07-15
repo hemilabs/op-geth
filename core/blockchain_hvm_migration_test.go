@@ -441,6 +441,9 @@ func openStoreGuardFree(t *testing.T, ctx context.Context, home, network string)
 // Here both the FUTURE (> ceiling) and the SUB-FLOOR (< min) branches are forced and asserted, with an in-range
 // control proving the guard is not over-broad.
 func TestReadLegacyStoreTS_VersionCeiling(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens real leveldb TBC stores")
+	}
 	ctx := context.Background()
 	writeVersion := func(home string, version uint64) {
 		db := openStoreGuardFree(t, ctx, home, "testnet3")
@@ -514,6 +517,9 @@ func TestReadLegacyStoreTS_VersionCeiling(t *testing.T) {
 // last, so a crash between them leaves exactly this shape). Both MUST classify as errLegacyStoreEmpty so the
 // keep-vs-re-migrate dispatch RE-MIGRATEs them rather than keeping a store that would crit-loop the normal boot.
 func TestReadLegacyStoreTS_TornStoreEmpty(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens real leveldb TBC stores")
+	}
 	ctx := context.Background()
 
 	// (a) NO best header: open a fresh store directly (level.New writes the version key) but never run
@@ -608,6 +614,9 @@ func TestLegacyStateIdIsCanonical(t *testing.T) {
 // down (releasing the exclusive goleveldb lock) BEFORE readLegacyStoreTS re-opens the same dir. Covers the happy
 // read (tipHash byte order, state-id round-trip) and the atGenesis classification.
 func TestReadLegacyStoreTS_Seeded(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens real leveldb TBC stores")
+	}
 	ctx := context.Background()
 	raw, err := hex.DecodeString(testnet3HvmGenesisHeaderReplay)
 	require.NoError(t, err)
@@ -760,6 +769,9 @@ func TestCatchUpMigratedStoreRejectsNonCanonicalAncestor(t *testing.T) {
 // existingMainnetStoreState dispatch mutants): a valid (non-genesis) mainnet store + a legacy testnet3 store ->
 // NOT needed AND the orphan testnet3 is retired; a fresh at-genesis mainnet store + testnet3 -> migration needed.
 func TestHvmMigrationNeededDispatch(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens real leveldb TBC stores")
+	}
 	ctx := context.Background()
 	decode := func(hexHdr string) *wire.BlockHeader {
 		raw, err := hex.DecodeString(hexHdr)
@@ -1379,6 +1391,9 @@ func TestMigrate_SuccessEmptyFill(t *testing.T) {
 // classified errLegacyStoreEmpty, so classifyMigratedMainnetStore routes it to the conservative KEEP
 // (mainnetStoreKeepUnreadable), never the destructive ReMigrate.
 func TestReadLegacyStoreTS_WrongLengthStateId(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens real leveldb TBC stores")
+	}
 	ctx := context.Background()
 	for _, n := range []int{16, 33} {
 		home := t.TempDir()
@@ -1537,6 +1552,9 @@ func TestMigrate_SuccessMarksBtcDiffRejectMeter(t *testing.T) {
 // version is UNCHANGED — if SetUpgradeOpen were dropped/defaulted-false the upgrade ladder would bump it, and this
 // test would catch the silent forward-only mutation.
 func TestReadLegacyStoreTS_DoesNotMutateOnDiskVersion(t *testing.T) {
+	if testing.Short() {
+		t.Skip("opens real leveldb TBC stores")
+	}
 	ctx := context.Background()
 	home := t.TempDir()
 	seedTbcHeaderStore(t, ctx, home, "testnet3", testnet3HvmGenesisHeaderReplay, testnet3HvmGenesisHeightReplay, true)

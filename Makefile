@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth evm all test lint fmt clean devtools help hvm-history-gate hvm-history-gate-testnet3
+.PHONY: geth evm all test test-short lint fmt clean devtools help hvm-history-gate hvm-history-gate-testnet3
 
 GOBIN = ./build/bin
 GO ?= latest
@@ -27,6 +27,10 @@ all:
 #? test: Run the tests.
 test: all
 	$(GORUN) build/ci.go test
+
+#? test-short: Run the tests with -short (skips the slow integration tests that carry a testing.Short() guard, for fast feedback). Does NOT run the ENFORCED hVM history gates (tip pins + HEMI_HISTORY_GATE_REQUIRED + run+PASS vacuity guard) — run those locally via `make hvm-history-gate` / `hvm-history-gate-testnet3`, or in CI as the three enforced steps of the `test` job. Plain `make test` (and the CI `test-long` job) run the gate tests against committed fixtures but WITHOUT that enforcement.
+test-short: all
+	$(GORUN) build/ci.go test --short
 
 #? hvm-history-gate: Run the differential-replay gate (proves committed hVM BTC history is clean).
 # Provisions the reconstructed NDJSON from CHAINDATA, then runs the gate ENFORCED (HEMI_HISTORY_GATE_REQUIRED=1)
