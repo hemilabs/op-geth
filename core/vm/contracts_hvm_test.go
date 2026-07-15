@@ -404,13 +404,14 @@ func TestEVMPrecompileDispatchHvm0Gate(t *testing.T) {
 	require.False(t, okOff, "an hVM precompile address must NOT dispatch when !IsHvm0")
 }
 
-// TestActivePrecompilesHvm0AppendsToUpstream pins that ActivePrecompiles, when IsHvm0 is active, returns the
-// active upstream precompile set with the hVM set appended — for EVERY rules combination, including the
-// IsPrague && !IsOptimismJovian window. The active set must equal activePrecompiles(rules) + the hVM set with
-// no special-casing, matching the deployed binary; an only-hVM warm set in that window would drop the standard
-// precompiles (e.g. ecrecover 0x01) and the upstream Prague precompiles (e.g. BLS G1ADD 0x0b) from the
-// EIP-2929 warm-address set, diverging from mainnet on access gas and the state root. This guards against
-// re-introducing that divergence.
+// TestActivePrecompilesHvm0AppendsToUpstream pins two things. First, the structural invariant: when IsHvm0 is
+// active, ActivePrecompiles returns activePrecompiles(rules) with the hVM set appended, for every rules
+// combination, with no special-casing. Second, the value invariant that makes the result match deployed Hemi
+// mainnet: the Prague and OP-stack (Fjord/Granite/Isthmus/Jovian) precompile-address lists are intentionally
+// left empty (see init), so in those fork windows the warm EIP-2929 set is exactly the hVM set and the standard
+// precompiles (ecrecover 0x01, BLS G1ADD 0x0b, ...) are NOT pre-warmed — they cost cold (2600) on first access,
+// not warm (100). Populating those lists would warm the standard precompiles and undercharge the first access by
+// 2500 gas, splitting gasUsed and the state root from live history. This test guards against that regression.
 func TestActivePrecompilesHvm0AppendsToUpstream(t *testing.T) {
 	contains := func(addrs []common.Address, a common.Address) bool {
 		for _, x := range addrs {
@@ -421,14 +422,15 @@ func TestActivePrecompilesHvm0AppendsToUpstream(t *testing.T) {
 		return false
 	}
 	for _, rules := range []params.Rules{
-		{IsHvm0: true, IsPrague: true, IsOptimismJovian: false}, // the (formerly special-cased) Prague-pre-Jovian window
+		{IsHvm0: true, IsOptimismIsthmus: true, IsPrague: true}, // the live Hemi fork window
+		{IsHvm0: true, IsPrague: true, IsOptimismJovian: false},
 		{IsHvm0: true, IsPrague: true, IsOptimismJovian: true},
 		{IsHvm0: true},
 	} {
 		upstream := activePrecompiles(rules)
 		active := ActivePrecompiles(rules)
 		require.Len(t, active, len(upstream)+len(PrecompiledAddressesHvm0),
-			"active set must be exactly the upstream set plus the hVM set (no special-casing) to match mainnet")
+			"active set must be exactly the upstream set plus the hVM set (no special-casing)")
 		for _, a := range upstream {
 			require.Truef(t, contains(active, a), "upstream precompile %s must remain in the warm set", a)
 		}
@@ -436,11 +438,62 @@ func TestActivePrecompilesHvm0AppendsToUpstream(t *testing.T) {
 			require.Truef(t, contains(active, a), "hVM precompile %s must be in the warm set", a)
 		}
 	}
-	// Concretely, in the Prague-pre-Jovian window the standard ecrecover (0x01) and the upstream Prague BLS
-	// precompile (0x0b) must NOT be dropped.
-	pragueActive := ActivePrecompiles(params.Rules{IsHvm0: true, IsPrague: true, IsOptimismJovian: false})
-	require.True(t, contains(pragueActive, common.BytesToAddress([]byte{0x01})), "ecrecover (0x01) must stay warm (mainnet-compatible)")
-	require.True(t, contains(pragueActive, common.BytesToAddress([]byte{0x0b})), "Prague BLS precompile (0x0b) must stay warm (mainnet-compatible)")
+	// In the live Hemi window (Isthmus + Prague + Hvm0) the warm set must be EXACTLY the hVM set: the standard
+	// precompiles stay cold, matching mainnet. ecrecover (0x01) and BLS G1ADD (0x0b) must not be pre-warmed.
+	live := ActivePrecompiles(params.Rules{IsHvm0: true, IsOptimismIsthmus: true, IsPrague: true})
+	require.Len(t, live, len(PrecompiledAddressesHvm0),
+		"the live Hemi warm set must be exactly the hVM set (standard precompiles stay cold, matching mainnet)")
+	require.False(t, contains(live, common.BytesToAddress([]byte{0x01})),
+		"ecrecover (0x01) must NOT be pre-warmed (mainnet-compatible: cold on first access)")
+	require.False(t, contains(live, common.BytesToAddress([]byte{0x0b})),
+		"BLS G1ADD (0x0b) must NOT be pre-warmed (mainnet-compatible: cold on first access)")
+	// All six fork precompile-address lists must stay empty. The per-rules length assertion above is
+	// self-referential (upstream and active both grow together if a list is repopulated), so it cannot
+	// catch a re-added loop on its own — these direct emptiness checks are what pin every list, in any
+	// fork window, against an upstream pull re-ranging over the PrecompiledContracts* maps.
+	require.Empty(t, PrecompiledAddressesPrague, "PrecompiledAddressesPrague must stay empty (not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesOsaka, "PrecompiledAddressesOsaka must stay empty (not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesFjord, "PrecompiledAddressesFjord must stay empty (not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesGranite, "PrecompiledAddressesGranite must stay empty (not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesIsthmus, "PrecompiledAddressesIsthmus must stay empty (not pre-warmed on Hemi)")
+	require.Empty(t, PrecompiledAddressesJovian, "PrecompiledAddressesJovian must stay empty (not pre-warmed on Hemi)")
+}
+
+// TestHvmPrepareLeavesStandardPrecompilesCold pins the actual EIP-2929 outcome at the mechanism level. It runs
+// the exact StateDB.Prepare call the state transition makes at transaction start (warming ActivePrecompiles(rules))
+// for the live Hemi window and asserts the resulting access list: the standard precompiles (ecrecover 0x01, BLS
+// 0x0b, P256 0x0100, ...) are NOT pre-warmed, so their first CALL is charged cold (2600) as on deployed mainnet;
+// only the hVM precompiles (0x40-0x49), plus the sender and destination, are warm. This guards the whole gas path,
+// not just the address-list builder: any re-population of a fork precompile-address list — or any change to how
+// precompiles are pre-warmed — that flips a standard precompile to warm (100) would undercharge the first access
+// by 2500 gas and split gasUsed and the state root from live history, and it would fail here.
+func TestHvmPrepareLeavesStandardPrecompilesCold(t *testing.T) {
+	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	require.NoError(t, err)
+
+	rules := params.Rules{IsHvm0: true, IsOptimismIsthmus: true, IsPrague: true, IsShanghai: true, IsBerlin: true, IsEIP2929: true}
+	sender := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	coinbase := common.HexToAddress("0x2222222222222222222222222222222222222222")
+	dst := common.HexToAddress("0x3333333333333333333333333333333333333333")
+
+	// Exactly mirror core/state_transition.go: Prepare(rules, from, coinbase, to, ActivePrecompiles(rules), accessList).
+	statedb.Prepare(rules, sender, coinbase, &dst, ActivePrecompiles(rules), nil)
+
+	// Standard precompiles must be COLD (not pre-warmed) — matching deployed Hemi mainnet.
+	for _, b := range []byte{0x01, 0x02, 0x03, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0f, 0x11} {
+		addr := common.BytesToAddress([]byte{b})
+		require.Falsef(t, statedb.AddressInAccessList(addr), "standard precompile %s must be cold (not pre-warmed) on Hemi", addr)
+	}
+	require.False(t, statedb.AddressInAccessList(common.BytesToAddress([]byte{0x01, 0x00})),
+		"P256 precompile (0x0100) must be cold (not pre-warmed) on Hemi")
+
+	// hVM precompiles must be WARM (pre-warmed) when IsHvm0, as must the sender and destination.
+	for b := byte(0x40); b <= 0x49; b++ {
+		addr := common.BytesToAddress([]byte{b})
+		require.Truef(t, statedb.AddressInAccessList(addr), "hVM precompile %s must be pre-warmed when IsHvm0", addr)
+	}
+	require.True(t, statedb.AddressInAccessList(sender), "sender must be pre-warmed")
+	require.True(t, statedb.AddressInAccessList(dst), "destination must be pre-warmed")
 }
 
 // TestHvmPrecompileNameDistinctAndNonEmpty pins that every hVM precompile's Name() is non-empty and the 10 names are

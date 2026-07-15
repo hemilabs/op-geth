@@ -1032,25 +1032,16 @@ func init() {
 	for k := range PrecompiledContractsHvm0 {
 		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
 	}
-
-	for k := range PrecompiledContractsPrague {
-		PrecompiledAddressesPrague = append(PrecompiledAddressesPrague, k)
-	}
-	for k := range PrecompiledContractsOsaka {
-		PrecompiledAddressesOsaka = append(PrecompiledAddressesOsaka, k)
-	}
-	for k := range PrecompiledContractsFjord {
-		PrecompiledAddressesFjord = append(PrecompiledAddressesFjord, k)
-	}
-	for k := range PrecompiledContractsGranite {
-		PrecompiledAddressesGranite = append(PrecompiledAddressesGranite, k)
-	}
-	for k := range PrecompiledContractsIsthmus {
-		PrecompiledAddressesIsthmus = append(PrecompiledAddressesIsthmus, k)
-	}
-	for k := range PrecompiledContractsJovian {
-		PrecompiledAddressesJovian = append(PrecompiledAddressesJovian, k)
-	}
+	// The Prague, Osaka, and OP-stack (Fjord/Granite/Isthmus/Jovian) precompile-address
+	// lists are intentionally left unpopulated. On the Hemi network these addresses are NOT
+	// pre-warmed into the EIP-2929 access list at transaction start, so ActivePrecompiles
+	// must not return them: warming a standard precompile that the network keeps cold makes
+	// the first CALL to it cost 100 (warm) instead of 2600 (cold), a 2500-gas undercharge
+	// that diverges gasUsed and the state root from live history. Populating these — e.g. by
+	// mirroring an upstream change that ranges over the PrecompiledContracts* maps here —
+	// would reintroduce that consensus split; TestActivePrecompilesHvm0AppendsToUpstream
+	// pins all six lists empty to catch exactly that. The precompiles remain callable; only
+	// the EIP-2929 warm set is affected, and it is sourced solely from these address lists.
 }
 
 func activePrecompiledContracts(rules params.Rules) PrecompiledContracts {
