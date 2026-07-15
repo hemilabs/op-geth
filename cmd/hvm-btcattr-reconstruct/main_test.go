@@ -119,7 +119,7 @@ func TestScanEmitsOnlyHvm0BtcAttrBlocks(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 2, res.emitted)
 	require.Equal(t, 4, res.scanned)
-	require.Equal(t, 0, res.missing)
+	require.Equal(t, 0, res.missing())
 	require.Equal(t, 3, res.rawHeaders)
 
 	lines := parseLines(t, out.Bytes())
@@ -164,7 +164,9 @@ func TestScanGapWithoutAllowGapsFails(t *testing.T) {
 	var out bytes.Buffer
 	res, err := scanBtcAttrHistory(db, testCfg(), 0, 2, false, &out)
 	require.ErrorIs(t, err, errMissingBlocks)
-	require.Equal(t, 1, res.missing)
+	require.Equal(t, 1, res.hashMissing, "an absent canonical-hash mapping counts as hashMissing")
+	require.Equal(t, 0, res.blockMissing)
+	require.Equal(t, 1, res.missing())
 }
 
 // TestScanGapWithAllowGapsSucceeds: --allow-gaps downgrades a gap to non-fatal (DIAGNOSTIC runs), so a
@@ -178,7 +180,8 @@ func TestScanGapWithAllowGapsSucceeds(t *testing.T) {
 	var out bytes.Buffer
 	res, err := scanBtcAttrHistory(db, testCfg(), 0, 2, true, &out)
 	require.NoError(t, err)
-	require.Equal(t, 1, res.missing)
+	require.Equal(t, 1, res.hashMissing)
+	require.Equal(t, 1, res.missing())
 	require.Equal(t, 2, res.emitted)
 	require.Equal(t, 2, res.scanned, "scanned counts only successfully-read blocks; the gap must NOT inflate it")
 }
@@ -262,13 +265,16 @@ func TestScanMissingBlockBodyCountsAsGap(t *testing.T) {
 	var out bytes.Buffer
 	res, err := scanBtcAttrHistory(db, testCfg(), 0, 1, false, &out)
 	require.ErrorIs(t, err, errMissingBlocks, "a present canonical hash with an absent body is a gap")
-	require.Equal(t, 1, res.missing)
+	require.Equal(t, 1, res.blockMissing, "a present canonical hash with an absent body counts as blockMissing, not hashMissing")
+	require.Equal(t, 0, res.hashMissing)
+	require.Equal(t, 1, res.missing())
 
 	// With --allow-gaps the body-absent block is tolerated and the height-0 line is still emitted.
 	out.Reset()
 	res, err = scanBtcAttrHistory(db, testCfg(), 0, 1, true, &out)
 	require.NoError(t, err)
-	require.Equal(t, 1, res.missing)
+	require.Equal(t, 1, res.blockMissing)
+	require.Equal(t, 1, res.missing())
 	require.Equal(t, 1, res.emitted)
 }
 

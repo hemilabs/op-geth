@@ -75,9 +75,15 @@ var (
 const progressLogInterval = 5000
 
 // scanResult holds the counters scanBtcAttrHistory accumulates while walking the canonical chain.
+// The two absent-block cases are counted separately for diagnostics: hashMissing is a height with no canonical
+// hash mapping at all, blockMissing is a height whose canonical hash is present but the block body is absent
+// (the snap-synced/pruned-body case). Both feed the same errMissingBlocks gate.
 type scanResult struct {
-	emitted, scanned, missing, rawHeaders int
+	emitted, scanned, hashMissing, blockMissing, rawHeaders int
 }
+
+// missing is the total count of canonical blocks that could not be read in the scanned range.
+func (r scanResult) missing() int { return r.hashMissing + r.blockMissing }
 
 // scanBtcAttrHistory walks canonical L2 blocks in [start, end] and writes to w one NDJSON line per block carrying
 // a BtcAttributesDeposited tx (applying the IsHvm0 activation gate). It returns errors (errMissingBlocks /
@@ -88,12 +94,12 @@ func scanBtcAttrHistory(db ethdb.Database, cfg *params.ChainConfig, start, end u
 	for n := start; n <= end; n++ {
 		canon := rawdb.ReadCanonicalHash(db, n)
 		if canon == (common.Hash{}) {
-			res.missing++
+			res.hashMissing++
 			continue
 		}
 		block := rawdb.ReadBlock(db, canon, n)
 		if block == nil {
-			res.missing++
+			res.blockMissing++
 			continue
 		}
 		res.scanned++
@@ -128,7 +134,7 @@ func scanBtcAttrHistory(db ethdb.Database, cfg *params.ChainConfig, start, end u
 			log.Info("reconstructing", "L2height", n, "btcattr_lines", res.emitted)
 		}
 	}
-	if res.missing > 0 && !allowGaps {
+	if res.missing() > 0 && !allowGaps {
 		return res, errMissingBlocks
 	}
 	// Fail fast on a vacuous fixture: zero LINES, or lines that carry zero actual BTC headers (a BtcAttr tx with
@@ -261,7 +267,7 @@ func main() {
 				"--allow-gaps overrides this for DIAGNOSTIC runs only: a gap orphans every header after it from the gate's "+
 				"genesis BFS (reported as unconnected, not difficulty-validated), and the coverage pin only catches gaps "+
 				"that break connectivity to the pinned tip height — do NOT ship an --allow-gaps fixture as a clean proof",
-				"missing", res.missing, "start", *start, "end", head)
+				"hash_missing", res.hashMissing, "block_missing", res.blockMissing, "start", *start, "end", head)
 		case errors.Is(scanErr, errVacuousFixture):
 			fatal("reconstruction produced a vacuous fixture: zero BTC headers across the emitted BtcAttr lines "+
 				"(wrong --start/--end window, a datadir whose canonical chain carries no committed BTC headers, or only "+
@@ -281,5 +287,5 @@ func main() {
 		}
 		tmpPath = "" // renamed into place; stop the deferred cleanup from removing it
 	}
-	log.Info("reconstruction complete", "scanned_blocks", res.scanned, "btcattr_lines", res.emitted, "raw_headers", res.rawHeaders, "missing", res.missing, "start", *start, "end", head)
+	log.Info("reconstruction complete", "scanned_blocks", res.scanned, "btcattr_lines", res.emitted, "raw_headers", res.rawHeaders, "hash_missing", res.hashMissing, "block_missing", res.blockMissing, "start", *start, "end", head)
 }

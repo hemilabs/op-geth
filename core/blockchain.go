@@ -853,6 +853,15 @@ func IsCanonicalHvmGenesisPairing(network string, height uint64, hash string) bo
 	return classifyHvmGenesisPairing(network, height, hash) == hvmGenesisPairingCanonical
 }
 
+// IsMismatchedHvmGenesisPairing reports whether (network, height, headerHash) is a DESYNCED pair: exactly one
+// of the height or the header matches a canonical checkpoint while the other diverges. A fully-custom pair
+// (matching no checkpoint) is NOT a mismatch. Exported for the non-consensus full TBC node, which legitimately
+// runs a custom start pair and so cannot use IsCanonicalHvmGenesisPairing as a gate (that would reject custom),
+// but should still fail early on the clearly-misconfigured mismatch case.
+func IsMismatchedHvmGenesisPairing(network string, height uint64, hash string) bool {
+	return classifyHvmGenesisPairing(network, height, hash) == hvmGenesisPairingMismatch
+}
+
 // hvmMigrationAwareCrit fatally fails a hVM operation. During an in-progress migration rebuild
 // (bc.hvmMigrationInProgress) it routes through migrationCrit so the "failed" meter is marked and the
 // in-progress gauge cleared before log.Crit's os.Exit (the deferred gauge-clear in

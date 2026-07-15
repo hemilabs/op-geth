@@ -30,6 +30,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/btcsuite/btcd/wire"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -249,6 +251,27 @@ func resolveTBCNetwork(flagValue string, flagSet bool, tomlValue string) string 
 	return flagValue
 }
 
+// validateFullNodeHvmGenesisPair parses the hVM effective-genesis header and validates the (height, header)
+// pair for the NON-consensus full TBC node. A parse failure, or a DESYNCED pair (exactly one of the height or
+// header matches this network's canonical checkpoint), returns an error; a canonical pair, or a fully-custom
+// pair matching no checkpoint (legitimate for this node — the pair only positions where indexing starts and
+// cannot split consensus), is accepted and the parsed header returned. Kept pure (no log.Crit) so makeFullNode's
+// fail-fast wiring is unit-testable. The consensus header node's gate (initHvmHeaderNode) is stricter — it also
+// rejects Custom, because there the pair feeds the contextual-difficulty retarget boundary.
+func validateFullNodeHvmGenesisPair(network, headerHex string, height uint64) (*wire.BlockHeader, error) {
+	header, err := bdf.Hex2Header(headerHex)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse hVM effective-genesis header (--hvm.genesisheader): %w", err)
+	}
+	if core.IsMismatchedHvmGenesisPairing(network, height, header.BlockHash().String()) {
+		return nil, fmt.Errorf("hVM effective-genesis (height,header) pair is DESYNCED from the canonical "+
+			"checkpoint for network %q: exactly one of height=%d or header=%s matches — set --hvm.genesisheight "+
+			"and --hvm.genesisheader to a consistent pair (a fully custom pair matching no checkpoint is allowed; "+
+			"a half-matching one is a misconfiguration)", network, height, header.BlockHash().String())
+	}
+	return header, nil
+}
+
 // makeFullNode loads geth configuration and creates the Ethereum backend.
 func makeFullNode(ctx *cli.Context) *node.Node {
 	stack, cfg := makeConfigNode(ctx)
@@ -398,20 +421,21 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 			log.Crit("Refusing to start TBC full node with AutoIndex=true: this is not a supported configuration")
 		}
 
+		// This is the non-consensus full TBC node (it answers hVM precompile queries). validateFullNodeHvmGenesisPair
+		// parses the effective-genesis header and fails fast on a clearly-misconfigured start pair before we open
+		// the TBC node — see its doc comment for why a fully-custom pair is allowed but a desynced one is not.
+		genesisHeader, err := validateFullNodeHvmGenesisPair(fullNodeTbcCfg.Network, cfg.Eth.HvmGenesisHeader, cfg.Eth.HvmGenesisHeight)
+		if err != nil {
+			log.Crit("Refusing to start TBC full node", "err", err)
+		}
+		genesisHash := genesisHeader.BlockHash()
+		genesisHeight := cfg.Eth.HvmGenesisHeight
+
 		// Initialize TBC Bitcoin indexer to answer hVM queries
-		err := vm.SetupTBCFullNode(ctx.Context, fullNodeTbcCfg)
+		err = vm.SetupTBCFullNode(ctx.Context, fullNodeTbcCfg)
 		if err != nil {
 			log.Crit("Unable to setup TBC Full Node", "err", err)
 		}
-
-		// This is the non-consensus full TBC node (it answers hVM precompile queries), so the
-		// (HvmGenesisHeader, HvmGenesisHeight) pair here is not routed through the pairing classifier
-		// (core.IsCanonicalHvmGenesisPairing) the way the consensus header node is in initHvmHeaderNode.
-		// The pair only positions where this node starts syncing/indexing; a mismatch does not split
-		// consensus but fails closed below as a sync/index-availability crit.
-		genesisHeader, err := bdf.Hex2Header(cfg.Eth.HvmGenesisHeader)
-		genesisHash := genesisHeader.BlockHash()
-		genesisHeight := cfg.Eth.HvmGenesisHeight
 
 		log.Info("Waiting for TBC full node to finish startup")
 

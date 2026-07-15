@@ -143,6 +143,24 @@ func TestClassifyHvmGenesisPairing(t *testing.T) {
 		"the {883092,…eda8} pair is Canonical on mainnet (the migrated state)")
 }
 
+// TestIsMismatchedHvmGenesisPairing pins the exported predicate used by the non-consensus full TBC node
+// (cmd/geth) to fail fast on a DESYNCED start pair: it is true only for the Mismatch class (height XOR header
+// matches a checkpoint), and false for both Canonical (full match) and Custom (matches no checkpoint) — so a
+// legitimate fully-custom full-node start pair is allowed through while a half-matching one is rejected.
+func TestIsMismatchedHvmGenesisPairing(t *testing.T) {
+	// Mismatch: exactly one of (height, header) matches the testnet3 checkpoint.
+	require.True(t, IsMismatchedHvmGenesisPairing("testnet3", 3522419,
+		"00000000000000000000000000000000000000000000000000000000deadbeef"), "right height, wrong header = mismatch")
+	require.True(t, IsMismatchedHvmGenesisPairing("testnet3", 999999, canonicalHvmGenesisHash), "right header, wrong height = mismatch")
+	// Canonical: full match is NOT a mismatch.
+	require.False(t, IsMismatchedHvmGenesisPairing("testnet3", 3522419, canonicalHvmGenesisHash), "the canonical pair is not a mismatch")
+	// Custom: matches no checkpoint (unpinned network, or a pair touching neither knob) is NOT a mismatch —
+	// this is the legitimate full-node case that must be allowed through.
+	require.False(t, IsMismatchedHvmGenesisPairing("localnet", 0, canonicalHvmGenesisHash), "an unpinned network is custom, not a mismatch")
+	require.False(t, IsMismatchedHvmGenesisPairing("testnet3", 12345,
+		"00000000000000000000000000000000000000000000000000000000deadbeef"), "neither height nor header matches = custom, not a mismatch")
+}
+
 // TestHvmGenesisCheckpointMatchesCanonicalHeader pins the hardcoded checkpoint hash against the block
 // hash of the canonical default header hex, so a typo in the literal (or a default change) is caught.
 func TestHvmGenesisCheckpointMatchesCanonicalHeader(t *testing.T) {

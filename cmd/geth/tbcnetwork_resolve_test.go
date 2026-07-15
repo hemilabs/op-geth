@@ -20,7 +20,9 @@ package main
 import (
 	"testing"
 
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
+	"github.com/stretchr/testify/require"
 )
 
 // TestResolveTBCNetwork pins the flag>TOML>default precedence that drives BOTH the full node and the lightweight
@@ -52,4 +54,33 @@ func TestResolveTBCNetwork(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestValidateFullNodeHvmGenesisPair covers the fail-fast wiring makeFullNode uses for the non-consensus full
+// TBC node: the header hex is parsed, its BlockHash().String() + the height are classified for the given network,
+// and a DESYNCED pair or a bad header is rejected while a canonical or fully-custom pair is accepted. This
+// exercises the whole call path (network arg, hash-string format, the mismatch predicate, the parse-error guard)
+// that only inspection covered otherwise. The mainnet effective-genesis pair is the canonical fixture.
+func TestValidateFullNodeHvmGenesisPair(t *testing.T) {
+	// Canonical: the pinned mainnet (height, header) pair is accepted and the parsed header returned.
+	h, err := validateFullNodeHvmGenesisPair("mainnet", vm.MainnetHvmGenesisHeader, vm.MainnetHvmGenesisHeight)
+	require.NoError(t, err, "the canonical mainnet pair must be accepted")
+	require.NotNil(t, h)
+	require.Equal(t, vm.MainnetHvmGenesisHash, h.BlockHash().String(), "returned header must be the parsed mainnet genesis header")
+
+	// Mismatch: canonical header but the wrong height (desynced) is rejected — verifies the height and the
+	// hash-string are both threaded into the predicate for the right network.
+	_, err = validateFullNodeHvmGenesisPair("mainnet", vm.MainnetHvmGenesisHeader, vm.MainnetHvmGenesisHeight+1)
+	require.Error(t, err, "a desynced (right header, wrong height) pair must be rejected")
+	require.Contains(t, err.Error(), "DESYNCED")
+
+	// Custom: an unpinned network (no checkpoint) makes any well-formed pair fully custom, which is LEGITIMATE
+	// for the non-consensus full node and must be allowed through — the property AL-CT's request hinges on.
+	_, err = validateFullNodeHvmGenesisPair("localnet", vm.MainnetHvmGenesisHeader, vm.MainnetHvmGenesisHeight)
+	require.NoError(t, err, "a fully-custom pair on an unpinned network must be allowed (not a mismatch)")
+
+	// Bad header hex is rejected up front (the parse-error guard that also prevents a nil-header deref).
+	_, err = validateFullNodeHvmGenesisPair("mainnet", "not-valid-hex-zz", 0)
+	require.Error(t, err, "an unparseable --hvm.genesisheader must be rejected before use")
+	require.Contains(t, err.Error(), "parse hVM effective-genesis header")
 }
