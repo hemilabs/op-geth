@@ -47,7 +47,7 @@ hvm-history-gate:
 	@case '$(MAINNET_TIP_HASH)' in *[!0-9a-f]*|'') echo "MAINNET_TIP_HASH must be lowercase hex (real BTC block hash at MAINNET_TIP_HEIGHT)"; exit 1;; esac
 	@test `printf %s '$(MAINNET_TIP_HASH)' | wc -c` -eq 64 || { echo "MAINNET_TIP_HASH must be exactly 64 hex chars"; exit 1; }
 	rm -f /tmp/btcattr_headers.ndjson
-	$(GORUN) ./cmd/hvm-btcattr-reconstruct --chaindata "$(CHAINDATA)" $(if $(MAINNET_L2_END),--end $(MAINNET_L2_END)) --out /tmp/btcattr_headers.ndjson
+	$(GORUN) ./testutil/hvm-btcattr-reconstruct --chaindata "$(CHAINDATA)" $(if $(MAINNET_L2_END),--end $(MAINNET_L2_END)) --out /tmp/btcattr_headers.ndjson
 	@OUT=`HEMI_HISTORY_GATE_REQUIRED=1 HEMI_MAINNET_VERIFY=/tmp/btcattr_headers.ndjson \
 		HEMI_MAINNET_EXPECT_TIP_HEIGHT=$(MAINNET_TIP_HEIGHT) HEMI_MAINNET_EXPECT_TIP_HASH=$(MAINNET_TIP_HASH) \
 		go test ./core/vm/ -run '^TestBtcDiffValidatorAcceptsAllMainnetCommittedHistory$$' -count=1 -v 2>&1`; echo "$$OUT"; \
@@ -66,7 +66,7 @@ hvm-history-gate-testnet3:
 	@case '$(TESTNET3_TIP_HASH)' in *[!0-9a-f]*|'') echo "TESTNET3_TIP_HASH must be lowercase hex (real testnet3 BTC block hash at TESTNET3_TIP_HEIGHT)"; exit 1;; esac
 	@test `printf %s '$(TESTNET3_TIP_HASH)' | wc -c` -eq 64 || { echo "TESTNET3_TIP_HASH must be exactly 64 hex chars"; exit 1; }
 	rm -f /tmp/btcattr_testnet3_post.ndjson
-	$(GORUN) ./cmd/hvm-btcattr-reconstruct --chaindata "$(TESTNET3_CHAINDATA)" $(if $(TESTNET3_L2_END),--end $(TESTNET3_L2_END)) --out /tmp/btcattr_testnet3_post.ndjson
+	$(GORUN) ./testutil/hvm-btcattr-reconstruct --chaindata "$(TESTNET3_CHAINDATA)" $(if $(TESTNET3_L2_END),--end $(TESTNET3_L2_END)) --out /tmp/btcattr_testnet3_post.ndjson
 	@OUT=`HEMI_HISTORY_GATE_REQUIRED=1 HEMI_TESTNET3_VERIFY=/tmp/btcattr_testnet3_post.ndjson \
 		HEMI_TESTNET3_EXPECT_TIP_HEIGHT=$(TESTNET3_TIP_HEIGHT) HEMI_TESTNET3_EXPECT_TIP_HASH=$(TESTNET3_TIP_HASH) \
 		go test ./core/vm/ -run '^TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory$$' -count=1 -v 2>&1`; echo "$$OUT"; \

@@ -42,7 +42,7 @@ import (
 // the EXACT contextual-difficulty + PoW validator the apply path runs, under MainNetParams, and confirm it
 // would not REJECT any historical block. Zero genuine contextual/PoW RuleErrors above the floor-clearance
 // band means the committed history is "clean" and difficulty validation can be enabled per node (each on its
-// correct network) with no activation fork. See cmd/hvm-btcattr-reconstruct for producing the NDJSON.
+// correct network) with no activation fork. See testutil/hvm-btcattr-reconstruct for producing the NDJSON.
 //
 // Classification is aligned EXACTLY to the live apply path (core/blockchain.go applyHvmHeaderConsensusUpdate
 // -> ValidateBTCHeaderBatchForNetwork): a btcd RuleError / PoW failure is a real reject (the clean-history
@@ -56,7 +56,7 @@ import (
 //     repo invariant — if it is missing, historyGateInput FAILS (does not skip), so the mainnet gate can never
 //     silently revert to a no-op in `go test ./...`. Proves the contextual-difficulty/PoW MATH over real
 //     headers incl. a retarget recompute, but is BOUNDED (883093..887040) — not full live-tip history.
-//  2. LIVE-TIP lane: set HEMI_MAINNET_VERIFY=<path> (reconstructed by cmd/hvm-btcattr-reconstruct against real
+//  2. LIVE-TIP lane: set HEMI_MAINNET_VERIFY=<path> (reconstructed by testutil/hvm-btcattr-reconstruct against real
 //     L2 chaindata) + HEMI_HISTORY_GATE_REQUIRED=1 (turns an absent override into a hard FAIL) +
 //     HEMI_MAINNET_EXPECT_TIP_HEIGHT/HASH (anti-truncation coverage pin). Additionally covers BtcAttr
 //     reconstruction faithfulness + full coverage to the pinned tip. The Makefile hvm-history-gate target runs it.
@@ -726,7 +726,7 @@ const (
 
 func TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory(t *testing.T) {
 	// Primary input: the post-activation committed set (pre-activation grandfathered BtcAttrs excluded),
-	// reconstructed offline from the chain's committed BtcAttributesDeposited txs by cmd/hvm-btcattr-reconstruct
+	// reconstructed offline from the chain's committed BtcAttributesDeposited txs by testutil/hvm-btcattr-reconstruct
 	// (over a node's L2 chaindata). Defaults to the fixture path below; override with HEMI_TESTNET3_VERIFY=<path>.
 	// Optional second input,
 	// HEMI_TESTNET3_EXTRA_HEADERS=<path>: explorer-recovered canonical reorg-link headers missing from the

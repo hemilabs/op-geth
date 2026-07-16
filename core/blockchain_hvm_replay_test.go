@@ -52,7 +52,7 @@ import (
 //
 // By default replays the bounded fixture vm/testdata/btcattr_mainnet_history.ndjson (relative to ./core),
 // FAILING (not skipping) if absent. HEMI_MAINNET_VERIFY overrides the path for the live-tip reconstruction lane
-// (history rebuilt by cmd/hvm-btcattr-reconstruct from a node's real L2 chaindata).
+// (history rebuilt by testutil/hvm-btcattr-reconstruct from a node's real L2 chaindata).
 func TestHvmReplaysAllMainnetBtcAttrThroughApplyPath(t *testing.T) {
 	replayBtcAttrThroughApplyPath(t, replayParams{
 		envPrefix: "HEMI_MAINNET",
