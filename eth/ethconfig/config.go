@@ -88,7 +88,7 @@ var Defaults = Config{
 	// Live testnet3 hVM genesis: height 3522419, hash 00000000…96c98151…. The network re-genesised from the
 	// older 3488421/00000000036fc6f1…; a node on live testnet3 must use 3522419 or the pairing guard refuses to
 	// start. The committed BTC history connects from this genesis (verified by
-	// core/vm/btcdiff_testnet3_history_verify_test.go).
+	// core/vm/btcdiff_history_verify_test.go).
 	HvmGenesisHeader: "00c05732cdc3e0d654efe86351f0cbfc6c79325e9f9fa7886a39b552f5c4d90700000000dae4079485e26f1f77425b84a13760038a352d07a0fef92b5188bd04c2999162afca58679121011962b9d0a5",
 	HvmGenesisHeight: 3522419,
 	HvmHeaderDataDir: "~/.tbcdheaders", // TODO: put this in configured geth data directory

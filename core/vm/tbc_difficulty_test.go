@@ -45,7 +45,7 @@ import (
 // and block version, not the hash-meets-target PoW (that is the separate context-free
 // CheckBlockSanity). So we can exercise the adapter wiring and the reused engine without mining.
 // Real-PoW / real-chain retarget vectors (clamp regimes, out-of-band oracle, testnet3 min-diff) are
-// covered by the differential-replay tests (tbc_difficulty_replay_test.go).
+// covered by the differential-replay gate core/vm/btcdiff_history_verify_test.go and TestBtcDiffMainnetBoundaryDifferential below.
 // --- in-memory header store satisfying headerLookup ---
 
 type fakeEntry struct {
@@ -737,8 +737,8 @@ func buildBoundaryWindow(bits uint32, actualTimespan int64) (*fakeHeaderStore, [
 // production swaps Min<->Max or /4 vs *4, production's expected diverges from this and the
 // accept/reject flips. Mirrors btcd's exact Mul-then-Div integer math.
 //
-// Cross-file: this is also the differential-replay exact-value oracle (TestBtcDiffMainnetBoundaryDifferential in
-// tbc_difficulty_replay_test.go). The hardcoded 302400/4838400/1209600 constants are anti-rot-pinned
+// This is also the differential-replay exact-value oracle (TestBtcDiffMainnetBoundaryDifferential below in this
+// file). The hardcoded 302400/4838400/1209600 constants are anti-rot-pinned
 // against the params only inside TestValidateRetargetClamp below — do not delete that test without
 // relocating those param-vs-constant assertions.
 func mainnetRetargetExpected(oldBits uint32, actualTimespan int64) uint32 {

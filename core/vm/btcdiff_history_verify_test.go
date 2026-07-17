@@ -59,7 +59,8 @@ import (
 //  2. LIVE-TIP lane: set HEMI_MAINNET_VERIFY=<path> (reconstructed by testutil/hvm-btcattr-reconstruct against real
 //     L2 chaindata) + HEMI_HISTORY_GATE_REQUIRED=1 (turns an absent override into a hard FAIL) +
 //     HEMI_MAINNET_EXPECT_TIP_HEIGHT/HASH (anti-truncation coverage pin). Additionally covers BtcAttr
-//     reconstruction faithfulness + full coverage to the pinned tip. The Makefile hvm-history-gate target runs it.
+//     reconstruction faithfulness + full coverage to the pinned tip. See core/vm/testdata/HISTORY_GATE.md for the
+//     operator runbook that runs it.
 //
 // Mainnet hVM genesis. The {883092, header, …188eda8} pair is the single shared source of truth in
 // hvm_genesis.go (MainnetHvmGenesis{Height,Header,Hash}); core's checkpoint map and the apply-path replay test
@@ -219,7 +220,8 @@ func TestBtcDiffValidatorAcceptsAllMainnetCommittedHistory(t *testing.T) {
 	// Default to the committed bounded fixture so the gate is CI-resident (runs, not skips): real mainnet headers
 	// 883093..887040 spanning the first retarget boundary (887040) above floor+clearance — proves the contextual-
 	// difficulty MATH accepts real consecutive mainnet headers (incl. a retarget recompute) with zero RuleError/PoW
-	// rejects. HEMI_MAINNET_VERIFY overrides the path (e.g. the Makefile gate's full live-tip reconstruction);
+	// rejects. HEMI_MAINNET_VERIFY overrides the path (the live-tip lane's full reconstruction from
+	// testutil/hvm-btcattr-reconstruct; see testdata/HISTORY_GATE.md);
 	// HEMI_MAINNET_EXPECT_TIP_HEIGHT + HEMI_HISTORY_GATE_REQUIRED enforce full-history coverage in that lane. The
 	// bounded fixture does NOT cover BtcAttr reconstruction faithfulness (no L2 chaindata) — that needs the tool.
 	f := historyGateInput(t, "HEMI_MAINNET_VERIFY", "testdata/btcattr_mainnet_history.ndjson", true /* committed repo invariant: absence FAILS, never skips */)
@@ -762,7 +764,7 @@ func TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory(t *testing.T) {
 		t.Fatalf("decode testnet3 hVM genesis header: %v", err)
 	}
 	if gen.BlockHash().String() != testnet3HvmGenesisHash {
-		t.Fatalf("testnet3 genesis header hash mismatch: got %s want %s", gen.BlockHash(), testnet3HvmGenesisHash)
+		t.Fatalf("testnet3 genesis header hash mismatch: got %s, want %s — the pinned genesis end of the real-chain clamp is wrong (typo / btcd serialization drift)", gen.BlockHash(), testnet3HvmGenesisHash)
 	}
 	headersByHash[gen.BlockHash()] = gen
 
@@ -868,8 +870,8 @@ func TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory(t *testing.T) {
 		return committedAtL2[unconnectedHashes[i]] < committedAtL2[unconnectedHashes[j]]
 	})
 
-	t.Logf("BtcAttr txs=%d  raw headers=%d  unique committed headers=%d  connected=%d  unconnected=%d",
-		nLines, nRawHdrs, len(headersByHash), len(height), len(unconnectedHashes))
+	t.Logf("BtcAttr txs=%d  raw headers=%d  unique committed headers=%d  connected=%d  unconnected=%d (extra ancestry=%d)",
+		nLines, nRawHdrs, len(headersByHash), len(height), len(unconnectedHashes), nExtra)
 	for i, h := range unconnectedHashes {
 		if i >= 30 {
 			t.Logf("  ... and %d more unconnected headers", len(unconnectedHashes)-30)
@@ -991,7 +993,7 @@ func TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory(t *testing.T) {
 	// to reject and print the no-rejects verdict despite verifying nothing. Require that the file parsed real
 	// headers AND the enforced per-header validator actually ran on at least one of them.
 	if nRawHdrs == 0 || enforced-ctxSkip == 0 || batchAccept == 0 || boundaryEnforced == 0 {
-		t.Fatalf("vacuous: rawHeaders=%d enforced=%d ctxSkip=%d batchAccept=%d boundaryEnforced=%d — too few headers actually difficulty-validated to claim clean history (boundaryEnforced=0 means the retarget path was never exercised; the fixture must span at least one H%%2016==0 boundary above the floor-clearance band)", nRawHdrs, enforced, ctxSkip, batchAccept, boundaryEnforced)
+		t.Fatalf("vacuous: rawHeaders=%d enforced=%d ctxSkip=%d batchAccept=%d boundaryEnforced=%d — too few headers actually difficulty-validated to claim clean history (boundaryEnforced=0 means the retarget path, where the target is RECOMPUTED, was never exercised; the fixture must span at least one H%%2016==0 boundary above the floor-clearance band)", nRawHdrs, enforced, ctxSkip, batchAccept, boundaryEnforced)
 	}
 	// testnet3-specific: the ReduceMinDifficulty (20-minute diff-1) rule is the ONLY difficulty difference from
 	// mainnet and the entire reason this lane exists. A verdict that enforced zero diff-1 (Bits==PowLimitBits)
@@ -1071,7 +1073,7 @@ func TestTestnet3HistoryFixtureIsContiguousAndConnectsToGenesis(t *testing.T) {
 			"expectLines deliberately if intentional", nLines, expectLines)
 	}
 	if got := hdrs[0].PrevBlock.String(); got != testnet3HvmGenesisHash {
-		t.Fatalf("first fixture header PrevBlock %s != testnet3HvmGenesisHash %s — does not connect to genesis", got, testnet3HvmGenesisHash)
+		t.Fatalf("first fixture header PrevBlock %s != testnet3HvmGenesisHash %s — the fixture does not connect to the hVM genesis", got, testnet3HvmGenesisHash)
 	}
 	diff1Above := 0
 	for i := 1; i < len(hdrs); i++ {

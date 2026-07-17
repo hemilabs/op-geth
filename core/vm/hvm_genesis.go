@@ -21,8 +21,8 @@ package vm
 //
 // Referenced from three consensus-relevant places that must not drift apart: the genesis-pairing
 // checkpoint map (core.hvmGenesisCheckpoints["mainnet"]), the apply-path replay gate
-// (core/blockchain_hvm_*_replay_test.go), and the in-package differential-replay difficulty gate
-// (core/vm/btcdiff_mainnet_history_verify_test.go). core imports core/vm but not vice-versa, so core/vm is
+// (core/blockchain_hvm_replay_test.go), and the in-package differential-replay difficulty gate
+// (core/vm/btcdiff_history_verify_test.go). core imports core/vm but not vice-versa, so core/vm is
 // the lowest package both layers can share, making it the home for the single constant.
 // TestMainnetHvmGenesisHeaderHashesToPin welds the header bytes to the hash.
 const (

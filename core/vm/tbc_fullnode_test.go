@@ -964,7 +964,7 @@ func TestSyntheticFullNodeDeepTxByTxidBitflags(t *testing.T) {
 // Build-path prefetch decision: vm.TBCBlocksAvailableToHeader is the consensus build/apply path's gate for
 // deciding whether the full node already holds every full block needed to index up to a target header, or whether
 // blocks must be prefetched first (core/blockchain.go:1969, :3098 feed its result into TBCAttemptBlockRefetch). It was
-// only ever reachable with a live indexed full node, so prior tests skipped it (see blockchain_hvm_corrupt_test.go:656
+// only ever reachable with a live indexed full node, so prior tests skipped it (see blockchain_hvm_corrupt_test.go:1506
 // "that needs a live vm.TBCFullNode"). With the synthetic full node we can drive its three outcomes directly:
 //   - every full block present                  -> (true,  nil,            nil,        nil)
 //   - headers present but full blocks missing    -> (false, &missingList,   nil,        nil)

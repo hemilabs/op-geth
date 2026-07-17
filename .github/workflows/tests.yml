@@ -15,7 +15,6 @@ concurrency:
 
 env:
   GO_VERSION: "1.24.x"
-  GOLICENSER_VERSION: "0.3"
 
 permissions:
   contents: read
@@ -62,7 +61,8 @@ jobs:
           HEMI_MAINNET_EXPECT_TIP_HEIGHT: "887040"
           HEMI_MAINNET_EXPECT_TIP_HASH: "00000000000000000002358da40837b121dbf6974a73980728781562258f40d3"
         # Guard against vacuous green (a renamed/misfiltered -run matches nothing and `go test` exits 0): assert
-        # each expected test actually printed a PASS line, mirroring the Makefile hvm-history-gate guard.
+        # each expected test actually printed a PASS line, mirroring the run+PASS vacuity check in the
+        # history-gate runbook (core/vm/testdata/HISTORY_GATE.md).
         run: |
           set -o pipefail
           out=$(go test ./core/vm/ -run '^TestBtcDiffValidatorAcceptsAllMainnetCommittedHistory$|^TestMainnetHistoryFixtureIsContiguousAndConnectsToGenesis$' -count=1 -v 2>&1) || true

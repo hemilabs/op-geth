@@ -94,7 +94,7 @@ var (
 	// fixture would be incomplete (e.g. a snap-synced node lacking pre-pivot blocks).
 	errMissingBlocks = errors.New("chaindata is missing canonical blocks in the scanned range")
 	// errVacuousFixture: zero BtcAttr lines, or lines carrying zero actual BTC headers — useless as a proof.
-	errVacuousFixture = errors.New("reconstruction produced a vacuous fixture: zero BTC headers across the emitted BtcAttr lines")
+	errVacuousFixture = errors.New("reconstruction produced a vacuous fixture: zero BtcAttr blocks, or lines carrying zero BTC headers")
 )
 
 // progressLogInterval is the number of emitted BtcAttr lines between reconstruction progress log lines.
@@ -295,7 +295,7 @@ func main() {
 	chaindata := flag.String("chaindata", "", "path to the op-geth chaindata directory (e.g. <datadir>/geth/chaindata); mutually exclusive with --rpc")
 	rpcURL := flag.String("rpc", "", "JSON-RPC endpoint of an archive node to read blocks from (e.g. http://host:8545); mutually exclusive with --chaindata")
 	dbKind := flag.String("db", "auto", "key-value backend for --chaindata: auto (detect from disk), pebble, or leveldb (ignored for --rpc)")
-	start := flag.Uint64("start", 0, "first L2 block height to scan (default 0; set to hVM Phase-0 activation to skip pre-hVM blocks)")
+	start := flag.Uint64("start", 0, "first L2 block height to scan (default 0; set to hVM0 activation to skip pre-hVM0-activation blocks)")
 	end := flag.Uint64("end", 0, "last L2 block height to scan (0 = chain head; pin this for a deterministic, reproducible fixture)")
 	allowGaps := flag.Bool("allow-gaps", false, "permit missing canonical blocks in the scanned range (default false: a missing block means an incomplete fixture, e.g. on a snap-synced node — fail loudly)")
 	outPath := flag.String("out", "", "output NDJSON path (default: stdout)")

@@ -45,10 +45,9 @@ import (
 // Apply-path gate (mainnet): replay Bitcoin Attributes Deposited transactions committed on Hemi mainnet
 // through the full hVM apply path applyHvmHeaderConsensusUpdate (enforce=true): the contextual-difficulty
 // validator, AddExternalHeaders, the cumulative-work canonical-tip claim check, and upstream-state-id chaining.
-// Unlike the validator-only check in core/vm/btcdiff_mainnet_history_verify_test.go, this exercises the entire
-// hVM state transition against a real lightweight TBC node seeded at the mainnet hVM genesis. The shared body
-// lives in blockchain_hvm_replay_common_test.go; see blockchain_hvm_testnet3_replay_test.go for the shipped
-// network.
+// Unlike the validator-only check in core/vm/btcdiff_history_verify_test.go, this exercises the entire
+// hVM state transition against a real lightweight TBC node seeded at the mainnet hVM genesis. The shared replay
+// body and both network lanes (mainnet here, testnet3 below) live in this file.
 //
 // By default replays the bounded fixture vm/testdata/btcattr_mainnet_history.ndjson (relative to ./core),
 // FAILING (not skipping) if absent. HEMI_MAINNET_VERIFY overrides the path for the live-tip reconstruction lane
@@ -297,8 +296,8 @@ func replayBtcAttrThroughApplyPath(t *testing.T, p replayParams) {
 
 // Testnet3 apply-path differential-replay gate. testnet3 is the shipped default network (eth/backend.go defaults
 // the consensus node to it via config.TBCNetwork -> ethconfig.DefaultTBCNetwork). It replays every committed
-// BtcAttr batch through the byte-identical apply path used by the mainnet replay (shared body in
-// blockchain_hvm_replay_common_test.go), so the cumulative-work canonical-tip selection and the per-block
+// BtcAttr batch through the byte-identical apply path used by the mainnet replay (shared body above in this
+// file), so the cumulative-work canonical-tip selection and the per-block
 // cbh==CanonicalTip reject — neither of which the validator-only vm harness recomputes — are differentially
 // re-validated on the network nodes actually run. testnet3 is the only network whose params enable
 // ReduceMinDifficulty, so applying its committed history is the only apply-path run that exercises that rule
@@ -306,7 +305,7 @@ func replayBtcAttrThroughApplyPath(t *testing.T, p replayParams) {
 // guard TestTestnet3HistoryFixtureIsContiguousAndConnectsToGenesis (which asserts the count, not this gate).
 //
 // Orphans: early testnet3 history contains a few genuinely non-contiguous (orphaned-parent) committed headers
-// (see core/vm/btcdiff_testnet3_history_verify_test.go). The apply path REJECTS an unconnected batch
+// (see core/vm/btcdiff_history_verify_test.go). The apply path REJECTS an unconnected batch
 // (ErrBTCBatchUnconnected -> ErrInvalidHVMHeaders), so a full-history replay fatals at the first such batch.
 // That fatal is the authoritative signal (the validator-only gate only diagnoses it); resolving it means either
 // adding the missing canonical link to the fixture (a benign reconstruction gap) or confirming a genuine orphan.
