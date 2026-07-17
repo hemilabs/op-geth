@@ -79,6 +79,21 @@ env HEMI_HISTORY_GATE_REQUIRED=1 \
     go test ./core/ -run '^TestHvmReplaysAllTestnet3BtcAttrThroughApplyPath$' -count=1 -v
 ```
 
+## Bridging reconstruction gaps (optional)
+
+If the gate reports headers as UNCONNECTED (a "does not connect" fatal, or a non-empty unconnected set), the
+reconstruction is missing a canonical link — a single missing header disconnects everything downstream from the
+genesis connectivity walk. Early testnet3 history has a few genuinely orphaned (reorg-link) headers where this
+happens. Supply the missing ancestry with an optional file:
+
+- `HEMI_MAINNET_EXTRA_HEADERS=<path>` / `HEMI_TESTNET3_EXTRA_HEADERS=<path>` — one 80-byte BTC header hex per
+  line, explorer-recovered. Loaded as **ancestry only**: they bridge connectivity but are NOT counted as
+  committed batches, so they cannot mask a real difficulty/PoW rejection.
+
+Only an explicitly-set path is loaded — there is no default. A stale or planted default file would silently
+auto-bridge a gap the run never intended to, masking an unconnected signal that the history is not yet proven
+clean. Recover the headers from a block explorer, confirm they are the real canonical links, and opt in per run.
+
 ## Confirm it actually ran
 
 A mistyped or renamed `-run` regex matches nothing and `go test` still exits 0 — a silent false

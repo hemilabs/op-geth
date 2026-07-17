@@ -30,7 +30,8 @@
 // emits one line: {"blk":<L2 height>,"tip":"<canonical BTC tip hash hex>","hdrs":["<80-byte header hex>",...]}.
 // The gate then asserts the committed history is clean under the network's params, so the proof is reproducible
 // from the source code plus a node's chaindata (or an archive RPC). Point HEMI_MAINNET_VERIFY at the output, and
-// set HEMI_HISTORY_GATE_REQUIRED=1 to make the gate fail (not skip) when the fixture is absent.
+// set HEMI_HISTORY_GATE_REQUIRED=1 to make the gate fail (not skip) when the fixture is absent. See
+// core/vm/testdata/HISTORY_GATE.md for the full operator runbook (both networks, the enforced gate tests, pins).
 //
 // Usage:
 //
