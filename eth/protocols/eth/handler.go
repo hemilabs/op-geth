@@ -57,8 +57,10 @@ const (
 	// softResponseLimitBTC is the target maximum size of replies to data retrievals
 	// for Bitcoin blocks. Separated from the regular softResponseLimit for all other
 	// RPC requests to provide sufficient space for Bitcoin blocks without impacting
-	// the performance of the rest of the Ethereum protocol. Set large enough to permit
-	// two full Bitcoin blocks per message.
+	// the performance of the rest of the Ethereum protocol. The serve loop stops before
+	// appending a block that would push the reply past this target (it never overshoots by a
+	// whole block), so with a ~4 MB max Bitcoin block plus RLP framing the encoded reply stays
+	// under the 10 MiB maxMessageSize the receiver enforces.
 	softResponseLimitBTC = 9 * 1024 * 1024
 
 	// maxBtcBlocksServe is the maximum number of Bitcoin blocks to serve. This

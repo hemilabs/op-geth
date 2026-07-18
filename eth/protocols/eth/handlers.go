@@ -318,6 +318,14 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 
 		blockBytes := blockBuf.Bytes()
 		if len(blockBytes) != 0 {
+			// Keep the RLP-encoded reply under the receiver's maxMessageSize (10 MiB). A single
+			// serialized block can be up to ~4 MB (wire.MaxBlockPayload), so the top-of-loop
+			// bytesCount>=softResponseLimitBTC check can overshoot by a whole block. Stop before
+			// appending one that would exceed the target, but always include at least one block so
+			// a request whose first block is large still makes forward progress.
+			if len(blocks) > 0 && bytesCount+len(blockBytes) > softResponseLimitBTC {
+				break
+			}
 			btcBlock := common.BytesToBitcoinBlock(blockBytes)
 			blocks = append(blocks, &btcBlock)
 			bytesCount += len(blockBytes)

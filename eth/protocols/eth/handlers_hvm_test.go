@@ -37,6 +37,7 @@ import (
 	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p"
 	"github.com/ethereum/go-ethereum/p2p/enode"
+	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/hemilabs/heminetwork/database"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"github.com/stretchr/testify/require"
@@ -1226,4 +1227,73 @@ func TestRequestMissingAncestorsReleasesGateSlotOnPanic(t *testing.T) {
 	rel, ok := ancestorWalkGate.tryEnter(common.Hash{0xab})
 	require.True(t, ok, "the gate slot must be released even when the walk panics")
 	rel()
+}
+
+// largeBTCBody returns a one-transaction body whose serialized size is ~sizeBytes, by padding the
+// input's signature script. The localnet/regtest store accepts oversized bodies (the gossip ingest
+// path does not run CheckBlockSanity, so bodies above the 1 MB base cap store), which lets a test build
+// near-maximal Bitcoin blocks. The seed varies the leading script bytes so distinct blocks get distinct
+// txids and merkle roots.
+func largeBTCBody(seed byte, sizeBytes int) []*wire.MsgTx {
+	script := make([]byte, sizeBytes)
+	script[0], script[1] = seed, seed^0xff
+	tx := wire.NewMsgTx(wire.TxVersion)
+	tx.AddTxIn(&wire.TxIn{
+		PreviousOutPoint: wire.OutPoint{Hash: chainhash.Hash{}, Index: 0xffffffff},
+		SignatureScript:  script,
+		Sequence:         0xffffffff,
+	})
+	tx.AddTxOut(&wire.TxOut{Value: 5_000_000_000, PkScript: []byte{0x51, seed}})
+	return []*wire.MsgTx{tx}
+}
+
+// TestServeBTCBlocksReplyStaysUnderMaxMessageSize pins the ServiceGetBTCBlocksQuery response-size guard:
+// the assembled reply must stay under the receiver's maxMessageSize (10 MiB) even when several
+// near-maximal (~3.7 MB) Bitcoin blocks are requested, because the receiver tears down the connection on
+// any message exceeding that cap (errMsgTooLarge). The serve loop stops BEFORE appending a block that
+// would push the reply past the 9 MiB soft target, so it never overshoots by a whole block. Without the
+// guard the loop appends one block past the soft limit, and a 3x3.7 MB request yields a ~11 MB reply that
+// breaches the 10 MiB cap. All three blocks are stored (asserted), so a shorter-than-requested reply here
+// is the guard truncating, not missing bodies; at least one block is always served so the requester makes
+// forward progress and re-derives the remainder from store state on the next tick.
+func TestServeBTCBlocksReplyStaysUnderMaxMessageSize(t *testing.T) {
+	if testing.Short() {
+		t.Skip("live TBC full-node integration test; skipped in -short")
+	}
+	ctx := setupLocalnetFullNode(t)
+	genesis := chaincfg.RegressionNetParams.GenesisBlock.Header
+
+	// Sizes chosen so two blocks stay under both the 9 MiB soft target and the 10 MiB cap, while three
+	// (the un-guarded result) exceed the cap. Each body stays under wire.MaxBlockPayload (4,000,000).
+	const pad = 3_700_000
+	body1, body2, body3 := largeBTCBody(0xa1, pad), largeBTCBody(0xb2, pad), largeBTCBody(0xc3, pad)
+	b1 := mineRegtestChild(t, &genesis, merkleBodyRoot(body1), body1)
+	b2 := mineRegtestChild(t, &b1.Header, merkleBodyRoot(body2), body2)
+	b3 := mineRegtestChild(t, &b2.Header, merkleBodyRoot(body3), body3)
+
+	// Store all three via the real gossip ingest path, in parent order so the headers connect.
+	driveOneBlock(t, b1)
+	driveOneBlock(t, b2)
+	driveOneBlock(t, b3)
+
+	h1, h2, h3 := b1.Header.BlockHash(), b2.Header.BlockHash(), b3.Header.BlockHash()
+	for _, h := range []chainhash.Hash{h1, h2, h3} {
+		avail, err := vm.TBCFullNode.FullBlockAvailable(ctx, h)
+		require.NoError(t, err)
+		require.True(t, avail, "each near-maximal block must be stored before the serve query (%s)", h)
+	}
+
+	query := GetBTCBlocksRequest{common.BytesToHash(h1[:]), common.BytesToHash(h2[:]), common.BytesToHash(h3[:])}
+	response := ServiceGetBTCBlocksQuery(nil, query)
+
+	// Forward progress: at least one block is always served (the first-block bypass).
+	require.GreaterOrEqual(t, len(response), 1, "serve must return at least one block for forward progress")
+
+	// The invariant: the wire reply the peer would send (RequestId + blocks, RLP-encoded exactly as
+	// ReplyBTCBlocksPacket does) must stay under maxMessageSize, or the requester drops the serving peer.
+	enc, err := rlp.EncodeToBytes(&BTCBlocksPacket{RequestId: 1, BTCBlocksResponse: response})
+	require.NoError(t, err)
+	require.Less(t, len(enc), int(maxMessageSize),
+		"assembled BtcBlocks reply (%d blocks, %d bytes) must stay under maxMessageSize (%d)",
+		len(response), len(enc), maxMessageSize)
 }
