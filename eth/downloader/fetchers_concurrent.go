@@ -33,6 +33,14 @@ import (
 // to each request. Failing to do so is considered a protocol violation.
 var timeoutGracePeriod = 2 * time.Minute
 
+// stallRecoveryInterval bounds how long the concurrent fetcher may sit with pending
+// work but nothing in flight before it retries. This breaks a deadlock where a peer
+// was marked "lacking" an item on a transient empty response and no other peer can
+// serve it (e.g. a single-peer beacon backfill): without a retry the fetcher would
+// park forever. It never fires on a healthy sync, which always has an in-flight
+// request or an empty queue.
+var stallRecoveryInterval = 5 * time.Second
+
 // typedQueue is an interface defining the adaptor needed to translate the type
 // specific downloader/queue schedulers into the type-agnostic general concurrent
 // fetcher algorithm calls.
@@ -100,6 +108,13 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 		<-timeout.C
 	}
 	defer timeout.Stop()
+
+	// Periodically recover from a stall where there is pending work but nothing in
+	// flight (see stallRecoveryInterval). This wakes the loop to re-attempt assignment
+	// and, if genuinely stalled, clears peers' lacking marks so a transiently-missed
+	// item can be re-requested instead of parking the sync forever.
+	stall := time.NewTicker(stallRecoveryInterval)
+	defer stall.Stop()
 
 	// Track the timed-out but not-yet-answered requests separately. We want to
 	// keep tracking which peers are busy (potentially overloaded), so removing
@@ -204,6 +219,20 @@ func (d *Downloader) concurrentFetch(queue typedQueue) error {
 			// requests will be cancelled locally, and the remote responses will
 			// be dropped when they arrive
 			return errCanceled
+
+		case <-stall.C:
+			// Stall recovery: if there is work queued but nothing is in flight, the
+			// available peers may have been marked "lacking" the pending items on a
+			// transient empty response, so assignment keeps skipping them and the
+			// fetcher would park forever (critical with a single peer, where there is
+			// no other peer to fall back to). Clear the lacking marks so the next
+			// assignment retries. This is a no-op on a healthy sync, which is either
+			// idle (pending == 0) or has in-flight requests.
+			if queue.pending() > 0 && len(pending) == 0 {
+				for _, peer := range d.peers.AllPeers() {
+					peer.ClearLacking()
+				}
+			}
 
 		case event := <-peering:
 			// A peer joined or left, the tasks queue and allocations need to be

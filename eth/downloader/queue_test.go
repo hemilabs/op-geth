@@ -193,6 +193,47 @@ func TestBasics(t *testing.T) {
 	}
 }
 
+// TestReserveLackingRecovery pins the recovery path that keeps a transient empty
+// response from permanently stalling a sync. A peer marked as lacking every queued
+// item yields no fetch request at all — with a single peer that is the deadlock
+// precondition, since there is nobody else to ask and the marks are otherwise only
+// dropped when a new sync cycle resets the peer. Clearing the marks must make the
+// items requestable from that same peer again.
+func TestReserveLackingRecovery(t *testing.T) {
+	q := newQueue(nil, 128, 128)
+	q.Prepare(1, FullSync)
+
+	headers := chain.headers()
+	hashes := make([]common.Hash, len(headers))
+	for i, header := range headers {
+		hashes[i] = header.Hash()
+	}
+	q.Schedule(headers, hashes, 1)
+
+	peer := dummyPeer("peer-lacking")
+	for _, header := range headers {
+		peer.MarkLacking(header.Hash())
+	}
+	if !peer.Lacks(headers[0].Hash()) {
+		t.Fatal("test precondition: peer should be marked lacking")
+	}
+	// Everything is marked lacking, so reservation must yield no request: this is the
+	// state in which the concurrent fetcher parks with work still pending.
+	if req, _, _ := q.ReserveBodies(peer, 128); req != nil {
+		t.Fatalf("expected no request while the peer lacks every block, got %d headers", len(req.Headers))
+	}
+	// Recovery: once the (possibly transient) lacking marks are cleared, the very same
+	// peer must be usable again, so the fetcher can make progress instead of stalling.
+	peer.ClearLacking()
+	if peer.Lacks(headers[0].Hash()) {
+		t.Fatal("ClearLacking did not reset the lacking set")
+	}
+	req, _, _ := q.ReserveBodies(peer, 128)
+	if req == nil || len(req.Headers) == 0 {
+		t.Fatal("expected a fetch request after clearing the lacking marks")
+	}
+}
+
 func TestEmptyBlocks(t *testing.T) {
 	numOfBlocks := len(emptyChain.blocks)
 
