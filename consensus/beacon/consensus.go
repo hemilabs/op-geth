@@ -1,4 +1,5 @@
 // Copyright 2021 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -237,7 +238,7 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 	}
 	// Validate Optimism extraData format
 	if chain.Config().IsOptimism() {
-		if err := eip1559.ValidateOptimismExtraData(chain.Config(), header.Time, header.Extra); err != nil {
+		if err := eip1559.ValidateOptimismExtraData(chain.Config(), header.Time, header.Extra, header.GasLimit); err != nil {
 			return fmt.Errorf("invalid optimism extraData: %w", err)
 		}
 	}

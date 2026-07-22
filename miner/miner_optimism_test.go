@@ -17,10 +17,8 @@ import (
 
 const testDAFootprintGasScalar = 400
 
-// TestDAFootprintMining tests that the miner correctly limits the DA footprint of the block.
-// It builds a block via the miner from txpool
-// transactions and then imports the block into the chain, asserting that
-// execution succeeds.
+// TestDAFootprintMining tests that the miner correctly limits the block DA footprint: it builds a block
+// from txpool transactions and imports it, asserting execution succeeds.
 func TestDAFootprintMining(t *testing.T) {
 	requirePreJovianBehavior := func(t *testing.T, block *types.Block, receipts []*types.Receipt) {
 		var txGas uint64
@@ -42,7 +40,9 @@ func TestDAFootprintMining(t *testing.T) {
 
 		for i, receipt := range receipts {
 			txGas += receipt.GasUsed
-			if txs[i].IsDepositTx() {
+			// Mirror CalcDAFootprint exactly: deposit (0x7E) and the derived/system protocol txs
+			// (PoP payout 0x7D, BTC Attributes Deposited 0x7C) carry no DA footprint and are excluded.
+			if txs[i].IsDepositTx() || txs[i].IsPopPayoutTx() || txs[i].IsBtcAttributesDepositedTx() {
 				continue
 			}
 			daFootprint += txs[i].RollupCostData().EstimatedDASize().Uint64() * testDAFootprintGasScalar

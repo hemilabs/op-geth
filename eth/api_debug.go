@@ -1,4 +1,5 @@
 // Copyright 2023 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -508,7 +509,7 @@ func (api *DebugAPI) ExecutionWitness(bn rpc.BlockNumber) (*stateless.ExtWitness
 		return &stateless.ExtWitness{}, fmt.Errorf("block number %v found, but parent missing", bn)
 	}
 
-	result, err := bc.ProcessBlock(parent.Root, block, false, true)
+	result, err := bc.ProcessBlockForWitness(parent.Root, block)
 	if err != nil {
 		return nil, err
 	}
@@ -528,7 +529,7 @@ func (api *DebugAPI) ExecutionWitnessByHash(hash common.Hash) (*stateless.ExtWit
 		return &stateless.ExtWitness{}, fmt.Errorf("block number %x found, but parent missing", hash)
 	}
 
-	result, err := bc.ProcessBlock(parent.Root, block, false, true)
+	result, err := bc.ProcessBlockForWitness(parent.Root, block)
 	if err != nil {
 		return nil, err
 	}

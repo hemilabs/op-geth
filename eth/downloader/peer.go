@@ -145,6 +145,20 @@ func (p *peerConnection) MarkLacking(hash common.Hash) {
 	p.lacking[hash] = struct{}{}
 }
 
+// ClearLacking resets the set of items the peer is known not to have. A lacking
+// mark is only an optimization derived from a prior empty response; if that response
+// was transient (e.g. the peer was momentarily overloaded), the mark would otherwise
+// exclude the peer indefinitely. Clearing it lets the item be re-requested, which is
+// essential to recover a sync that has stalled with no other peer able to serve it.
+func (p *peerConnection) ClearLacking() {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+
+	if len(p.lacking) > 0 {
+		p.lacking = make(map[common.Hash]struct{})
+	}
+}
+
 // Lacks retrieves whether the hash of a blockchain item is on the peers lacking
 // list (i.e. whether we know that the peer does not have it).
 func (p *peerConnection) Lacks(hash common.Hash) bool {

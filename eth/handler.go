@@ -1,4 +1,5 @@
 // Copyright 2015 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -28,12 +29,12 @@ import (
 	"time"
 
 	"github.com/dchest/siphash"
-	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/rawdb"
 	"github.com/ethereum/go-ethereum/core/txpool"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/eth/downloader"
 	"github.com/ethereum/go-ethereum/eth/ethconfig"
 	"github.com/ethereum/go-ethereum/eth/fetcher"
@@ -210,11 +211,28 @@ func newHandler(config *handlerConfig) (*handler, error) {
 		return nil, errors.New("snap sync not supported with snapshots disabled")
 	}
 	// Construct the downloader (long sync)
+	//
+	// btcReqDeduper rate-limits the per-hash all-peers fan-out below. OnHvmLightState calls
+	// requestBtcBlocksFromPeers once per (canonical tip + each BtcAttr header) for EVERY light-state
+	// response, and the downloader broadcasts the light-state request to every peer, so without this a
+	// single 30s reissue cycle would fan each hash out O(P^2) times. The TTL is short relative to the 30s
+	// reissue, so a still-missing hash re-fires on the next cycle; the store-derived backstops are never
+	// gated by it (see ttlDeduper), so it cannot strand a block.
+	btcReqDeduper := newTTLDeduper(btcReqDedupTTL, btcReqDedupMaxEntries)
 	requestBtcBlocksFromPeers := func(hash common.Hash) {
-		if available := vm.BlockAvailableByCommonHash(hash); available {
+		// snap-sync OnHvmLightState invokes this in a detached goroutine, outside any recover boundary;
+		// contain panics (e.g. the goleveldb panic from a torn/closed TBC store) so a fault in this
+		// best-effort peer fetch cannot crash the process.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Error("recovered from panic while requesting BTC blocks from peers", "hash", hash, "panic", r)
+			}
+		}()
+		// Skip if this hash was fanned out within the dedup window (collapses the O(P^2) burst to O(P); a
+		// later reissue re-fires it) or it is already in the store. See shouldFanOutBtcRequest.
+		if !shouldFanOutBtcRequest(btcReqDeduper, vm.BlockAvailableByCommonHash, hash, time.Now()) {
 			return
 		}
-
 		for _, peer := range h.peers.all() {
 			if err := peer.RequestBtcBlocks([]common.Hash{hash}); err != nil {
 				log.Error("Failed to request BTC block from peer during snap sync", "peer", peer.ID(), "hash", hash, "err", err)

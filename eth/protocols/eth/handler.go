@@ -1,4 +1,5 @@
 // Copyright 2020 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -18,6 +19,7 @@ package eth
 
 import (
 	"fmt"
+	"runtime/debug"
 	"time"
 
 	"github.com/ethereum/go-ethereum/log"
@@ -55,8 +57,10 @@ const (
 	// softResponseLimitBTC is the target maximum size of replies to data retrievals
 	// for Bitcoin blocks. Separated from the regular softResponseLimit for all other
 	// RPC requests to provide sufficient space for Bitcoin blocks without impacting
-	// the performance of the rest of the Ethereum protocol. Set large enough to permit
-	// two full Bitcoin blocks per message.
+	// the performance of the rest of the Ethereum protocol. The serve loop stops before
+	// appending a block that would push the reply past this target (it never overshoots by a
+	// whole block), so with a ~4 MB max Bitcoin block plus RLP framing the encoded reply stays
+	// under the 10 MiB maxMessageSize the receiver enforces.
 	softResponseLimitBTC = 9 * 1024 * 1024
 
 	// maxBtcBlocksServe is the maximum number of Bitcoin blocks to serve. This
@@ -249,9 +253,39 @@ func handleMessage(backend Backend, peer *Peer) error {
 	}
 	if handler := handlers[msg.Code]; handler != nil {
 		if msg.Code == BtcBlocksMsg {
-			log.Info(fmt.Sprintf("Raw BTC block message: %s", msg.String()))
+			log.Debug(fmt.Sprintf("Raw BTC block message: %s", msg.String()))
+		}
+		// The Hemi BTC-gossip codes (GetBtcBlocksMsg 0x11, BtcBlocksMsg 0x12) exist only on eth/68.
+		// Gate on the version explicitly so only the eth/68 BTC handlers process peer-supplied Bitcoin
+		// data through the embedded node. BlockRangeUpdateMsg lives at 0x13 on eth/69, so these codes no
+		// longer share a constant with it; the per-version handler maps already disambiguate by code.
+		if peer.version == ETH68 && (msg.Code == GetBtcBlocksMsg || msg.Code == BtcBlocksMsg) {
+			// Process peer-supplied Bitcoin data behind a recover boundary: the per-peer handler
+			// goroutine has no recover() upstream, so a fault on a single malformed message would
+			// otherwise crash the whole process. The guard wraps only these eth/68 BTC codes and drops
+			// only the offending peer; all other eth/68 and eth/69 messages run unwrapped.
+			return handleHvmBTCMessageGuarded(handler, backend, msg, peer)
 		}
 		return handler(backend, msg, peer)
 	}
 	return fmt.Errorf("%w: %v", errInvalidMsgCode, msg.Code)
+}
+
+// handleHvmBTCMessageGuarded runs a Hemi BTC-gossip message handler (GetBtcBlocksMsg /
+// BtcBlocksMsg) behind a recover() boundary. These handlers process peer-supplied Bitcoin data through
+// the embedded Bitcoin node. The eth message-handler runs on the per-peer goroutine (p2p/peer.go) with
+// no recover() upstream, so a fault on a single malformed message would otherwise terminate the whole
+// op-geth process. Containing it makes handleMessage tear down only the offending peer, mirroring the
+// precompile recover boundary in core/vm/evm.go (runPrecompileGuarded). Standard (non-BTC) eth handlers
+// are intentionally not wrapped: a fault there is a genuine bug that must remain a loud crash, matching
+// upstream go-ethereum.
+func handleHvmBTCMessageGuarded(handler msgHandler, backend Backend, msg Decoder, peer *Peer) (err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("dropping peer for invalid hVM BTC message data",
+				"peer", peer.ID(), "stack", string(debug.Stack()))
+			err = fmt.Errorf("invalid hVM BTC message data")
+		}
+	}()
+	return handler(backend, msg, peer)
 }

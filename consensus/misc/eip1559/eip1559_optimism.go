@@ -19,11 +19,11 @@ type ForkChecker interface {
 
 // ValidateOptimismExtraData validates the Optimism extra data.
 // It uses the config and parent time to determine how to do the validation.
-func ValidateOptimismExtraData(fc ForkChecker, time uint64, extraData []byte) error {
+func ValidateOptimismExtraData(fc ForkChecker, time uint64, extraData []byte, gasLimit uint64) error {
 	if fc.IsJovian(time) {
-		return ValidateJovianExtraData(extraData)
+		return ValidateJovianExtraData(extraData, gasLimit)
 	} else if fc.IsHolocene(time) {
-		return ValidateHoloceneExtraData(extraData)
+		return ValidateHoloceneExtraData(extraData, gasLimit)
 	} else if len(extraData) > 0 { // pre-Holocene
 		return errors.New("extraData must be empty before Holocene")
 	}
@@ -128,30 +128,39 @@ func ValidateHolocene1559Params(params []byte) error {
 }
 
 // validateHoloceneExtraDataPart validates the Holocene 8-bytes part of extraData:
-// the encoded denominator and elasticity must both be non-zero.
+// the encoded denominator and elasticity must both be non-zero, and elasticity must not exceed the
+// header's gas limit.
 // The passed bytes are not checked for correct length, so the caller must ensure it has 8 bytes.
-func validateHoloceneExtraDataPart(extra []byte) error {
+func validateHoloceneExtraDataPart(extra []byte, gasLimit uint64) error {
 	d, e := DecodeHolocene1559Params(extra)
 	if d == 0 {
 		return errors.New("holocene extraData must encode a non-zero denominator")
 	} else if e == 0 {
 		return errors.New("holocene extraData must encode a non-zero elasticity")
+	} else if e > gasLimit {
+		// The base-fee update computes parentGasTarget = gasLimit / elasticity (see calcBaseFeeInner) and
+		// divides by it. elasticity > gasLimit makes the target 0, so reject such extraData here as invalid
+		// rather than letting an unsatisfiable base-fee computation through. elasticity is a small multiplier
+		// (normally 2-6); a value exceeding the gas limit is always a misconfiguration.
+		return fmt.Errorf("holocene extraData elasticity %d exceeds gas limit %d", e, gasLimit)
 	}
 	return nil
 }
 
 // ValidateHoloceneExtraData checks if the header extraData is valid according to the Holocene
-// rules: the encoded denominator and elasticity must both be non-zero.
+// rules: the encoded denominator and elasticity must both be non-zero, and the elasticity must not
+// exceed the header's gas limit (an elasticity > gasLimit makes parentGasTarget = gasLimit/elasticity
+// zero and panics the base-fee computation on the next block — see validateHoloceneExtraDataPart).
 // Note the difference to the payload attributes validation, where both values may also be zero
 // (at the same time).
-func ValidateHoloceneExtraData(extra []byte) error {
+func ValidateHoloceneExtraData(extra []byte, gasLimit uint64) error {
 	if len(extra) != 9 {
 		return fmt.Errorf("holocene extraData should be 9 bytes, got %d", len(extra))
 	}
 	if extra[0] != HoloceneExtraDataVersionByte {
 		return fmt.Errorf("holocene extraData version byte should be %d, got %d", HoloceneExtraDataVersionByte, extra[0])
 	}
-	return validateHoloceneExtraDataPart(extra[1:])
+	return validateHoloceneExtraDataPart(extra[1:], gasLimit)
 }
 
 // DecodeJovianExtraData decodes the extraData parameters from the encoded form defined here:
@@ -192,7 +201,7 @@ func EncodeJovianExtraData(denom, elasticity, minBaseFee uint64) []byte {
 // ValidateJovianExtraData checks if the header extraData is valid according to the Jovian rules:
 // the Holocene rules apply to the 8 bytes encoding the eip-1559 parameters and the minBaseFee can
 // be set arbitrarily.
-func ValidateJovianExtraData(extra []byte) error {
+func ValidateJovianExtraData(extra []byte, gasLimit uint64) error {
 	if len(extra) != 17 {
 		return fmt.Errorf("Jovian extraData should be 17 bytes, got %d", len(extra))
 	}
@@ -200,5 +209,5 @@ func ValidateJovianExtraData(extra []byte) error {
 		return fmt.Errorf("Jovian extraData version byte should be %d, got %d", JovianExtraDataVersionByte, extra[0])
 	}
 	// Note that the encoded minBaseFee can be set arbitrarily, so no additional validation is done.
-	return validateHoloceneExtraDataPart(extra[1:9])
+	return validateHoloceneExtraDataPart(extra[1:9], gasLimit)
 }

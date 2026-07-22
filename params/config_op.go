@@ -36,6 +36,13 @@ func (c *ChainConfig) opCheckCompatible(newcfg *ChainConfig, headNumber *big.Int
 	if isForkTimestampIncompatible(c.InteropTime, newcfg.InteropTime, headTimestamp, genesisTimestamp) {
 		return newTimestampCompatError("Interop fork timestamp", c.InteropTime, newcfg.InteropTime)
 	}
+	// hVM Phase 0: this gates the entire hVM precompile set and BtcAttributesDeposited processing (via IsHvm0), so a
+	// retroactive move (e.g. --override.hvm0 set EARLIER on an already-synced node) must force the protective rewind
+	// like every other fork, not silently re-interpret already-processed blocks under hVM rules. The hVM testnet3
+	// migration is driven by this override, so the guard is load-bearing for the upgrade path.
+	if isForkTimestampIncompatible(c.Hvm0Time, newcfg.Hvm0Time, headTimestamp, genesisTimestamp) {
+		return newTimestampCompatError("hVM Phase 0 fork timestamp", c.Hvm0Time, newcfg.Hvm0Time)
+	}
 	return nil
 }
 

@@ -2,7 +2,7 @@
 # with Go source code. If you know what GOPATH is then you probably
 # don't need to bother with make.
 
-.PHONY: geth evm all test lint fmt clean devtools help
+.PHONY: geth evm all test test-short lint fmt clean devtools help forkdiff
 
 GOBIN = ./build/bin
 GO ?= latest
@@ -27,6 +27,10 @@ all:
 #? test: Run the tests.
 test: all
 	$(GORUN) build/ci.go test
+
+#? test-short: Run the tests with -short (skips the slow integration tests that carry a testing.Short() guard, for fast feedback). Does NOT run the ENFORCED hVM history gates (tip pins + HEMI_HISTORY_GATE_REQUIRED + run+PASS vacuity guard) — run those locally per core/vm/testdata/HISTORY_GATE.md, or in CI as the three enforced steps of the `test` job. Plain `make test` (and the CI `test-long` job) run the gate tests against committed fixtures but WITHOUT that enforcement.
+test-short: all
+	$(GORUN) build/ci.go test --short
 
 #? lint: Run certain pre-selected linters.
 lint: ## Run linters.
@@ -53,6 +57,7 @@ devtools:
 	@type "solc" 2> /dev/null || echo 'Please install solc'
 	@type "protoc" 2> /dev/null || echo 'Please install protoc'
 
+#? forkdiff: Generate the fork-diff report (forkdiff.html) via the protolambda/forkdiff image.
 forkdiff:
 	docker run --rm \
 		--mount src=$(shell pwd),target=/host-pwd,type=bind \

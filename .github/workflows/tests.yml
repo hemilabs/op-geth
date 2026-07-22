@@ -6,14 +6,21 @@
 name: "Tests"
 on:
   push:
+    branches: [ "hemi" ]
+  pull_request:
+
+# Supersede an in-flight run when a newer commit lands on the same ref, so the two jobs below don't pile
+# up runner minutes on push bursts (mirrors the sibling docker.yml/release.yml workflows).
+concurrency:
+  group: "tests-${{ github.ref }}"
+  cancel-in-progress: true
 
 env:
   GO_VERSION: "1.24.x"
-  GOLICENSER_VERSION: "0.3"
 
 permissions:
   contents: read
-  
+
 jobs:
   test:
     name: "Test"
@@ -21,6 +28,9 @@ jobs:
     steps:
       - name: "Checkout repository"
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: true
 
       - name: "Setup Go ${{ env.GO_VERSION }}"
         uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
@@ -29,10 +39,102 @@ jobs:
           cache: true
           check-latest: true
 
-      - name: "clone submodules"
-        run: git submodule update --init --recursive
+      - name: "Download dependencies"
+        run: |
+          go mod download
+          go mod verify
 
-      # tests are not currently reliable; we need to add testing packages
-      # back in, one by one
-      - name: "test"
+      - name: "test (short)"
+        run: make test-short
+
+  hvm-replay-test:
+    name: "hVM Replay Test"
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: "Setup Go ${{ env.GO_VERSION }}"
+        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache: true
+          check-latest: true
+
+      - name: "Download dependencies"
+        run: |
+          go mod download
+          go mod verify
+
+      # differential-replay gate (mainnet), run UNDER ENFORCEMENT so the enforcement path the gate is built
+      # around is actually exercised in CI: HEMI_HISTORY_GATE_REQUIRED turns an absent fixture into a hard FAIL
+      # (never a silent skip), and the EXPECT_TIP_* coverage pins bind the committed bounded fixture to the real
+      # chain (tip 887040). Replays real mainnet headers 883093..887040 under MainNetParams; any contextual-
+      # difficulty/PoW RuleError above floor+clearance — or a missing/truncated/substituted fixture — reddens CI.
+      # Invoked via explicit -run (no -short), so the gate always runs regardless of the short flag above.
+      - name: "hVM differential-replay gate (mainnet, enforced)"
+        env:
+          HEMI_HISTORY_GATE_REQUIRED: "1"
+          HEMI_MAINNET_VERIFY: "testdata/btcattr_mainnet_history.ndjson"
+          HEMI_MAINNET_EXPECT_TIP_HEIGHT: "887040"
+          HEMI_MAINNET_EXPECT_TIP_HASH: "00000000000000000002358da40837b121dbf6974a73980728781562258f40d3"
+        run: |
+          go test ./core/vm/ -run '^TestBtcDiffValidatorAcceptsAllMainnetCommittedHistory$|^TestMainnetHistoryFixtureIsContiguousAndConnectsToGenesis$' -count=1 -v
+
+      # testnet3 differential-replay gate (the SHIPPED DEFAULT network; the only lane exercising ReduceMinDifficulty), enforced
+      # against its committed bounded fixture (real headers 3522420..3525984, incl. 116 diff-1 headers). Same
+      # enforcement contract as mainnet: REQUIRED turns an absent fixture into a hard FAIL; coverage pins bind to
+      # the real chain (tip 3525984).
+      - name: "hVM differential-replay gate (testnet3, enforced)"
+        env:
+          HEMI_HISTORY_GATE_REQUIRED: "1"
+          HEMI_TESTNET3_VERIFY: "testdata/btcattr_testnet3_history.ndjson"
+          HEMI_TESTNET3_EXPECT_TIP_HEIGHT: "3525984"
+          HEMI_TESTNET3_EXPECT_TIP_HASH: "0000000000003b8315976d4a9412a8bc6a3a2cbdb9e748d886987b82e89aa68f"
+        run: |
+          go test ./core/vm/ -run '^TestBtcDiffValidatorAcceptsAllTestnet3CommittedHistory$|^TestTestnet3HistoryFixtureIsContiguousAndConnectsToGenesis$' -count=1 -v
+
+      # apply-path differential-replay gate: replay the SAME committed fixtures through the real apply
+      # path (AddExternalHeaders + cumulative-work CanonicalTip selection + per-block tip-claim, enforce=true) — the
+      # only lane that runs REAL committed history through the canonical-tip computation (the linear fixture
+      # exercises extend-the-tip; the tie-break/reject side is covered by synthetic regtest tests). Enforced with
+      # coverage pins + a run+PASS vacuity guard. Paths are relative to the ./core package dir (vm/testdata/...).
+      - name: "hVM apply-path replay gate (mainnet + testnet3, enforced)"
+        env:
+          HEMI_HISTORY_GATE_REQUIRED: "1"
+          HEMI_MAINNET_VERIFY: "vm/testdata/btcattr_mainnet_history.ndjson"
+          HEMI_MAINNET_EXPECT_TIP_HEIGHT: "887040"
+          HEMI_MAINNET_EXPECT_TIP_HASH: "00000000000000000002358da40837b121dbf6974a73980728781562258f40d3"
+          HEMI_TESTNET3_VERIFY: "vm/testdata/btcattr_testnet3_history.ndjson"
+          HEMI_TESTNET3_EXPECT_TIP_HEIGHT: "3525984"
+          HEMI_TESTNET3_EXPECT_TIP_HASH: "0000000000003b8315976d4a9412a8bc6a3a2cbdb9e748d886987b82e89aa68f"
+        run: |
+          go test ./core/ -run '^TestHvmReplaysAllMainnetBtcAttrThroughApplyPath$|^TestHvmReplaysAllTestnet3BtcAttrThroughApplyPath$' -count=1 -v
+
+  test-long:
+    name: "Test (long)"
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: "Checkout repository"
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          submodules: true
+
+      - name: "Setup Go ${{ env.GO_VERSION }}"
+        uses: actions/setup-go@41dfa10bad2bb2ae585af6ee5bb4d7d973ad74ed # v5.1.0
+        with:
+          go-version: "${{ env.GO_VERSION }}"
+          cache: true
+          check-latest: true
+
+      - name: "Download dependencies"
+        run: |
+          go mod download
+          go mod verify
+
+      - name: "test (full)"
         run: make test

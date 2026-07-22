@@ -1,4 +1,5 @@
 // Copyright 2015 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of go-ethereum.
 //
 // go-ethereum is free software: you can redistribute it and/or modify
@@ -1097,9 +1098,9 @@ var (
 	}
 	TBCNetwork = &cli.StringFlag{
 		Name:     "tbc.network",
-		Usage:    "Bitcoin network TBC is running on",
+		Usage:    "Bitcoin network TBC is running on (also drives the lightweight hVM header node; switching a legacy node to \"mainnet\" triggers a one-time hVM header-store migration — keep --hvm.genesisheader set to the mainnet pair)",
 		Category: flags.RollupCategory,
-		Value:    "testnet3", // Change default to mainnet on Hemi mainnet
+		Value:    ethconfig.DefaultTBCNetwork, // single source of truth so the default can't drift between callers
 	}
 	TBCPrometheusAddress = &cli.StringFlag{
 		Name:     "tbc.prometheusaddress",
@@ -1126,14 +1127,20 @@ var (
 		Value:    ethconfig.Defaults.HvmEnabled,
 	}
 	OverrideHvmGenesisHeader = &cli.StringFlag{
-		Name:     "hvm.genesisheader",
-		Usage:    "override the genesis block header where hVM starts tracking Bitcoin consensus",
+		Name: "hvm.genesisheader",
+		Usage: "override the genesis block header where hVM starts tracking Bitcoin consensus " +
+			"(CONSENSUS-COUPLED: must be set together with --hvm.genesisheight to the TRUE Bitcoin " +
+			"height of this header, and the pair must be a pinned canonical checkpoint on a " +
+			"difficulty-enforced network or the node refuses to start)",
 		Category: flags.RollupCategory,
 		Value:    ethconfig.Defaults.HvmGenesisHeader,
 	}
 	OverrideHvmGenesisHeight = &cli.Uint64Flag{
-		Name:     "hvm.genesisheight",
-		Usage:    "override the genesis block height where hVM starts tracking Bitcoin consensus",
+		Name: "hvm.genesisheight",
+		Usage: "override the genesis block height where hVM starts tracking Bitcoin consensus " +
+			"(CONSENSUS-COUPLED: must be the TRUE Bitcoin height of --hvm.genesisheader; it positions " +
+			"the contextual-difficulty retarget boundary, so a mismatched pair splits the network and " +
+			"is rejected at startup)",
 		Category: flags.RollupCategory,
 		Value:    ethconfig.Defaults.HvmGenesisHeight,
 	}

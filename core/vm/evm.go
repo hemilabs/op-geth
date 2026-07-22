@@ -1,4 +1,5 @@
 // Copyright 2014 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -141,6 +142,7 @@ type EVM struct {
 	// TODO: Decide whether to move to Context
 	// The Hemi header hash this EVM is executed within. Required for making sure hVM calls return the correct state.
 	blockExecutionContext common.Hash
+
 	// precompiles holds the precompiled contracts for the current epoch
 	precompiles map[common.Address]PrecompiledContract
 
@@ -152,6 +154,52 @@ type EVM struct {
 
 	readOnly   bool   // Whether to throw on stateful modifications
 	returnData []byte // Last CALL's return data for subsequent reuse
+}
+
+// runPrecompile dispatches a precompiled contract and normalizes the hVM
+// "invalid input" sentinel: malformed input becomes an empty successful return
+// consuming only the fixed RequiredGas, keeping execution/consensus identical to the
+// historical no-op behavior. The offending transaction is included as a no-op,
+// identically on builders and validators.
+func (evm *EVM) runPrecompile(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
+	ret, remainingGas, err := evm.runPrecompileGuarded(p, input, gas)
+	if errors.Is(err, ErrHVMInvalidPrecompileInput) {
+		return nil, remainingGas, nil
+	}
+	return ret, remainingGas, err
+}
+
+// runPrecompileGuarded executes the precompile. For hVM (Bitcoin) precompiles it installs a
+// recover() boundary so that malformed or inconsistent indexed Bitcoin data is handled deterministically
+// rather than aborting transaction execution. Without it, such a fault would unwind through
+// StateProcessor.Process / core.ApplyTransaction (which have no recover); the boundary instead contains it
+// as a deterministic no-op so execution stays identical across the builder and every validator.
+//
+// The contained fault is converted to ErrHVMInvalidPrecompileInput, which the caller normalizes to an
+// empty no-op consuming only the fixed RequiredGas — identical to the deterministic malformed-input
+// outcome, so every node agrees. It only guarantees a node fails closed to that no-op instead of
+// crashing. Standard (non-hVM) precompiles are not guarded: a fault there is a genuine bug that must not
+// be silently swallowed.
+func (evm *EVM) runPrecompileGuarded(p PrecompiledContract, input []byte, gas uint64) (ret []byte, remainingGas uint64, err error) {
+	if !isHVMPrecompile(p) {
+		return RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+	}
+	defer func() {
+		if r := recover(); r != nil {
+			// Reached only after RunPrecompiledContract has charged RequiredGas (the
+			// panic happens inside Run, after the gas check), so gas >= RequiredGas.
+			// Refund the remainder to mirror the malformed-input no-op exactly.
+			var rg uint64
+			if gasCost := p.RequiredGas(input); gas >= gasCost {
+				rg = gas - gasCost
+			}
+			hvmPrecompileInvalidDataCounter.Inc(1)
+			log.Error("invalid Bitcoin data in hVM precompile; treating as a no-op",
+				"precompile", p.Name())
+			ret, remainingGas, err = nil, rg, ErrHVMInvalidPrecompileInput
+		}
+	}()
+	return RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
 }
 
 // NewEVM constructs an EVM instance with the supplied block context, state
@@ -314,7 +362,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 	evm.Context.Transfer(evm.StateDB, caller, addr, value)
 
 	if isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		code := evm.resolveCode(addr)
@@ -379,7 +427,7 @@ func (evm *EVM) CallCode(caller common.Address, addr common.Address, input []byt
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.
@@ -423,7 +471,7 @@ func (evm *EVM) DelegateCall(originCaller common.Address, caller common.Address,
 
 	// It is allowed to call precompiles, even via delegatecall
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and make initialise the delegate values
 		//
@@ -476,7 +524,7 @@ func (evm *EVM) StaticCall(caller common.Address, addr common.Address, input []b
 	evm.StateDB.AddBalance(addr, new(uint256.Int), tracing.BalanceChangeTouchAccount)
 
 	if p, isPrecompile := evm.precompile(addr); isPrecompile {
-		ret, gas, err = RunPrecompiledContract(p, input, gas, evm.blockExecutionContext, evm.Config.Tracer)
+		ret, gas, err = evm.runPrecompile(p, input, gas)
 	} else {
 		// Initialise a new contract and set the code that is to be used by the EVM.
 		// The contract is a scoped environment for this execution context only.

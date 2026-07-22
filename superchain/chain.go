@@ -184,7 +184,12 @@ func (c *Chain) populateGenesis() {
 		return
 	}
 	defer genesisFile.Close()
-	zstdR, err := zstd.NewReader(genesisFile, zstd.WithDecoderDicts(c.genesisZstdDict))
+	// WithDecoderConcurrency(1) selects the decoder's synchronous single-goroutine path. The default
+	// (multi-goroutine) streaming decode runs an internal prepareSequences/executeSequences pipeline across
+	// two goroutines that -race flags as racing on the per-block output buffer (blockDec.dst) handed between
+	// them, inside the zstd library itself.
+	// We only need a one-shot decode of an embedded blob, so the synchronous path is both correct and simpler.
+	zstdR, err := zstd.NewReader(genesisFile, zstd.WithDecoderDicts(c.genesisZstdDict), zstd.WithDecoderConcurrency(1))
 	if err != nil {
 		c.err = fmt.Errorf("error creating zstd reader for %s/%s: %w", c.Network, c.Name, err)
 		return

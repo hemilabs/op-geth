@@ -1,4 +1,5 @@
 // Copyright 2020 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -116,8 +117,6 @@ func (h *ethHandler) Handle(peer *eth.Peer, packet eth.Packet) error {
 		return h.txFetcher.Enqueue(peer.ID(), *packet, true)
 
 	case *eth.BTCBlocksPacket:
-		// TODO remove, for debugging
-		fmt.Sprintf("ethHandler.Handle() called with a BTCBlocksPacket")
 		return nil
 
 	default:

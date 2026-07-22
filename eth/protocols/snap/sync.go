@@ -1,4 +1,5 @@
 // Copyright 2020 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -515,11 +516,14 @@ type Syncer struct {
 	pend sync.WaitGroup // Tracks network request goroutines for graceful shutdown
 	lock sync.RWMutex   // Protects fields that can change outside of sync (peers, reqs, root)
 
-	snapSyncHvm            func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
+	snapSyncHvm              func(btcTipHeader *chainhash.Hash, hvmTipHeader *types.Header)
 	requestBtcBlockFromPeers func(hash common.Hash)
 
-	hVMSnapHeaders []*types.Header
-	hVMSnapBlock   *types.Block
+	// hvmLightStateReqs maps each in-flight hVM light-state request ID to the L2 tip (pivot) hash it
+	// was issued for (RequestHvmState broadcasts one ID to all peers). OnHvmLightState only processes a
+	// response whose ID is present here (drops unsolicited packets) and whose first header hashes to
+	// the recorded tip (rejects responses for the wrong pivot). Protected by lock.
+	hvmLightStateReqs map[uint64]common.Hash
 }
 
 // NewSyncer creates a new snapshot syncer to download the Ethereum state over the
@@ -555,6 +559,7 @@ func NewSyncer(db ethdb.KeyValueStore, scheme string, snapSyncHvmFunc func(btcTi
 
 		snapSyncHvm:              snapSyncHvmFunc,
 		requestBtcBlockFromPeers: requestBtcBlocksFunc,
+		hvmLightStateReqs:        make(map[uint64]common.Hash),
 	}
 }
 
@@ -1514,16 +1519,36 @@ func (s *Syncer) assignTrienodeHealTasks(success chan *trienodeHealResponse, fai
 	}
 }
 
+// maxHvmLightStateReqs bounds the in-flight hVM light-state request-ID set so it
+// cannot grow without limit if requests go unanswered.
+const maxHvmLightStateReqs = 64
+
 func (s *Syncer) RequestHvmState(tip common.Hash) {
 	reqid := uint64(rand.Int63())
 
+	// Under the lock: record the request ID so OnHvmLightState only accepts responses we asked for
+	// (the same ID is broadcast to all peers and is not consumed on response, so a stalled first
+	// response can't drop later valid ones; the cap is the only bound, a safety valve against
+	// unbounded growth that never affects a matching response), and snapshot the peer set. Iterating
+	// s.peers without the lock raced with Register/Unregister (which mutate it under s.lock); we
+	// snapshot here and send below outside the lock so network requests do not hold s.lock.
+	s.lock.Lock()
+	if len(s.hvmLightStateReqs) >= maxHvmLightStateReqs {
+		s.hvmLightStateReqs = make(map[uint64]common.Hash)
+	}
+	s.hvmLightStateReqs[reqid] = tip
+	peers := make([]SyncPeer, 0, len(s.peers))
 	for _, peer := range s.peers {
+		peers = append(peers, peer)
+	}
+	s.lock.Unlock()
+
+	for _, peer := range peers {
 		log.Info("Requesting hVM light state from peer", "peer", peer.ID())
 		if err := peer.RequestHvmLightState(reqid, tip); err != nil {
 			log.Info("Failed to request hVM light state healers", "err", err)
 		}
 	}
-
 }
 
 // assignBytecodeHealTasks attempts to match idle peers to bytecode requests to
@@ -2886,20 +2911,111 @@ func (s *Syncer) OnStorage(peer SyncPeer, id uint64, hashes [][]common.Hash, slo
 }
 
 func (s *Syncer) OnHvmLightState(peer SyncPeer, id uint64, headers []*types.Header, block *types.Block) error {
-	// TODO: header path validation?
 	log.Debug("Received hVM light state packet from peer", "peer", peer.ID())
 
-	s.hVMSnapHeaders = headers
-	s.hVMSnapBlock = block
+	// Only accept a response whose request ID we issued. This drops unsolicited packets (which any
+	// connected snap peer could otherwise send to reach the parsing below) without disconnecting an
+	// honest-but-late/duplicate responder (we return nil, matching OnAccounts' stale-response
+	// handling).
+	//
+	// This is a presence check only: the ID is intentionally not consumed. The same ID is broadcast to
+	// all peers, and a response can drive a SnapSyncHvm that blocks (waiting on Bitcoin data for the
+	// response's claimed tip, which a malicious peer can make unreachable). Consuming the ID would let
+	// one such response drop every later valid response and wedge the round permanently; leaving it
+	// lets a later valid response still complete (the downloader also re-issues the request, see
+	// hVMLightStateSyncWithAllPeers). Not consuming keeps behavior a strict subset of the pre-fix path
+	// (which forwarded every solicited response), minus the crash and unsolicited packets. SnapSyncHvm's
+	// awaiting/finished latch no-ops repeated calls after completion.
+	s.lock.RLock()
+	wantTip, solicited := s.hvmLightStateReqs[id]
+	s.lock.RUnlock()
+	if !solicited {
+		log.Warn("Unexpected hVM light state packet", "peer", peer.ID(), "reqid", id)
+		return nil
+	}
+
+	// A well-formed hVM light state response must carry a block, a non-empty header list whose last
+	// entry is non-nil, and a block whose transactions contain exactly one Bitcoin Attributes
+	// Deposited tx. A malicious or buggy peer can violate any of these; guarding here prevents an
+	// empty-Headers OOB and a nil-block / nil btcAttrDep / nil-header dereference from crashing the
+	// node (there is no recover() on the snap-sync path). The nil-block and nil-header cases are not
+	// reachable over the wire (RLP decoding rejects them) but are guarded as defense-in-depth, since
+	// the values flow into snapSyncHvm, which dereferences them.
+	if block == nil {
+		log.Warn(fmt.Sprintf("hVM light state response with no block from peer %s", peer.ID()))
+		return fmt.Errorf("hVM light state response contained no block")
+	}
+	if len(headers) == 0 {
+		log.Warn(fmt.Sprintf("hVM light state response with no headers from peer %s", peer.ID()))
+		return fmt.Errorf("hVM light state response contained no headers")
+	}
+	// The honest responder walks back at most maxHvmLightHeaders from the pivot to the nearest BtcAttr block
+	// (handler.go), so no honest response exceeds that. Bound it on the receive side too: a malicious peer can
+	// otherwise send a much longer connected chain (up to the global message-size limit) walking past the
+	// nearest BtcAttr ancestor to an arbitrarily older one. The base-body completion gate in SnapSyncHvm is
+	// the actual safety guarantee; this is a cheap memory/work bound that also reduces the work a peer can
+	// force on this node.
+	if len(headers) > maxHvmLightHeaders {
+		log.Warn(fmt.Sprintf("hVM light state response has too many headers (%d > %d) from peer %s", len(headers), maxHvmLightHeaders, peer.ID()))
+		return fmt.Errorf("hVM light state response has too many headers: %d > %d", len(headers), maxHvmLightHeaders)
+	}
+	lastHeader := headers[len(headers)-1]
+	if lastHeader == nil {
+		log.Warn(fmt.Sprintf("hVM light state response with a nil header from peer %s", peer.ID()))
+		return fmt.Errorf("hVM light state response contained a nil header")
+	}
+
+	// Pin the response to the pivot we requested so a peer cannot drive snap sync toward a
+	// fabricated/unreachable Bitcoin tip (the CanonicalTip lives in the BtcAttr tx inside `block`). The
+	// responder returns headers[0] = the requested pivot header, walked back via ParentHash to
+	// headers[len-1] = the BtcAttr block (= block). Verifying (1) headers[0] hashes to the requested
+	// tip, (2) the headers form a connected chain, (3) block matches the last header, and (4) the block
+	// body matches its header's tx root cryptographically binds the BtcAttr tx (and its CanonicalTip)
+	// to the genuine chain of the trusted pivot. An honest responder always satisfies these.
+	if headers[0] == nil || headers[0].Hash() != wantTip {
+		log.Warn(fmt.Sprintf("hVM light state response is not for the requested tip %s from peer %s", wantTip, peer.ID()))
+		return fmt.Errorf("hVM light state response does not match the requested tip")
+	}
+	for i := 0; i < len(headers)-1; i++ {
+		if headers[i+1] == nil || headers[i].ParentHash != headers[i+1].Hash() {
+			log.Warn(fmt.Sprintf("hVM light state response headers are not a connected chain from peer %s", peer.ID()))
+			return fmt.Errorf("hVM light state response headers are not a connected chain")
+		}
+	}
+	if block.Hash() != lastHeader.Hash() {
+		log.Warn(fmt.Sprintf("hVM light state response block does not match its last header from peer %s", peer.ID()))
+		return fmt.Errorf("hVM light state response block does not match its last header")
+	}
+	if txRoot := types.DeriveSha(block.Transactions(), trie.NewStackTrie(nil)); txRoot != block.TxHash() {
+		log.Warn(fmt.Sprintf("hVM light state response block body is inconsistent with its header from peer %s", peer.ID()))
+		return fmt.Errorf("hVM light state response block body is inconsistent with its header")
+	}
 
 	btcAttrDep, err := block.Transactions().ExtractBtcAttrData()
 	if err != nil {
 		log.Warn(fmt.Sprintf("hVM light state error extracting Bitcoin Attributes Deposited tx from peer %s", peer.ID()), "err", err)
 		return fmt.Errorf("error extracting Bitcoin Attributes Deposited tx")
 	}
+	if btcAttrDep == nil {
+		// ExtractBtcAttrData returns (nil, nil) when the block carries no Bitcoin
+		// Attributes Deposited tx; treat that as a malformed response rather than
+		// dereferencing a nil pointer below.
+		log.Warn(fmt.Sprintf("hVM light state response block has no Bitcoin Attributes Deposited tx from peer %s", peer.ID()))
+		return fmt.Errorf("hVM light state response block has no Bitcoin Attributes Deposited tx")
+	}
 
+	canonicalTip := btcAttrDep.CanonicalTip
+	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
+		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", peer.ID()))
+		return fmt.Errorf("error, hVM light state canonical tip is zero")
+	}
+
+	// Best-effort: ask peers for the BTC blocks this response references (the canonical tip + each BtcAttr
+	// header) so a full node lagging on bodies catches up faster. Placed AFTER the request-ID/pin
+	// validation and the zero-tip reject, so only a solicited, fully-validated, non-zero-tip response
+	// triggers any peer fan-out (and no dedup slot is spent on the all-zeros hash).
 	if s.requestBtcBlockFromPeers != nil {
-		go s.requestBtcBlockFromPeers(common.Hash(btcAttrDep.CanonicalTip))
+		go s.requestBtcBlockFromPeers(common.Hash(canonicalTip))
 		for _, rawHeader := range btcAttrDep.Headers {
 			var bh wire.BlockHeader
 			if err := bh.Deserialize(bytes.NewReader(rawHeader[:])); err != nil {
@@ -2910,19 +3026,18 @@ func (s *Syncer) OnHvmLightState(peer SyncPeer, id uint64, headers []*types.Head
 		}
 	}
 
-	canonicalTip := btcAttrDep.CanonicalTip
-	if bytes.Equal(canonicalTip[:], make([]byte, 32)) {
-		log.Warn(fmt.Sprintf("hVM light state canonical tip is zero from peer %s", peer.ID()))
-		return fmt.Errorf("error, hVM light state canonical tip is zero")
-	}
-
 	ctHash, err := chainhash.NewHash(canonicalTip[:])
 	if err != nil {
 		log.Warn(fmt.Sprintf("hVM light state unable to convert canonical tip %x to chainhash", canonicalTip[:]), "err", err)
 		return fmt.Errorf("error converting canonical tip to chainhash")
 	}
 
-	s.snapSyncHvm(ctHash, headers[len(headers)-1])
+	// Forward to the snap-sync driver. We deliberately do not consume the request ID: a well-formed
+	// response with an unreachable tip can make SnapSyncHvm block, and consuming would let one such
+	// response drop every later valid response and wedge the round permanently. Forwarding every
+	// solicited valid response matches pre-fix behavior (minus the crash and unsolicited packets);
+	// SnapSyncHvm's latch no-ops repeated calls once the round has completed.
+	s.snapSyncHvm(ctHash, lastHeader)
 	return nil
 }
 

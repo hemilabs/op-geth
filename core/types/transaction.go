@@ -1,4 +1,5 @@
 // Copyright 2014 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -385,6 +386,14 @@ func (tx *Transaction) IsPopPayoutTx() bool {
 // IsBtcAttributesDepositedTx returns true if the transaction is a Bitcoin Attributes Deposited tx type.
 func (tx *Transaction) IsBtcAttributesDepositedTx() bool {
 	return tx.Type() == BtcAttributesDepositedTxType
+}
+
+// IsZeroDAFootprintTx reports whether the tx is a system tx (deposit, PoP payout, or BTC Attributes
+// Deposited) that is not posted to L1 data availability and so must be excluded from the block's DA
+// footprint. The builder (CalcDAFootprint) and the receipt derivation (deriveOPStackFields) must use
+// this same set, or they would disagree on BlobGasUsed.
+func (tx *Transaction) IsZeroDAFootprintTx() bool {
+	return tx.IsDepositTx() || tx.IsPopPayoutTx() || tx.IsBtcAttributesDepositedTx()
 }
 
 // IsSystemTx returns true for deposits that are system transactions. These transactions

@@ -1,4 +1,5 @@
 // Copyright 2017 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of go-ethereum.
 //
 // go-ethereum is free software: you can redistribute it and/or modify
@@ -29,6 +30,8 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/btcsuite/btcd/wire"
+	"github.com/ethereum/go-ethereum/core"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
@@ -183,6 +186,13 @@ func makeConfigNode(ctx *cli.Context) (*node.Node, gethConfig) {
 	if ctx.IsSet(utils.EthStatsURLFlag.Name) {
 		cfg.Ethstats.URL = ctx.String(utils.EthStatsURLFlag.Name)
 	}
+	// Fold the resolved Bitcoin network into cfg HERE so it is captured by every consumer of makeConfigNode,
+	// crucially `dumpconfig`. Otherwise `geth --tbc.network=mainnet dumpconfig` would emit the default
+	// (testnet3); re-feeding that TOML with the flag dropped would silently run hVM consensus on the wrong
+	// Bitcoin network, since the genesis-pairing guard is fail-open for the canonical testnet3+testnet3 pair.
+	// makeFullNode's later resolveTBCNetwork call is idempotent given this value.
+	cfg.Eth.TBCNetwork = resolveTBCNetwork(
+		ctx.String(utils.TBCNetwork.Name), ctx.IsSet(utils.TBCNetwork.Name), cfg.Eth.TBCNetwork)
 	applyMetricConfig(ctx, &cfg)
 
 	return stack, cfg
@@ -225,6 +235,41 @@ func constructDevModeBanner(ctx *cli.Context, cfg gethConfig) string {
 	}
 
 	return devModeBanner
+}
+
+// resolveTBCNetwork resolves the configured Bitcoin network with precedence: explicit --tbc.network flag >
+// TOML config value (tomlValue) > flag default (flagValue when the flag is unset; the CLI library fills it
+// with the default). Both the full node and the lightweight hVM header node are driven from this one value so
+// they can never disagree on which Bitcoin network hVM consensus tracks. Returning flagValue unconditionally
+// would clobber a TOML-provided network; returning tomlValue when flagSet would ignore an explicit flag.
+// Kept pure so the precedence is unit-testable without a node. flagValue is ctx.String(name), flagSet is
+// ctx.IsSet(name), tomlValue is cfg.Eth.TBCNetwork.
+func resolveTBCNetwork(flagValue string, flagSet bool, tomlValue string) string {
+	if !flagSet && tomlValue != "" {
+		return tomlValue // honor a TOML-configured network when no CLI flag was given
+	}
+	return flagValue
+}
+
+// validateFullNodeHvmGenesisPair parses the hVM effective-genesis header and validates the (height, header)
+// pair for the NON-consensus full TBC node. A parse failure, or a DESYNCED pair (exactly one of the height or
+// header matches this network's canonical checkpoint), returns an error; a canonical pair, or a fully-custom
+// pair matching no checkpoint (legitimate for this node — the pair only positions where indexing starts and
+// cannot split consensus), is accepted and the parsed header returned. Kept pure (no log.Crit) so makeFullNode's
+// fail-fast wiring is unit-testable. The consensus header node's gate (initHvmHeaderNode) is stricter — it also
+// rejects Custom, because there the pair feeds the contextual-difficulty retarget boundary.
+func validateFullNodeHvmGenesisPair(network, headerHex string, height uint64) (*wire.BlockHeader, error) {
+	header, err := bdf.Hex2Header(headerHex)
+	if err != nil {
+		return nil, fmt.Errorf("unable to parse hVM effective-genesis header (--hvm.genesisheader): %w", err)
+	}
+	if core.IsMismatchedHvmGenesisPairing(network, height, header.BlockHash().String()) {
+		return nil, fmt.Errorf("hVM effective-genesis (height,header) pair is DESYNCED from the canonical "+
+			"checkpoint for network %q: exactly one of height=%d or header=%s matches — set --hvm.genesisheight "+
+			"and --hvm.genesisheader to a consistent pair (a fully custom pair matching no checkpoint is allowed; "+
+			"a half-matching one is a misconfiguration)", network, height, header.BlockHash().String())
+	}
+	return header, nil
 }
 
 // makeFullNode loads geth configuration and creates the Ethereum backend.
@@ -336,9 +381,13 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		if ctx.IsSet(utils.TBCBlockSanity.Name) {
 			fullNodeTbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
 		}
-		if ctx.IsSet(utils.TBCNetwork.Name) {
-			fullNodeTbcCfg.Network = ctx.String(utils.TBCNetwork.Name)
-		}
+		// Resolve the Bitcoin network ONCE and drive BOTH the full node and the lightweight hVM header node
+		// from it, so they can never disagree on which network hVM consensus tracks. See resolveTBCNetwork
+		// for the precedence rules.
+		resolvedTBCNetwork := resolveTBCNetwork(
+			ctx.String(utils.TBCNetwork.Name), ctx.IsSet(utils.TBCNetwork.Name), cfg.Eth.TBCNetwork)
+		fullNodeTbcCfg.Network = resolvedTBCNetwork
+		cfg.Eth.TBCNetwork = resolvedTBCNetwork
 		if ctx.IsSet(utils.TBCPrometheusAddress.Name) {
 			fullNodeTbcCfg.PrometheusListenAddress = ctx.String(utils.TBCPrometheusAddress.Name)
 		}
@@ -348,8 +397,15 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 
 		fullNodeTbcCfg.PeersWanted = 16
 
+		// The full node only answers hVM precompile queries against CONFIRMED, indexed Bitcoin state; no
+		// hVM consensus path reads the mempool (the sole mempool consumer, UtxosByAddress' filterMempool
+		// branch, is only reached with filterMempool=true, which the precompile call site never passes).
+		// NewDefaultConfig enables the mempool by default; disable it here to drop the extra P2P/indexing
+		// work and failure surface it would otherwise carry.
+		fullNodeTbcCfg.MempoolEnabled = false
+
 		logLevel := "INFO"  // Anything 0-3 (silent to info) maps to "INFO" for TBC
-		if verbosity == 4 { // Geth debug = TBC TRACE
+		if verbosity == 4 { // Geth debug = TBC DEBUG
 			logLevel = "DEBUG"
 		} else if verbosity == 5 { // Geth detail = TBC TRACE
 			logLevel = "TRACE"
@@ -358,15 +414,28 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		// Set tbc, tbcd, and leveldb log levels to the log level based on op-geth
 		fullNodeTbcCfg.LogLevel = "tbcd=" + logLevel + ";tbc=" + logLevel + ";level=" + logLevel
 
+		// Load-bearing invariant: the full node must run with AutoIndex=false so its indexers are driven
+		// only to a lagging consensus target, never to the live P2P best tip. AutoIndex=true is not a
+		// supported configuration.
+		if fullNodeTbcCfg.AutoIndex {
+			log.Crit("Refusing to start TBC full node with AutoIndex=true: this is not a supported configuration")
+		}
+
+		// This is the non-consensus full TBC node (it answers hVM precompile queries). validateFullNodeHvmGenesisPair
+		// parses the effective-genesis header and fails fast on a clearly-misconfigured start pair before we open
+		// the TBC node — see its doc comment for why a fully-custom pair is allowed but a desynced one is not.
+		genesisHeader, err := validateFullNodeHvmGenesisPair(fullNodeTbcCfg.Network, cfg.Eth.HvmGenesisHeader, cfg.Eth.HvmGenesisHeight)
+		if err != nil {
+			log.Crit("Refusing to start TBC full node", "err", err)
+		}
+		genesisHash := genesisHeader.BlockHash()
+		genesisHeight := cfg.Eth.HvmGenesisHeight
+
 		// Initialize TBC Bitcoin indexer to answer hVM queries
-		err := vm.SetupTBCFullNode(ctx.Context, fullNodeTbcCfg)
+		err = vm.SetupTBCFullNode(ctx.Context, fullNodeTbcCfg)
 		if err != nil {
 			log.Crit("Unable to setup TBC Full Node", "err", err)
 		}
-
-		genesisHeader, err := bdf.Hex2Header(cfg.Eth.HvmGenesisHeader)
-		genesisHash := genesisHeader.BlockHash()
-		genesisHeight := cfg.Eth.HvmGenesisHeight
 
 		log.Info("Waiting for TBC full node to finish startup")
 
@@ -383,12 +452,9 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 
 		var syncInfo tbc.SyncInfo
 
-		// Require a complete sync of TBC full node up to the hVM genesis height whether or not we have
-		// passed the hVM Phase 0 activation height, so that the node will not continue starting up
-		// until it will be in the correct initial condition when the hVM Phase 0 activation occurs,
-		// rather than working correctly until then and freezing at activation until TBC is caught up.
-		// Would rather have node delay full startup to fully sync TBC to required genesis height
-		// than startup without full information and later freeze at hVM Phase 0 activation time.
+		// Require a complete TBC full-node sync up to the hVM genesis height regardless of whether we have
+		// passed the hVM Phase 0 activation height. Delaying startup until TBC is fully synced is preferable
+		// to starting without full information and freezing at activation while TBC catches up.
 		for {
 			select {
 			case <-time.After(1000 * time.Millisecond):

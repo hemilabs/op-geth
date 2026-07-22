@@ -1,4 +1,5 @@
 // Copyright 2014 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -38,6 +39,20 @@ var (
 	ErrGasUintOverflow          = errors.New("gas uint64 overflow")
 	ErrInvalidCode              = errors.New("invalid code: must not begin with 0xef")
 	ErrNonceUintOverflow        = errors.New("nonce uint64 overflow")
+
+	// ErrHVMInvalidPrecompileInput is returned by an hVM precompile when invoked with malformed
+	// input (e.g. a TxID query that is not 32 bytes). EVM.runPrecompile normalizes it to an empty
+	// successful return, so the transaction is included as a no-op identically on builders and validators.
+	ErrHVMInvalidPrecompileInput = errors.New("hVM precompile called with invalid input")
+
+	// ErrTBCMissingHeader is returned by TBCIndexToHashHeight when the full TBC node is missing a BTC
+	// header required to move its indexers to the requested target. It is transient and recoverable: the
+	// full TBC node is a P2P crawler that never prunes headers (not in ExternalHeaderMode), so the missing
+	// header is one it has not synced yet and ongoing header sync will deliver it. core/vm cannot import
+	// the consensus package (import cycle), so callers in core/blockchain.go translate this sentinel to
+	// consensus.ErrFullTBCMissingBTCHeader, which the block-import path treats as a deferrable retry.
+	// Genuine corruption / I/O errors are not mapped to this sentinel; they remain fail-stop.
+	ErrTBCMissingHeader = errors.New("full TBC node is missing a required BTC header")
 
 	// errStopToken is an internal token indicating interpreter loop termination,
 	// never returned to outside callers.

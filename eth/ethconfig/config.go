@@ -1,4 +1,5 @@
 // Copyright 2021 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -48,6 +49,18 @@ var FullNodeGPO = gasprice.Config{
 	MinSuggestedPriorityFee: gasprice.DefaultMinSuggestedPriorityFee,
 }
 
+// DefaultTBCNetwork is the single source of truth for the default Bitcoin network the hVM nodes run on. The
+// --tbc.network flag default (cmd/utils/flags.go), ethconfig.Defaults.TBCNetwork, and eth/backend.go's
+// empty-config fallback all reference this one constant so the three sites cannot drift. It must be a network
+// for which core.hvmGenesisCheckpoints pins the (HvmGenesisHeader, HvmGenesisHeight) pair, or
+// initHvmHeaderNode's genesis-pairing guard refuses to start.
+//
+// Flipping this to "mainnet" alone is not enough: the coupled HvmGenesisHeader / HvmGenesisHeight defaults
+// below must be re-pinned in lockstep to the mainnet effective-genesis pair (vm.MainnetHvmGenesisHeader /
+// vm.MainnetHvmGenesisHeight = height 883092). Changing only the network while the genesis defaults stay at the
+// testnet3 pair makes initHvmHeaderNode classify the pair as Mismatch/Custom and refuse to start.
+const DefaultTBCNetwork = "testnet3"
+
 // Defaults contains default settings for use on the Ethereum main net.
 var Defaults = Config{
 	HistoryMode:        history.KeepAll,
@@ -71,10 +84,18 @@ var Defaults = Config{
 	GPO:                FullNodeGPO,
 	RPCTxFeeCap:        1, // 1 ether
 	// TODO: Move hVM defaults somewhere else on a per-network basis
-	HvmEnabled:           true,
-	HvmGenesisHeader:     "00000020715ae5bdcf3d4b3a27cecfc0db309ea522fddbe83946492d0f000000000000000f092c40dc00db9010da6452d0e0688056d5b1cbc287de4ffb6a5acff873cd4b0a3c4467ffff001d04dafc10",
-	HvmGenesisHeight:     3488421,
-	HvmHeaderDataDir:     "~/.tbcdheaders", // TODO: put this in configured geth data directory
+	HvmEnabled: true,
+	// Live testnet3 hVM genesis: height 3522419, hash 00000000…96c98151…. The network re-genesised from the
+	// older 3488421/00000000036fc6f1…; a node on live testnet3 must use 3522419 or the pairing guard refuses to
+	// start. The committed BTC history connects from this genesis (verified by
+	// core/vm/btcdiff_history_verify_test.go).
+	HvmGenesisHeader: "00c05732cdc3e0d654efe86351f0cbfc6c79325e9f9fa7886a39b552f5c4d90700000000dae4079485e26f1f77425b84a13760038a352d07a0fef92b5188bd04c2999162afca58679121011962b9d0a5",
+	HvmGenesisHeight: 3522419,
+	HvmHeaderDataDir: "~/.tbcdheaders", // TODO: put this in configured geth data directory
+	// TBCNetwork mirrors the --tbc.network flag default. The lightweight hVM header node derives its TBC
+	// Network from this single value, so the lightweight and full nodes can never disagree on the network.
+	// cmd/geth/config.go overrides it from the flag when set.
+	TBCNetwork:           DefaultTBCNetwork,
 	TxSyncDefaultTimeout: 20 * time.Second,
 	TxSyncMaxTimeout:     1 * time.Minute,
 }
@@ -183,6 +204,10 @@ type Config struct {
 	HvmGenesisHeader string `toml:",omitempty"`
 	HvmGenesisHeight uint64 `toml:",omitempty"`
 	HvmHeaderDataDir string `toml:",omitempty"`
+	// TBCNetwork is the Bitcoin network the hVM consensus header node runs (the same value the full node
+	// takes from --tbc.network). buildHvmHeaderNodeConfig sets tbcCfg.Network from this, so the lightweight
+	// and full nodes share one network value.
+	TBCNetwork string `toml:",omitempty"`
 
 	DeucalionAddress string `toml:",omitempty"`
 

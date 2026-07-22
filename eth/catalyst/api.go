@@ -1,4 +1,5 @@
 // Copyright 2021 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -267,6 +268,14 @@ type PopPayout struct {
 }
 
 func (api *ConsensusAPI) PopPayoutsByL2Keystone(ctx context.Context, abrevHash chainhash.Hash) ([]PopPayout, error) {
+	// On a node without hVM (HvmEnabled=false) the full TBC node and config are never initialized. Guard
+	// before dereferencing vm.TBCFullNodeConfig.Network and vm.TBCFullNode.KeystoneTxsByHash below so this
+	// method returns a clean error instead of nil-deref panicking. Like the precompiles it nil-checks
+	// TBCFullNode, and additionally TBCFullNodeConfig since it reads TBCFullNodeConfig.Network below.
+	if vm.TBCFullNode == nil || vm.TBCFullNodeConfig == nil {
+		return nil, errors.New("hVM/TBC full node is not enabled on this node")
+	}
+
 	req := tbcapi.KeystoneTxsByL2KeystoneAbrevHashRequest{
 		Depth:               3,
 		L2KeystoneAbrevHash: abrevHash,
@@ -956,6 +965,14 @@ func (api *ConsensusAPI) newPayload(params engine.ExecutableData, versionedHashe
 			log.Info("error is full TBC missing a BTC header, delaying payload import")
 			// TBC is missing a block header which is a failure which could be recovered in future.
 			// Delay the payload import,
+			return api.delayPayloadImport(block), nil
+		} else if errors.Is(err, consensus.ErrCorruptHVMHeaderOnlyModeState) {
+			log.Info("error is a recoverable hVM lightweight-state corruption, delaying payload import")
+			// The lightweight hVM header view hit a recoverable torn-store fault (an orphaned header/body or
+			// a transient store read fault) — NOT a block-validity failure. Delay the import (SYNCING) so
+			// op-node retries rather than caching this honest block as permanently INVALID and marking its
+			// descendants invalid. The store self-heals on the forkchoiceUpdated-driven setHead path, which
+			// routes this same sentinel through recoverReapplyHvmState/performFullHvmHeaderStateRestore.
 			return api.delayPayloadImport(block), nil
 		} else {
 			log.Warn("InsertBlockWithoutSetHead failed but error is not full TBC missing full block or header!", "err", err)

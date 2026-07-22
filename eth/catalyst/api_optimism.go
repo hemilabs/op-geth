@@ -18,8 +18,9 @@ func checkOptimismPayload(params engine.ExecutableData, cfg *params.ChainConfig)
 		}
 	}
 
-	// ExtraData validation
-	if err := eip1559.ValidateOptimismExtraData(cfg, params.Timestamp, params.ExtraData); err != nil {
+	// ExtraData validation. params.GasLimit is the gas limit of this same payload, which is the value
+	// CalcBaseFee will divide by the encoded elasticity when this block becomes a parent.
+	if err := eip1559.ValidateOptimismExtraData(cfg, params.Timestamp, params.ExtraData, params.GasLimit); err != nil {
 		return err
 	}
 

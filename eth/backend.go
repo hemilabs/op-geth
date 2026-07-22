@@ -1,4 +1,5 @@
 // Copyright 2014 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -31,6 +32,7 @@ import (
 	"github.com/hemilabs/heminetwork/cmd/btctool/bdf"
 	"github.com/hemilabs/heminetwork/service/tbc"
 	"github.com/holiman/uint256"
+	"github.com/mitchellh/go-homedir"
 	"golang.org/x/time/rate"
 
 	"github.com/ethereum/go-ethereum/accounts"
@@ -143,6 +145,52 @@ type Ethereum struct {
 	supervisorFailsafe   atomic.Bool
 
 	nodeCloser func() error
+}
+
+// buildHvmHeaderNodeConfig assembles the ExternalHeaderMode hVM consensus header-node TBC config from
+// the node's hVM settings. Kept separate from New so TestProductionHvmHeaderConfigIsCanonical can assert
+// the resulting (Network, GenesisHeightOffset, EffectiveGenesisBlock) triple is a canonical pairing without
+// booting a full node. initHvmHeaderNode refuses a non-canonical pair at startup, so a stray change to the
+// network literal or field mapping would otherwise fail every node at boot.
+func buildHvmHeaderNodeConfig(config *ethconfig.Config) *tbc.Config {
+	tbcCfg := tbc.NewDefaultConfig()
+
+	genesisHeader, err := bdf.Hex2Header(config.HvmGenesisHeader)
+	if err != nil {
+		log.Crit("Unable to deserialize hVM Genesis Header", "header", config.HvmGenesisHeader, "err", err)
+	}
+
+	tbcCfg.ExternalHeaderMode = true
+	tbcCfg.EffectiveGenesisBlock = genesisHeader
+	tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
+	// Expand a leading ~ to an absolute path ONCE, at the source. TBC's level.New / NewServer expand it
+	// internally, but op-geth's own filepath.Join consumers — the network-scoped reset and the header-store
+	// detect/delete/rename logic — operate on this string directly. Without expansion they would target a
+	// literal "~/.tbcdheaders/..." dir that never exists, silently no-opping the rename and making the scoped
+	// reset delete the wrong path. Expanding here keeps every consumer in agreement.
+	expandedHome, herr := homedir.Expand(config.HvmHeaderDataDir)
+	if herr != nil {
+		log.Crit("Unable to expand hVM header data directory", "dir", config.HvmHeaderDataDir, "err", herr)
+	}
+	tbcCfg.LevelDBHome = expandedHome
+	tbcCfg.BlockheaderCacheSize = "0"
+	tbcCfg.BlockCacheSize = "0"
+	tbcCfg.AutoIndex = false
+	tbcCfg.BlockSanity = true
+	tbcCfg.MaxCachedTxs = 0
+	tbcCfg.MempoolEnabled = false
+
+	// Network comes from the operator's --tbc.network (plumbed via ethconfig.Config.TBCNetwork), the same
+	// value the full node uses — never hardcoded — so the lightweight and full nodes always share one network.
+	// Fall back to the default only if a programmatic config left it empty (ethconfig.Defaults and cmd/geth
+	// always populate it). The chosen network must be one for which hvmGenesisCheckpoints pins the
+	// (HvmGenesisHeader, HvmGenesisHeight) pair, or initHvmHeaderNode's genesis-pairing guard refuses to start.
+	tbcCfg.Network = config.TBCNetwork
+	if tbcCfg.Network == "" {
+		tbcCfg.Network = ethconfig.DefaultTBCNetwork // one shared default so the value cannot drift between copies
+	}
+
+	return tbcCfg
 }
 
 // New creates a new Ethereum object (including the
@@ -330,26 +378,7 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	eth.blockchain, err = core.NewBlockChain(chainDb, config.Genesis, &overrides, eth.engine, options, nil, &config.TransactionHistory, ctx)
 
 	if config.HvmEnabled {
-		tbcCfg := tbc.NewDefaultConfig()
-
-		genesisHeader, err := bdf.Hex2Header(config.HvmGenesisHeader)
-		if err != nil {
-			log.Crit("Unable to deserialize hVM Genesis Header", "header", config.HvmGenesisHeader, "err", err)
-		}
-
-		tbcCfg.ExternalHeaderMode = true
-		tbcCfg.EffectiveGenesisBlock = genesisHeader
-		tbcCfg.GenesisHeightOffset = config.HvmGenesisHeight
-		tbcCfg.LevelDBHome = config.HvmHeaderDataDir
-		tbcCfg.BlockheaderCacheSize = "0"
-		tbcCfg.BlockCacheSize = "0"
-		tbcCfg.AutoIndex = false
-		tbcCfg.BlockSanity = true
-		tbcCfg.MaxCachedTxs = 0
-		tbcCfg.MempoolEnabled = false
-
-		// TODO: Pull from chain config, each Hemi chain should be configured with a corresponding BTC net
-		tbcCfg.Network = "testnet3"
+		tbcCfg := buildHvmHeaderNodeConfig(config)
 
 		log.Info(fmt.Sprintf("Setting up hVM Header node with effectiveGenesisBlock=%s, genesisHeightOffset=%d, levelDBHome=%s, network=%s",
 			tbcCfg.EffectiveGenesisBlock.BlockHash().String(), tbcCfg.GenesisHeightOffset, tbcCfg.LevelDBHome, tbcCfg.Network))
@@ -516,6 +545,15 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 }
 
 func (e *Ethereum) SendRequestForHashToAllPeers(hash common.Hash) {
+	// Spawned as a detached goroutine by RequestBitcoinBlocksFromPeers, outside any recover boundary;
+	// contain panics so a fault in this best-effort peer fetch cannot crash the process, matching the
+	// sibling detached BTC-request goroutines (requestMissingAncestors, the requestBtcBlocksFromPeers
+	// closure).
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("recovered from panic while requesting BTC block from peers", "hash", hash, "panic", r)
+		}
+	}()
 	log.Trace("BTC block not found in TBC, making peer requests for block", "hash", hash)
 
 	for _, peer := range e.handler.peers.all() {

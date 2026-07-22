@@ -1,4 +1,5 @@
 // Copyright 2021 The go-ethereum Authors
+// Copyright 2026 Hemi Labs, Inc.
 // This file is part of the go-ethereum library.
 //
 // The go-ethereum library is free software: you can redistribute it and/or modify
@@ -30,9 +31,11 @@ import (
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/log"
+	"github.com/ethereum/go-ethereum/metrics"
 	"github.com/ethereum/go-ethereum/p2p/tracker"
 	"github.com/ethereum/go-ethereum/rlp"
 	"github.com/ethereum/go-ethereum/trie"
+	"golang.org/x/time/rate"
 )
 
 // requestTracker is a singleton tracker for eth/66 and newer request times.
@@ -265,6 +268,15 @@ func handleGetBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 }
 
 func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest) []*common.BitcoinBlock {
+	// A node started without hVM (HvmEnabled=false) never initializes the full TBC node, so
+	// vm.TBCFullNode is nil; calling BlockByHash below would nil-deref and crash the process. Serve no
+	// blocks instead (the caller replies with an empty set), as a node with no matching blocks would.
+	// Mirrors the nil-guard every hVM precompile has (core/vm/contracts.go).
+	if vm.TBCFullNode == nil {
+		log.Debug("ignoring GetBtcBlocks query: hVM/TBC full node not enabled on this node")
+		return nil
+	}
+
 	// Gather Bitcoin blocks until the fetch or network limits is reached
 	var (
 		bytesCount int
@@ -306,6 +318,14 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 
 		blockBytes := blockBuf.Bytes()
 		if len(blockBytes) != 0 {
+			// Keep the RLP-encoded reply under the receiver's maxMessageSize (10 MiB). A single
+			// serialized block can be up to ~4 MB (wire.MaxBlockPayload), so the top-of-loop
+			// bytesCount>=softResponseLimitBTC check can overshoot by a whole block. Stop before
+			// appending one that would exceed the target, but always include at least one block so
+			// a request whose first block is large still makes forward progress.
+			if len(blocks) > 0 && bytesCount+len(blockBytes) > softResponseLimitBTC {
+				break
+			}
 			btcBlock := common.BytesToBitcoinBlock(blockBytes)
 			blocks = append(blocks, &btcBlock)
 			bytesCount += len(blockBytes)
@@ -417,9 +437,127 @@ func handleNewBlock(backend Backend, msg Decoder, peer *Peer) error {
 	return errors.New("block broadcasts disallowed") // We dropped support for non-merge networks
 }
 
+// Contextual-difficulty verdict counters. These are enforced: a reject drops the gossiped header (see
+// evaluateBTCDiff / handleBTCBlocks). The metric path retains the historical ".../shadow/..." segment on
+// purpose — operators watch the same reject series across the shadow (log-only) -> enforce cutover, so a
+// continuous near-zero reject rate is legible on one graph rather than resetting at the flip.
+//
+// Scope (shared by the PoW and merkle gates below): these cover the eth-gossip ingestion path
+// (handleBTCBlocks) as a cheaper early filter. The authoritative, consensus-binding enforcement is on the
+// apply path into the lightweight header node (AddExternalHeaders); these gossip-side checks are
+// defense-in-depth and are not the gate consensus depends on. The reject counter is the metrics signal and
+// the throttled reject log.Warn below is the human-readable detail (it is suppressed only for a block whose
+// full BODY is already in the store, via the FullBlockAvailable short-circuit at the top of the loop, so
+// header-only entries still log).
+// Note: accept/skip/reject count validator verdicts, not confirmed store writes — a later
+// header/body insert failure on an accept/skip verdict is logged but does not adjust these
+// counters. Do not read accept+skip as "admitted to store".
+var (
+	hvmBTCDiffShadowAccept = metrics.NewRegisteredCounter("eth/hvm/btcdiff/shadow/accept", nil)
+	hvmBTCDiffShadowSkip   = metrics.NewRegisteredCounter("eth/hvm/btcdiff/shadow/skip", nil)
+	hvmBTCDiffShadowReject = metrics.NewRegisteredCounter("eth/hvm/btcdiff/shadow/reject", nil)
+
+	// btcDiffRejectLogLimiter throttles the per-reject log.Warn so repeated rejects cannot flood the log.
+	// The hvmBTCDiffShadowReject counter is the unthrottled signal; this Warn is only the human-readable
+	// detail. ~1 line every 5s with a burst.
+	btcDiffRejectLogLimiter = rate.NewLimiter(rate.Every(5*time.Second), 4)
+
+	// hvmBTCGossipPoWReject counts gossiped BTC headers dropped by the context-free proof-of-work gate
+	// (hash > target, or an out-of-range target). Distinct from the contextual-difficulty reject counter
+	// above: a header can pass contextual difficulty (correct Bits) yet fail PoW (no real work). A sustained
+	// non-zero rate means a peer is feeding unmined headers over gossip; alert on it.
+	hvmBTCGossipPoWReject = metrics.NewRegisteredCounter("eth/hvm/btcdiff/gossip/pow_reject", nil)
+
+	// btcPoWRejectLogLimiter throttles the per-PoW-reject Warn (same rationale as btcDiffRejectLogLimiter;
+	// the counter is the unthrottled alert).
+	btcPoWRejectLogLimiter = rate.NewLimiter(rate.Every(5*time.Second), 4)
+
+	// hvmBTCGossipMerkleReject counts gossiped BTC block bodies dropped because their transactions do not
+	// hash to the header's committed merkle root. The gate below binds a gossiped body to its header's
+	// merkle root before storage, so a body of substituted transactions cannot be admitted under a real
+	// consensus-chain header hash (see vm.CheckBTCBlockMerkleRoot). A sustained non-zero rate means a peer
+	// is feeding bodies that do not match their headers.
+	hvmBTCGossipMerkleReject = metrics.NewRegisteredCounter("eth/hvm/btcdiff/gossip/merkle_reject", nil)
+
+	// btcMerkleRejectLogLimiter throttles the per-merkle-reject Warn (same rationale as btcPoWRejectLogLimiter;
+	// the counter is the unthrottled alert).
+	btcMerkleRejectLogLimiter = rate.NewLimiter(rate.Every(5*time.Second), 4)
+)
+
+type btcDiffShadowVerdict int
+
+const (
+	btcDiffShadowAccept btcDiffShadowVerdict = iota // header difficulty is contextually valid
+	btcDiffShadowSkip                               // parent/anchor unavailable (normal during IBD); NOT a rejection
+	btcDiffShadowReject                             // genuine contextual-difficulty violation
+)
+
+// classifyBTCDiffShadow maps a vm.ValidateBTCHeaderContext result to a shadow verdict. The skip sentinel
+// must stay distinct from a rejection (a real RuleError), mirroring the vm-side requireSkip/requireReject
+// contract — collapsing them would flip an IBD skip into a false reject (and, when enforcing, drop a valid
+// header).
+func classifyBTCDiffShadow(err error) btcDiffShadowVerdict {
+	switch {
+	case err == nil:
+		return btcDiffShadowAccept
+	case errors.Is(err, vm.ErrBTCHeaderContextUnavailable):
+		return btcDiffShadowSkip
+	default:
+		return btcDiffShadowReject
+	}
+}
+
+// evaluateBTCDiff runs the contextual-difficulty validator on a gossiped BTC header, records the verdict
+// to the per-outcome counters, logs (throttled) a rejection, and returns the verdict so the caller can
+// enforce it via shouldDropBTCHeader.
+func evaluateBTCDiff(blockHash chainhash.Hash, hdr *wire.BlockHeader) btcDiffShadowVerdict {
+	err := vm.ValidateBTCHeaderContext(hdr)
+	verdict := classifyBTCDiffShadow(err)
+	switch verdict {
+	case btcDiffShadowAccept:
+		hvmBTCDiffShadowAccept.Inc(1)
+	case btcDiffShadowSkip:
+		hvmBTCDiffShadowSkip.Inc(1)
+	default:
+		hvmBTCDiffShadowReject.Inc(1)
+		if btcDiffRejectLogLimiter.Allow() {
+			log.Warn("hVM BTC contextual-difficulty REJECT — dropping header (enforce mode); "+
+				"a real testnet3/mainnet header here indicates a validator false positive",
+				"block", blockHash.String(), "prev", hdr.PrevBlock.String(),
+				"bits", fmt.Sprintf("%08x", hdr.Bits), "err", err)
+		}
+	}
+	return verdict
+}
+
+// shouldDropBTCHeader reports whether an enforce-mode verdict means the header must not be inserted. Only
+// a genuine contextual-difficulty rejection drops. A skip (parent/anchor not yet available — normal during
+// IBD) and an accept both proceed to insertion: dropping on skip would stall sync by discarding headers
+// whose ancestry simply has not arrived. Isolating this one-line policy makes the "never drop on skip"
+// invariant unit-testable without a live TBC node.
+func shouldDropBTCHeader(v btcDiffShadowVerdict) bool {
+	return v == btcDiffShadowReject
+}
+
+// shouldDropBTCHeaderPoW reports whether a vm.CheckBTCHeaderPoW result means the gossiped header must not
+// be inserted: drop only on a genuine PoW failure (a btcd RuleError — hash>target / out-of-range target).
+// A nil result (valid PoW) and the ErrBTCHeaderContextUnavailable skip sentinel (params not configured)
+// both proceed — dropping on the skip would discard honest headers on a transient config gap, and real
+// enforcement is the consensus apply path; this gossip gate is defense-in-depth.
+func shouldDropBTCHeaderPoW(err error) bool {
+	return err != nil && !errors.Is(err, vm.ErrBTCHeaderContextUnavailable)
+}
+
 func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
-	// TODO: Remove, temporary logging for testing visibility
-	log.Info("Peer sent BTC blocks")
+	log.Debug("Peer sent BTC blocks")
+
+	// Ignore BTC-block gossip when this node has no full TBC node (HvmEnabled=false), rather than
+	// nil-deref vm.TBCFullNode (the store calls) below and crash the
+	// process. Mirrors the nil-guard every hVM precompile has.
+	if vm.TBCFullNode == nil {
+		log.Debug("ignoring BtcBlocks message: hVM/TBC full node not enabled on this node")
+		return nil
+	}
 
 	// Retrieve and decode the propagated block
 	res := new(BTCBlocksPacket)
@@ -428,7 +566,18 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 		return fmt.Errorf("%w: message %v: %v", errDecode, msg, err)
 	}
 
-	log.Info("Peer BTC Blocks packet info", "len", len(res.BTCBlocksResponse))
+	log.Debug("Peer BTC Blocks packet info", "len", len(res.BTCBlocksResponse))
+
+	// Hard per-message header cap. The inbound loop is otherwise bounded only by maxMessageSize
+	// (10MiB ≈ 126k minimal headers); maxBtcBlocksServe (32) is enforced only on the serve side, never
+	// on ingest. Without this cap a single message could pack tens of thousands of headers, each
+	// driving a contextual-difficulty walk serially on this one per-peer goroutine, contending the TBC
+	// header-cache mutex shared with consensus-path hVM precompiles. An honest peer never serves more
+	// than maxBtcBlocksServe blocks in a response, so a larger batch is protocol abuse.
+	if len(res.BTCBlocksResponse) > maxBtcBlocksServe {
+		log.Warn("ignoring oversized BtcBlocks message", "count", len(res.BTCBlocksResponse), "cap", maxBtcBlocksServe, "peer", peer.ID())
+		return fmt.Errorf("%w: BtcBlocks response of %d exceeds cap %d", errMsgTooLarge, len(res.BTCBlocksResponse), maxBtcBlocksServe)
+	}
 
 	for i, btcBlock := range res.BTCBlocksResponse {
 		var msgBlock wire.MsgBlock
@@ -449,6 +598,21 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 			continue
 		}
 
+		// Context-free proof-of-work gate on the gossip ingest path (defense-in-depth). A header with a
+		// correct Bits field but no real work would otherwise pass the contextual check below; require the
+		// work to be real here. PoW is context-free and cheaper than the contextual walk, so reject-before-walk
+		// is also DoS-better. A skip sentinel (params not configured) is not a PoW failure and must not drop.
+		// This is a gossip-side early filter only; the authoritative enforcement is the apply path into the
+		// lightweight consensus node, which is what consensus reads.
+		if shouldDropBTCHeaderPoW(vm.CheckBTCHeaderPoW(&msgBlock.Header)) {
+			hvmBTCGossipPoWReject.Inc(1)
+			if btcPoWRejectLogLimiter.Allow() {
+				log.Warn("hVM BTC gossip PoW REJECT — dropping header that fails proof-of-work",
+					"block", hash.String(), "bits", fmt.Sprintf("%08x", msgBlock.Header.Bits), "peer", peer.ID())
+			}
+			continue
+		}
+
 		headers := make([]*wire.BlockHeader, 1)
 		headers[0] = &msgBlock.Header
 
@@ -456,10 +620,45 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 			Headers: headers,
 		}
 
+		// Enforce: validate this gossiped header's contextual Bitcoin difficulty and drop it on a genuine
+		// violation, so an easier-than-consensus header is not admitted to the TBC store via this path.
+		// A skip verdict (ancestry not yet available — normal during IBD) and an accept both fall through to
+		// the inserts below; only a reject is dropped. evaluateBTCDiff records the verdict counter and logs
+		// (throttled) rejects. This is gossip-path defense-in-depth; the consensus-binding enforcement is the
+		// contextual-difficulty check on the apply path into the lightweight header node (floor-aware). This
+		// gossip/full-node path is not consensus-binding.
+		if shouldDropBTCHeader(evaluateBTCDiff(hash, &msgBlock.Header)) {
+			continue
+		}
+
 		_, _, _, _, err = vm.TBCFullNode.BlockHeadersInsert(vm.MainCtx, msgHeaders)
 		if err != nil {
 			// Do not exit, try to still insert block below regardless but log error
 			log.Error("Unable to add BTC header to TBC", "err", err)
+		}
+
+		// A 0-tx message is a header-only relay (a peer advertising a bare header as a wire.MsgBlock); a real
+		// BTC block always carries at least the coinbase tx. The header was already inserted above and there
+		// is no body to verify or store, so fall through to the next entry. This is a normal message shape,
+		// not a merkle failure, so it must not run the body check below nor count as a reject.
+		if len(msgBlock.Transactions) == 0 {
+			continue
+		}
+
+		// Verify the body matches the header's committed merkle root before storing it. This binds the body
+		// to its header's merkle root, so a body of substituted transactions cannot be admitted under a real
+		// consensus-chain header hash (see vm.CheckBTCBlockMerkleRoot). On mismatch, drop
+		// only the body: the PoW/diff-valid header was already inserted above, leaving the normal "header
+		// known, block not yet downloaded" state, and the genuine body is re-fetched via P2P. The PoW/diff
+		// header gates above are header-only and cheaper, so they run first; this hashes the full tx set and
+		// is bounded by the 32-block-per-message / max-message-size caps.
+		if err := vm.CheckBTCBlockMerkleRoot(&msgBlock); err != nil {
+			hvmBTCGossipMerkleReject.Inc(1)
+			if btcMerkleRejectLogLimiter.Allow() {
+				log.Warn("hVM BTC gossip merkle REJECT — body does not match header merkle root; not storing body",
+					"block", hash.String(), "peer", peer.ID(), "err", err)
+			}
+			continue
 		}
 
 		insert, err := vm.TBCFullNode.BlockInsert(vm.MainCtx, &msgBlock)
@@ -478,29 +677,75 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 	return nil
 }
 
-func requestMissingAncestors(peer *Peer, parentHash *wire.BlockHeader) {
-	_, blocksMissing, _, err := vm.TBCBlocksAvailableToHeader(vm.MainCtx, parentHash)
-	if err != nil {
-		log.Error("Failed to check BTC ancestor availability", "hash", parentHash.BlockHash().String(), "err", err)
+// maxConcurrentAncestorWalks caps how many ancestor-fetch store-walks run at once. handleBTCBlocks spawns
+// one detached walk per inserted block (up to maxBtcBlocksServe per message), and each walk reads the
+// process-wide vm.TBCFullNode store; capping concurrency bounds contention on that single shared store.
+const maxConcurrentAncestorWalks = 4
+
+// ancestorWalkGate is a PROCESS-GLOBAL admission control (deliberately not per-peer): the cap must bound
+// contention on the single process-wide vm.TBCFullNode store, so per-handler caps would not compose. It
+// also dedups concurrent walks for the same parent. Anything it drops is re-requested by the 5s
+// prefetchBTCBlocks backstop, so it is a pure load limiter (see walkGate).
+var ancestorWalkGate = newWalkGate(maxConcurrentAncestorWalks)
+
+// tbcBlocksAvailableToHeader is a seam over vm.TBCBlocksAvailableToHeader so the ancestor-walk request
+// wiring (batching/chunking) is unit-testable without a live TBC full node. Never reassigned in production.
+var tbcBlocksAvailableToHeader = vm.TBCBlocksAvailableToHeader
+
+// requestMissingAncestors, on receiving a gossiped BTC block, requests from peer any ancestor blocks the
+// full node is still missing on the path to header (header is the inserted block's own *wire.BlockHeader).
+func requestMissingAncestors(peer *Peer, header *wire.BlockHeader) {
+	// This runs in a detached goroutine spawned from handleBTCBlocks, OUTSIDE the
+	// handleHvmBTCMessageGuarded recover boundary that contains faults in peer-supplied Bitcoin-data
+	// processing. A panic here (e.g. the goleveldb panic raised by a closed/torn TBC store during
+	// shutdown or a full-node restart) would otherwise crash the whole process, so contain it: log and
+	// drop this best-effort ancestor request.
+	defer func() {
+		if r := recover(); r != nil {
+			log.Error("recovered from panic while requesting missing BTC ancestors", "peer", peer.ID(), "panic", r)
+		}
+	}()
+	if vm.TBCFullNode == nil {
 		return
 	}
+	// Admit this speculative walk only if a walk for the same parent is not already running and we are
+	// under the concurrency cap; otherwise drop it (the 5s prefetchBTCBlocks backstop re-requests anything
+	// dropped here, so this never strands a block). release also runs on the recover path above.
+	release, ok := ancestorWalkGate.tryEnter(common.Hash(header.BlockHash()))
+	if !ok {
+		return
+	}
+	defer release()
+	requestMissingAncestorBlocks(peer, header)
+}
 
+// requestMissingAncestorBlocks walks the missing ancestors of header and requests them from peer in
+// maxBtcBlocksServe-sized batches. Split from the gated/recovered wrapper above so the walk + batch +
+// chunk logic is unit-testable with a stubbed tbcBlocksAvailableToHeader and a pipe peer.
+func requestMissingAncestorBlocks(peer *Peer, header *wire.BlockHeader) {
+	_, blocksMissing, _, err := tbcBlocksAvailableToHeader(vm.MainCtx, header)
+	if err != nil {
+		log.Error("Failed to check BTC ancestor availability", "hash", header.BlockHash().String(), "err", err)
+		return
+	}
 	if blocksMissing == nil || len(*blocksMissing) == 0 {
 		return
 	}
-
-	log.Info("Requesting missing BTC ancestor blocks from peer", "count", len(*blocksMissing), "peer", peer.ID())
-
-	// request each block missing in its own request.  I don't know how large
-	// blocksMissing will be, so I don't want to request all at once.
-	// we could "batch" the requests, but that's not as readable as this for
-	// loop
+	hashes := make([]common.Hash, 0, len(*blocksMissing))
 	for _, bm := range *blocksMissing {
-		log.Info("requesting missing block from peer", "hash", common.Hash(bm.BlockHash()), "peer", peer.ID())
-		if err := peer.RequestBtcBlocks([]common.Hash{
-			common.Hash(bm.BlockHash()),
-		}); err != nil {
-			log.Error("could not request btc blocks from peer: %s", err)
+		hashes = append(hashes, common.Hash(bm.BlockHash()))
+	}
+	log.Info("Requesting missing BTC ancestor blocks from peer", "count", len(hashes), "peer", peer.ID())
+	// Chunk into maxBtcBlocksServe-sized requests. The serve side returns at most maxBtcBlocksServe blocks
+	// per response, so asking for more in one message is wasted; chunking also preserves a per-message
+	// bound (a single gossip block can imply an arbitrarily long missing ancestor run during catch-up).
+	for start := 0; start < len(hashes); start += maxBtcBlocksServe {
+		end := start + maxBtcBlocksServe
+		if end > len(hashes) {
+			end = len(hashes)
+		}
+		if err := peer.RequestBtcBlocks(hashes[start:end]); err != nil {
+			log.Error("could not request btc blocks from peer", "err", err, "count", end-start)
 		}
 	}
 }
