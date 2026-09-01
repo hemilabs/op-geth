@@ -47,12 +47,14 @@ var ErrBTCBlockDuplicateTx = errors.New("btc block contains a duplicate transact
 // passes this check is the genuine body of that header — a peer cannot substitute transactions without
 // changing the root and thus the header hash.
 //
-// It also rejects a body that repeats any transaction (the CVE-2012-2459 duplicate-tail case, which
-// shares the genuine block's merkle root); it is otherwise NOT a full block sanity check (it does not
-// re-verify PoW — done separately by CheckBTCHeaderPoW — coinbase structure, sizes, or timestamps).
+// It also rejects a body whose first transaction is not a coinbase (closing the 64-byte leaf/node ambiguity.
 //
-// Returns nil if the body matches the header; ErrBTCBlockMerkleMismatch (wrapped with both roots) on a
-// root mismatch; ErrBTCBlockDuplicateTx on a repeated transaction; and a plain error for a structurally
+// It is otherwise NOT a full block sanity check: it does not re-verify PoW (done separately by
+// CheckBTCHeaderPoW), nor sizes, nor timestamps, nor any coinbase property BEYOND "txs[0] is a
+// coinbase" — not its script length, not its value, not that there is exactly one.
+//
+// Returns nil if the body matches the header; ErrBTCBlockMerkleMismatch on a non-coinbase first
+// transaction or (wrapped with both roots) on a root mismatch; ErrBTCBlockDuplicateTx on a repeated transaction; and a plain error for a structurally
 // unusable body (nil block, or zero transactions — a real Bitcoin block always carries at least the
 // coinbase, and the merkle routine is undefined for an empty transaction set).
 func CheckBTCBlockMerkleRoot(block *wire.MsgBlock) error {
@@ -63,6 +65,10 @@ func CheckBTCBlockMerkleRoot(block *wire.MsgBlock) error {
 		return errors.New("btc block has no transactions")
 	}
 	txs := btcutil.NewBlock(block).Transactions()
+	// Require a coinbase first.
+	if !blockchain.IsCoinBase(txs[0]) {
+		return fmt.Errorf("%w: first transaction is not a coinbase", ErrBTCBlockMerkleMismatch)
+	}
 	// Reject duplicate transactions. A body that repeats a tx hashes to the SAME merkle root as the
 	// genuine block (CVE-2012-2459), so it would pass the binding below; it is consensus-invalid in
 	// Bitcoin and must be rejected here.

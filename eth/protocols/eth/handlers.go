@@ -309,8 +309,9 @@ func ServiceGetBTCBlocksQuery(chain *core.BlockChain, query GetBTCBlocksRequest)
 		}
 		var blockBuf bytes.Buffer
 
+		// Ensure that block serialization is always done with no witnesses, even if they are provided
 		// Note that this might not always be congruent with BTC wire format in the future
-		err = block.MsgBlock().Serialize(&blockBuf)
+		err = block.MsgBlock().SerializeNoWitness(&blockBuf)
 		if err != nil {
 			log.Error(fmt.Sprintf("error serializing BTC block %s for peer", hash.String()), "err", err)
 			continue
@@ -479,9 +480,25 @@ var (
 	// is feeding bodies that do not match their headers.
 	hvmBTCGossipMerkleReject = metrics.NewRegisteredCounter("eth/hvm/btcdiff/gossip/merkle_reject", nil)
 
+	// hvmBTCGossipWitnessStripped counts transactions whose witness was stripped off a gossiped body before
+	// storing.
+	hvmBTCGossipWitnessStripped = metrics.NewRegisteredCounter("eth/hvm/btcdiff/gossip/witness_stripped", nil)
+
+	// hvmBTCGossipDecodeReject counts gossiped entries refused before decoding because some declared
+	// count (transactions, inputs, outputs, witness items, or a script length) cannot fit in the
+	// bytes supplied, or because the payload exceeds the maximum block size.
+	hvmBTCGossipDecodeReject = metrics.NewRegisteredCounter("eth/hvm/btcdiff/gossip/decode_reject", nil)
+
 	// btcMerkleRejectLogLimiter throttles the per-merkle-reject Warn (same rationale as btcPoWRejectLogLimiter;
 	// the counter is the unthrottled alert).
 	btcMerkleRejectLogLimiter = rate.NewLimiter(rate.Every(5*time.Second), 4)
+
+	// btcWitnessStripLogLimiter throttles the per-strip Warn (same rationale and budget as the
+	// sibling limiters above).
+	btcWitnessStripLogLimiter = rate.NewLimiter(rate.Every(5*time.Second), 4)
+
+	// btcDecodeBoundsLogLimiter throttles the per-reject Warn for implausible block payloads.
+	btcDecodeBoundsLogLimiter = rate.NewLimiter(rate.Every(5*time.Second), 4)
 )
 
 type btcDiffShadowVerdict int
@@ -580,6 +597,20 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 	}
 
 	for i, btcBlock := range res.BTCBlocksResponse {
+		// Bound the decode before running it. wire.MsgBlock.BtcDecode reads the transaction-count
+		// varint and immediately does make([]*MsgTx, 0, txCount), checking only that txCount is under
+		// btcd's maxTxPerBlock (400,001). That check is on the count, not on whether the payload could
+		// possibly contain that many transactions, so an 85-byte entry claiming 400,001 transactions
+		// allocates ~3.2 MB and then fails with EOF.
+		if err := checkBTCBlockDecodeBounds(btcBlock.Bytes()); err != nil {
+			if btcDecodeBoundsLogLimiter.Allow() {
+				log.Warn("hVM BTC gossip: implausible block payload; refusing to decode",
+					"badIndex", i, "peer", peer.ID(), "err", err)
+			}
+			hvmBTCGossipDecodeReject.Inc(1)
+			continue
+		}
+
 		var msgBlock wire.MsgBlock
 		err := msgBlock.Deserialize(bytes.NewReader(btcBlock.Bytes()))
 		if err != nil {
@@ -659,6 +690,18 @@ func handleBTCBlocks(backend Backend, msg Decoder, peer *Peer) error {
 					"block", hash.String(), "peer", peer.ID(), "err", err)
 			}
 			continue
+		}
+
+		// Strip witness before storing. This runs after the merkle check on purpose: witness is not
+		// committed by the txid-based merkle root, so stripping cannot change that verdict either
+		// way, and running the cheaper header/merkle gates first keeps this off the reject path.
+		if stripped := vm.StripBlockWitness(&msgBlock); stripped != 0 {
+			hvmBTCGossipWitnessStripped.Inc(int64(stripped))
+			if btcWitnessStripLogLimiter.Allow() {
+				log.Warn("hVM BTC gossip: peer supplied a block body carrying segwit witness data; "+
+					"stripping before storing.", "block", hash.String(), "peer", peer.ID(),
+					"txsAffected", stripped)
+			}
 		}
 
 		insert, err := vm.TBCFullNode.BlockInsert(vm.MainCtx, &msgBlock)

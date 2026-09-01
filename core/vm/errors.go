@@ -45,6 +45,14 @@ var (
 	// successful return, so the transaction is included as a no-op identically on builders and validators.
 	ErrHVMInvalidPrecompileInput = errors.New("hVM precompile called with invalid input")
 
+	// ErrBTCAddressTooLong is returned by btcAddrToScript for an address longer than
+	// MAX_BTC_ADDRESS_LENGTH.
+	//
+	// It is deliberately NOT ErrHVMInvalidPrecompileInput: runPrecompile normalises that sentinel into
+	// a successful empty CALL, whereas this precompile's existing behaviour on an undecodable address
+	// is to return the error, failing the CALL and consuming all gas.
+	ErrBTCAddressTooLong = errors.New("hVM precompile called with an over-length Bitcoin address")
+
 	// ErrTBCMissingHeader is returned by TBCIndexToHashHeight when the full TBC node is missing a BTC
 	// header required to move its indexers to the requested target. It is transient and recoverable: the
 	// full TBC node is a P2P crawler that never prunes headers (not in ExternalHeaderMode), so the missing

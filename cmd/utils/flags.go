@@ -1094,7 +1094,7 @@ var (
 		Name:     "tbc.blocksanity",
 		Usage:    "Enable/disable block sanity checks before inserting",
 		Category: flags.RollupCategory,
-		Value:    false,
+		Value:    true,
 	}
 	TBCNetwork = &cli.StringFlag{
 		Name:     "tbc.network",

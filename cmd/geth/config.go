@@ -378,9 +378,8 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		if ctx.IsSet(utils.TBCLevelDBHome.Name) {
 			fullNodeTbcCfg.LevelDBHome = ctx.String(utils.TBCLevelDBHome.Name)
 		}
-		if ctx.IsSet(utils.TBCBlockSanity.Name) {
-			fullNodeTbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
-		}
+		// Always assign explicitly, and the flag defaults to true.
+		fullNodeTbcCfg.BlockSanity = ctx.Bool(utils.TBCBlockSanity.Name)
 		// Resolve the Bitcoin network ONCE and drive BOTH the full node and the lightweight hVM header node
 		// from it, so they can never disagree on which network hVM consensus tracks. See resolveTBCNetwork
 		// for the precedence rules.

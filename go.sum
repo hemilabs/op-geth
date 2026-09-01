@@ -264,8 +264,10 @@ github.com/graph-gophers/graphql-go v1.3.0 h1:Eb9x/q6MFpCLz7jBCiP/WTxjSDrYLR1QY4
 github.com/graph-gophers/graphql-go v1.3.0/go.mod h1:9CQHMSxwO4MprSdzoIEobiHpoLtHm77vfxsvsIN5Vuc=
 github.com/hashicorp/go-bexpr v0.1.10 h1:9kuI5PFotCboP3dkDYFr/wi0gg0QVbSNz5oFRpxn4uE=
 github.com/hashicorp/go-bexpr v0.1.10/go.mod h1:oxlubA2vC/gFVfX1A6JGp7ls7uCDlfJn732ehYYg+g0=
-github.com/hemilabs/heminetwork v1.6.4-0.20250716150413-22552f1a5442 h1:uja2JQILta+6RDjFQm5uyAoysPpmfyIkY2DgbnbS++g=
-github.com/hemilabs/heminetwork v1.6.4-0.20250716150413-22552f1a5442/go.mod h1:Ls95vJ7caY8NnZz8KtOFC+pGGqrtec9lWgp0qmJ684A=
+github.com/hemilabs/heminetwork v1.6.4-0.20260828205117-375abfbd3c4f h1:3XKGTIar4wxTHrzNtvs4r6qISk+W4xXIKrRO0cOQKBM=
+github.com/hemilabs/heminetwork v1.6.4-0.20260828205117-375abfbd3c4f/go.mod h1:Ls95vJ7caY8NnZz8KtOFC+pGGqrtec9lWgp0qmJ684A=
+github.com/hemilabs/heminetwork v1.6.4-0.20260831165532-44781989923a h1:Dn181OwdLdj+ZRU9ZruAZ3vwFgjdOooh1aM1dHW0jnY=
+github.com/hemilabs/heminetwork v1.6.4-0.20260831165532-44781989923a/go.mod h1:Ls95vJ7caY8NnZz8KtOFC+pGGqrtec9lWgp0qmJ684A=
 github.com/holiman/billy v0.0.0-20250707135307-f2f9b9aae7db h1:IZUYC/xb3giYwBLMnr8d0TGTzPKFGNTCGgGLoyeX330=
 github.com/holiman/billy v0.0.0-20250707135307-f2f9b9aae7db/go.mod h1:xTEYN9KCHxuYHs+NmrmzFcnvHMzLLNiGFafCb1n3Mfg=
 github.com/holiman/bloomfilter/v2 v2.0.3 h1:73e0e/V0tCydx14a0SCYS/EWCxgwLZ18CZcZKVu0fao=

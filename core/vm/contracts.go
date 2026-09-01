@@ -62,6 +62,28 @@ import (
 
 const (
 	MIN_BTC_ADDRESS_LENGTH = 24
+
+	// MAX_BTC_ADDRESS_LENGTH bounds the address string handed to btcutil.DecodeAddress.
+	//
+	// WHY 200 IS SAFE, i.e. why this cannot reject anything that would otherwise have decoded.
+	// btcutil.DecodeAddress has exactly three paths, and every one is bounded far below 200:
+	//
+	//   - bech32 segwit: reachable only behind a known HRP (bc1/tb1/bcrt1/sb1), and the decoder the
+	//     segwit arm actually calls -- bech32.DecodeGeneric, NOT bech32.Decode -- refuses len > 90
+	//     outright (BIP173). The longest real form is 64 characters -- a regtest bcrt1 P2WSH/P2TR;
+	//     the widely-quoted 62 is the bc1/tb1 figure, and localnet maps to RegressionNetParams.
+	//   - hex pubkey: gated on len(addr) == 130 || len(addr) == 66, exactly.
+	//   - base58: can only succeed at the ripemd160.Size (20-byte) case; every other decoded length
+	//     falls to "decoded address is of unknown size". A base58 string of n characters decodes to
+	//     at least ~0.732*(n-1) bytes (leading '1's cost a byte each, and any other leading character
+	//     forces a value >= 58^(n-k-1)), so past ~35 characters the 20-byte case is arithmetically
+	//     unreachable. The analytic minimum for 201 characters is ceil(200*log2(58)/8) = 147 bytes,
+	//     confirmed by measurement against the pinned btcutil -- versus the 25 a successful decode
+	//     needs. Put the other way round: a 25-byte payload is encodable ONLY by base58 strings of
+	//     25 to 35 characters, so the cap sits ~5.7x above the longest input that could ever decode.
+	//
+	// DO NOT LOWER THIS BELOW 130 to ensure support for all legitimate Bitcoin address types.
+	MAX_BTC_ADDRESS_LENGTH = 200
 	BTC_TXID_LENGTH_BYTES  = 32
 )
 
@@ -106,6 +128,12 @@ var HvmNullBlockHash = make([]byte, 32)
 // no-op, which does NOT increment this counter.
 var hvmPrecompileInvalidDataCounter = metrics.NewRegisteredCounter("vm/hvm/precompile/invalid_data", nil)
 
+// hvmPrecompileOverLengthAddrCounter counts calls rejected by MAX_BTC_ADDRESS_LENGTH.
+//
+// It exists because the three cap sites otherwise emit only log.Debug, which is level 4 while geth's
+// default verbosity is 3 -- so on a default-configured node an over-length call produces no output.
+var hvmPrecompileOverLengthAddrCounter = metrics.NewRegisteredCounter("vm/hvm/precompile/overlength_addr", nil)
+
 // utxoIndexHashForLastHeader is the seam btcLastHeader uses to read the UTXO indexer position. It defaults to the
 // live TBCFullNode.UtxoIndexHash and is NEVER reassigned in production — it exists ONLY so a test can drive the
 // NON-panic UtxoIndexHash-error sub-case of btcLastHeader's guard. That sub-case is otherwise unreachable from a
@@ -139,6 +167,11 @@ func RestartTBCFullNode(ctx context.Context) error {
 func validateTBCFullNodeConfig(cfg *tbc.Config) error {
 	if cfg.AutoIndex {
 		return errors.New("TBC full node must run with AutoIndex=false; AutoIndex=true is not a supported configuration")
+	}
+	// Sanity check that mempool is always disabled on the TBC full node
+	if cfg.MempoolEnabled {
+		return errors.New("TBC full node must run with MempoolEnabled=false; the hVM consensus path " +
+			"never reads the mempool, and core/vm's witness-strip reasoning assumes it is disabled")
 	}
 	return nil
 }
@@ -1204,6 +1237,17 @@ func (c *btcBalAddr) Run(input []byte, blockContext common.Hash) ([]byte, error)
 		log.Crit("hVM Precompile called but the TBC Full Node is not setup")
 	}
 
+	// Bound the address before it reaches the expensive base58 decoder inside BalanceByAddress. Returning
+	// (nil, nil) reproduces EXACTLY what this precompile does when that decode fails, which is what an
+	// over-length input would always have reached.
+	//
+	// Placed after the nil-node check so a misconfigured node still halts identically.
+	if len(input) > MAX_BTC_ADDRESS_LENGTH {
+		hvmPrecompileOverLengthAddrCounter.Inc(1)
+		log.Debug("btcBalAddr called with an over-length address", "length", len(input))
+		return nil, nil
+	}
+
 	var (
 		k   hVMQueryKey
 		err error
@@ -1368,6 +1412,22 @@ func (c *btcAddrToScript) Run(input []byte, blockContext common.Hash) ([]byte, e
 
 	if TBCFullNode == nil {
 		log.Crit("TBCIndexer is nil!")
+	}
+
+	// Bound the address before it reaches the expensive base58 decoder in btcutil.DecodeAddress.
+	//
+	// Unlike btcBalAddr AND btcUtxosAddrList, this precompile returns the decode error rather than
+	// swallowing it, which makes the CALL fail and consume all gas. An over-length input would always
+	// have reached that branch (see MAX_BTC_ADDRESS_LENGTH), so this must return a non-nil error too,
+	// and specifically NOT ErrHVMInvalidPrecompileInput, which runPrecompile normalises into a
+	// SUCCESSFUL empty CALL.
+	//
+	// Any non-sentinel error reproduces the correct outcome: evm.Call consumes all gas and pushes 0
+	// for every error other than ErrExecutionReverted, and the error value is not EVM-observable.
+	if len(input) > MAX_BTC_ADDRESS_LENGTH {
+		hvmPrecompileOverLengthAddrCounter.Inc(1)
+		log.Debug("btcAddrToScript called with an over-length address", "length", len(input))
+		return nil, ErrBTCAddressTooLong
 	}
 
 	var (
@@ -1657,6 +1717,18 @@ func (c *btcUtxosAddrList) Run(input []byte, blockContext common.Hash) ([]byte, 
 		log.Crit("TBCIndexer is nil!")
 	}
 
+	// Bound the address before it reaches the expensive base58 decoder inside UtxosByAddress. Like
+	// btcBalAddr (and unlike btcAddrToScript) this precompile returns (nil, nil) when that decode
+	// fails, so an early rejection must do the same to keep the CALL succeeding with empty returndata.
+	//
+	// The bound is on the address, which is input minus the trailing 4 page/pageSize bytes; the
+	// length check above has already guaranteed there are at least that many.
+	if len(input)-4 > MAX_BTC_ADDRESS_LENGTH {
+		hvmPrecompileOverLengthAddrCounter.Inc(1)
+		log.Debug("btcUtxosAddrList called with an over-length address", "length", len(input)-4)
+		return nil, nil
+	}
+
 	var (
 		k   hVMQueryKey
 		err error
@@ -1789,7 +1861,7 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(MainCtx, ch)
+	tx, err := txByIdNoWitness(MainCtx, ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -1822,7 +1894,7 @@ func (c *btcInputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, er
 		return nil, nil
 	}
 
-	sourceTx, err := TBCFullNode.TxById(MainCtx, pih)
+	sourceTx, err := txByIdNoWitness(MainCtx, pih)
 	if err != nil {
 		log.Warn("unable to lookup input transaction",
 			"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
@@ -1932,7 +2004,7 @@ func (c *btcOutputByTxid) Run(input []byte, blockContext common.Hash) ([]byte, e
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(MainCtx, ch)
+	tx, err := txByIdNoWitness(MainCtx, ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -2046,7 +2118,7 @@ func (c *btcTxGetInputWitness) Run(input []byte, blockContext common.Hash) ([]by
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(MainCtx, ch)
+	tx, err := txByIdNoWitness(MainCtx, ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -2179,7 +2251,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 		log.Warn("Unable to lookup tx by txid; unable to convert txid %x to chainhash", "txid", txid)
 	}
 
-	tx, err := TBCFullNode.TxById(MainCtx, ch)
+	tx, err := txByIdNoWitness(MainCtx, ch)
 	if err != nil || tx == nil {
 		log.Error("Unable to lookup tx by txid", "txid", fmt.Sprintf("%x", txid))
 		return nil, nil
@@ -2248,7 +2320,7 @@ func (c *btcTxByTxid) Run(input []byte, blockContext common.Hash) ([]byte, error
 				return nil, nil
 			}
 
-			sourceTx, err := TBCFullNode.TxById(MainCtx, pih)
+			sourceTx, err := txByIdNoWitness(MainCtx, pih)
 			if err != nil {
 				log.Warn("unable to lookup input transaction",
 					"prevInTxID", fmt.Sprintf("%x", prevIn.Hash), "prevInTxIndex", prevIn.Index)
