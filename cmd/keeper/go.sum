@@ -160,8 +160,7 @@ github.com/google/go-cmp v0.7.0/go.mod h1:pXiqmnSA92OHEEa9HXL2W4E7lf9JzCmGVUdgjX
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/gorilla/websocket v1.5.0/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
-github.com/hemilabs/heminetwork v1.6.4-0.20260828205117-375abfbd3c4f h1:3XKGTIar4wxTHrzNtvs4r6qISk+W4xXIKrRO0cOQKBM=
-github.com/hemilabs/heminetwork v1.6.4-0.20260828205117-375abfbd3c4f/go.mod h1:Ls95vJ7caY8NnZz8KtOFC+pGGqrtec9lWgp0qmJ684A=
+github.com/hemilabs/heminetwork v1.6.4-0.20260831165532-44781989923a h1:Dn181OwdLdj+ZRU9ZruAZ3vwFgjdOooh1aM1dHW0jnY=
 github.com/hemilabs/heminetwork v1.6.4-0.20260831165532-44781989923a/go.mod h1:Ls95vJ7caY8NnZz8KtOFC+pGGqrtec9lWgp0qmJ684A=
 github.com/holiman/bloomfilter/v2 v2.0.3 h1:73e0e/V0tCydx14a0SCYS/EWCxgwLZ18CZcZKVu0fao=
 github.com/holiman/bloomfilter/v2 v2.0.3/go.mod h1:zpoh+gs7qcpqrHr3dB55AMiJwo0iURXE7ZOP9L9hSkA=
