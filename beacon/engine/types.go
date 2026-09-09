@@ -77,6 +77,13 @@ type PayloadAttributes struct {
 	// MinBaseFee is a field for rollups implementing the minimum base fee feature.
 	// See https://github.com/ethereum-optimism/specs/blob/main/specs/protocol/jovian/exec-engine.md#minimum-base-fee-in-payloadattributesv3
 	MinBaseFee *uint64 `json:"minBaseFee,omitempty" gencodec:"optional"`
+	// SlotNumber was added by EIP-7843 (Glamsterdam): the consensus layer
+	// communicates the slot number the requested payload is being built for.
+	// TODO(HEMI): EIP-7843 is still in peer review upstream and has no assigned
+	// Engine API version yet (e.g. PayloadAttributesV4/GetPayloadV5). Once the
+	// spec lands, gate this field behind the proper versioned method instead of
+	// exposing it on every PayloadAttributes version.
+	SlotNumber *uint64 `json:"slotNumber,omitempty" gencodec:"optional"`
 }
 
 // JSON type overrides for PayloadAttributes.
@@ -86,6 +93,7 @@ type payloadAttributesMarshaling struct {
 	Transactions  []hexutil.Bytes
 	GasLimit      *hexutil.Uint64
 	EIP1559Params hexutil.Bytes
+	SlotNumber    *hexutil.Uint64
 }
 
 //go:generate go run github.com/fjl/gencodec -type ExecutableData -field-override executableDataMarshaling -out gen_ed.go
@@ -110,6 +118,9 @@ type ExecutableData struct {
 	BlobGasUsed      *uint64                 `json:"blobGasUsed"`
 	ExcessBlobGas    *uint64                 `json:"excessBlobGas"`
 	ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
+	// TODO(HEMI): see SlotNumber TODO on PayloadAttributes above — same
+	// API-versioning gap applies here (no NewPayloadV5/GetPayloadV5 yet).
+	SlotNumber *uint64 `json:"slotNumber,omitempty"`
 
 	// OP-Stack Isthmus specific field:
 	// instead of computing the root from a withdrawals list, set it directly.
@@ -129,6 +140,7 @@ type executableDataMarshaling struct {
 	Transactions  []hexutil.Bytes
 	BlobGasUsed   *hexutil.Uint64
 	ExcessBlobGas *hexutil.Uint64
+	SlotNumber    *hexutil.Uint64
 }
 
 // StatelessPayloadStatusV1 is the result of a stateless payload execution.
@@ -357,6 +369,7 @@ func ExecutableDataToBlockNoHash(data ExecutableData, versionedHashes []common.H
 		BlobGasUsed:      data.BlobGasUsed,
 		ParentBeaconRoot: beaconRoot,
 		RequestsHash:     requestsHash,
+		SlotNumber:       data.SlotNumber,
 	}
 	return types.NewBlockWithHeader(header).
 			WithBody(types.Body{Transactions: txs, Uncles: nil, Withdrawals: data.Withdrawals}).
@@ -386,6 +399,7 @@ func BlockToExecutableData(block *types.Block, fees *big.Int, sidecars []*types.
 		BlobGasUsed:      block.BlobGasUsed(),
 		ExcessBlobGas:    block.ExcessBlobGas(),
 		ExecutionWitness: block.ExecutionWitness(),
+		SlotNumber:       block.SlotNumber(),
 	}
 
 	// OP-Stack: only Isthmus execution payloads must set the withdrawals root.

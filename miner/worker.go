@@ -137,6 +137,7 @@ type generateParams struct {
 	interrupt     *atomic.Int32      // Optional interruption signal to pass down to worker.generateWork
 	isUpdate      bool               // Optional flag indicating that this is building a discardable update
 	minBaseFee    *uint64            // Optional minimum base fee
+	slotNumber    *uint64            // The consensus-layer slot number (EIP-7843, Amsterdam field)
 
 	rpcCtx context.Context // context to control block-building RPC work. No RPC allowed if nil.
 }
@@ -387,6 +388,14 @@ func (miner *Miner) prepareWork(genParams *generateParams, witness bool) (*envir
 		header.BlobGasUsed = new(uint64)
 		header.ExcessBlobGas = &excessBlobGas
 		header.ParentBeaconRoot = genParams.beaconRoot
+	}
+	// Apply EIP-7843: the consensus layer supplies the slot number the
+	// requested payload is being built for.
+	if miner.chainConfig.IsAmsterdam(header.Number, header.Time) {
+		if genParams.slotNumber == nil {
+			return nil, errors.New("missing slotNumber")
+		}
+		header.SlotNumber = genParams.slotNumber
 	}
 	// Could potentially happen if starting to mine in an odd state.
 	// Note genParams.coinbase can be different with header.Coinbase

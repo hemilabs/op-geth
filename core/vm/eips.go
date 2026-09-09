@@ -294,6 +294,12 @@ func opBlobBaseFee(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	return nil, nil
 }
 
+// opSlotNum implements the SLOTNUM opcode
+func opSlotNum(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	scope.Stack.push(new(uint256.Int).SetUint64(evm.Context.SlotNumber))
+	return nil, nil
+}
+
 // opCLZ implements the CLZ opcode (count leading zero bits)
 func opCLZ(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	x := scope.Stack.peek()
@@ -325,6 +331,17 @@ func enable7939(jt *JumpTable) {
 func enable7516(jt *JumpTable) {
 	jt[BLOBBASEFEE] = &operation{
 		execute:     opBlobBaseFee,
+		constantGas: GasQuickStep,
+		minStack:    minStack(0, 1),
+		maxStack:    maxStack(0, 1),
+	}
+}
+
+// enable7843 applies EIP-7843 (SLOTNUM opcode), scheduled for the Glamsterdam
+// network upgrade per EIP-7773.
+func enable7843(jt *JumpTable) {
+	jt[SLOTNUM] = &operation{
+		execute:     opSlotNum,
 		constantGas: GasQuickStep,
 		minStack:    minStack(0, 1),
 		maxStack:    maxStack(0, 1),
