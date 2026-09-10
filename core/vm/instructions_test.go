@@ -1153,3 +1153,94 @@ func TestOpExchange(t *testing.T) {
 		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
 	}
 }
+
+// TestChargeStateGas checks EIP-8037's reservoir-then-spillover accounting.
+func TestChargeStateGas(t *testing.T) {
+	evm := &EVM{}
+	evm.StateGasReservoir = 100
+
+	// Fully covered by the reservoir: no spillover, reservoir decremented.
+	if spill := evm.ChargeStateGas(40); spill != 0 {
+		t.Fatalf("spill = %d; want 0", spill)
+	}
+	if evm.StateGasReservoir != 60 {
+		t.Fatalf("reservoir = %d; want 60", evm.StateGasReservoir)
+	}
+
+	// Partially covered: reservoir exhausted, remainder spills to execution gas.
+	if spill := evm.ChargeStateGas(90); spill != 30 {
+		t.Fatalf("spill = %d; want 30", spill)
+	}
+	if evm.StateGasReservoir != 0 {
+		t.Fatalf("reservoir = %d; want 0", evm.StateGasReservoir)
+	}
+
+	// Reservoir already empty: charge spills entirely to execution gas.
+	if spill := evm.ChargeStateGas(15); spill != 15 {
+		t.Fatalf("spill = %d; want 15", spill)
+	}
+	if evm.StateGasReservoir != 0 {
+		t.Fatalf("reservoir = %d; want 0", evm.StateGasReservoir)
+	}
+}
+
+// amsterdamTestChainConfig returns a chain config with Amsterdam active from
+// genesis, for exercising EIP-7708/8038/8037/2780 behavior directly.
+func amsterdamTestChainConfig() *params.ChainConfig {
+	cfg := *params.TestChainConfig
+	zero := uint64(0)
+	cfg.AmsterdamTime = &zero
+	return &cfg
+}
+
+func TestEmitTransferLog(t *testing.T) {
+	random := common.Hash{}
+	newEVM := func(config *params.ChainConfig) (*EVM, *state.StateDB) {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		evm := NewEVM(BlockContext{BlockNumber: big.NewInt(0), Random: &random}, statedb, config, Config{})
+		return evm, statedb
+	}
+	from := common.Address{1}
+	to := common.Address{2}
+	value := uint256.NewInt(100)
+
+	// Pre-Amsterdam: no log.
+	evm, statedb := newEVM(params.TestChainConfig)
+	emitTransferLog(evm, from, to, value)
+	if got := len(statedb.Logs()); got != 0 {
+		t.Fatalf("pre-Amsterdam: got %d logs; want 0", got)
+	}
+
+	// Amsterdam, normal transfer: one log with the expected shape.
+	evm, statedb = newEVM(amsterdamTestChainConfig())
+	emitTransferLog(evm, from, to, value)
+	logs := statedb.Logs()
+	if got := len(logs); got != 1 {
+		t.Fatalf("got %d logs; want 1", got)
+	}
+	log := logs[0]
+	if log.Address != params.SystemAddress {
+		t.Fatalf("log address = %s; want %s", log.Address, params.SystemAddress)
+	}
+	wantTopics := []common.Hash{params.TransferLogTopic, common.BytesToHash(from.Bytes()), common.BytesToHash(to.Bytes())}
+	if len(log.Topics) != 3 || log.Topics[0] != wantTopics[0] || log.Topics[1] != wantTopics[1] || log.Topics[2] != wantTopics[2] {
+		t.Fatalf("topics = %v; want %v", log.Topics, wantTopics)
+	}
+	if !bytes.Equal(log.Data, value.PaddedBytes(32)) {
+		t.Fatalf("data = %x; want %x", log.Data, value.PaddedBytes(32))
+	}
+
+	// Amsterdam, zero value: no log.
+	evm, statedb = newEVM(amsterdamTestChainConfig())
+	emitTransferLog(evm, from, to, uint256.NewInt(0))
+	if got := len(statedb.Logs()); got != 0 {
+		t.Fatalf("zero-value: got %d logs; want 0", got)
+	}
+
+	// Amsterdam, same account: no log.
+	evm, statedb = newEVM(amsterdamTestChainConfig())
+	emitTransferLog(evm, from, from, value)
+	if got := len(statedb.Logs()); got != 0 {
+		t.Fatalf("same-account: got %d logs; want 0", got)
+	}
+}

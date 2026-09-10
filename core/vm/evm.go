@@ -155,6 +155,32 @@ type EVM struct {
 
 	readOnly   bool   // Whether to throw on stateful modifications
 	returnData []byte // Last CALL's return data for subsequent reuse
+
+	// StateGasReservoir is this transaction's remaining EIP-8037 state-gas
+	// reservoir, shared across the whole call tree. State-gas charges (see
+	// ChargeStateGas) draw from it first; once exhausted, the charge spills
+	// over into ordinary execution gas via the caller's own Contract.Gas
+	// accounting. Zero (its default) outside Amsterdam or once exhausted.
+	StateGasReservoir uint64
+}
+
+// ChargeStateGas implements EIP-8037's reservoir-then-spillover accounting for
+// a single state-gas charge. It draws from evm.StateGasReservoir first; any
+// remainder is returned as execSpill, an amount of *execution* gas the caller
+// (a gas_table.go dynamic-gas function) must fold into its own return value so
+// it's charged against Contract.Gas exactly like any other execution-gas cost.
+// State-gas charges are treated as non-refundable state-growth costs (no
+// separate refund bookkeeping is needed here - see the EIP-8037 implementation
+// notes), consistent with this codebase having no account-creation refund
+// mechanism since EIP-3529/6780.
+func (evm *EVM) ChargeStateGas(amount uint64) (execSpill uint64) {
+	if evm.StateGasReservoir >= amount {
+		evm.StateGasReservoir -= amount
+		return 0
+	}
+	execSpill = amount - evm.StateGasReservoir
+	evm.StateGasReservoir = 0
+	return execSpill
 }
 
 // runPrecompile dispatches a precompiled contract and normalizes the hVM
@@ -363,6 +389,7 @@ func (evm *EVM) Call(caller common.Address, addr common.Address, input []byte, g
 		evm.StateDB.CreateAccount(addr)
 	}
 	evm.Context.Transfer(evm.StateDB, caller, addr, value)
+	emitTransferLog(evm, caller, addr, value)
 
 	if isPrecompile {
 		ret, gas, err = evm.runPrecompile(p, input, gas)
@@ -635,6 +662,7 @@ func (evm *EVM) create(caller common.Address, code []byte, gas uint64, value *ui
 		gas = gas - consumed
 	}
 	evm.Context.Transfer(evm.StateDB, caller, address, value)
+	emitTransferLog(evm, caller, address, value)
 
 	// Initialise a new contract and set the code that is to be used by the EVM.
 	// The contract is a scoped environment for this execution context only.
@@ -673,7 +701,17 @@ func (evm *EVM) initNewContract(contract *Contract, address common.Address) ([]b
 		return ret, ErrInvalidCode
 	}
 
-	if !evm.chainRules.IsEIP4762 {
+	if evm.chainRules.IsAmsterdam {
+		// EIP-8037: code-deposit cost is priced as state-gas per byte, plus a
+		// small execution-gas hashing cost, replacing the flat
+		// CreateDataGas (200 gas/byte) execution-gas cost.
+		stateCost := uint64(len(ret)) * params.GasCodeDepositStateEIP8037
+		execSpill := evm.ChargeStateGas(stateCost)
+		hashGas := params.Keccak256WordGas * toWordSize(uint64(len(ret)))
+		if !contract.UseGas(execSpill+hashGas, evm.Config.Tracer, tracing.GasChangeCallCodeStorage) {
+			return ret, ErrCodeStoreOutOfGas
+		}
+	} else if !evm.chainRules.IsEIP4762 {
 		createDataGas := uint64(len(ret)) * params.CreateDataGas
 		if !contract.UseGas(createDataGas, evm.Config.Tracer, tracing.GasChangeCallCodeStorage) {
 			return ret, ErrCodeStoreOutOfGas

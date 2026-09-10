@@ -23,6 +23,7 @@ import (
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/tracing"
+	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/holiman/uint256"
 )
@@ -44,6 +45,8 @@ var activators = map[int]func(*JumpTable){
 	7939: enable7939,
 	7843: enable7843,
 	8024: enable8024,
+	8038: enable8038,
+	8037: enable8037,
 }
 
 // EnableEIP enables the given EIP on the config.
@@ -444,6 +447,75 @@ func opExchange(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
 	scope.Stack.exchange(n, m)
 	*pc += 1
 	return nil, nil
+}
+
+// emitTransferLog implements EIP-7708: emit a synthetic ERC-20-Transfer-shaped
+// log, from the EIP-4788 system address, whenever ETH actually moves between
+// two different accounts. Called explicitly at each of the operations that can
+// move value (top-level transaction / CALL, CREATE/CREATE2, SELFDESTRUCT)
+// rather than wrapping the pluggable evm.Context.Transfer hook, so it can't
+// misfire in internal transfer contexts that install their own Transfer func.
+func emitTransferLog(evm *EVM, from, to common.Address, value *uint256.Int) {
+	if !evm.chainRules.IsAmsterdam || value.IsZero() || from == to {
+		return
+	}
+	evm.StateDB.AddLog(&types.Log{
+		Address: params.SystemAddress,
+		Topics: []common.Hash{
+			params.TransferLogTopic,
+			common.BytesToHash(from.Bytes()),
+			common.BytesToHash(to.Bytes()),
+		},
+		Data:        value.PaddedBytes(32),
+		BlockNumber: evm.Context.BlockNumber.Uint64(),
+	})
+}
+
+// enable8038 applies EIP-8038 (state-access gas cost update), scheduled for
+// the Glamsterdam network upgrade per EIP-7773. It reprices the EIP-2929-era
+// cold-account-access cost (2600->3000) and the SSTORE storage-clear refund
+// (4800->11616); COLD_STORAGE_ACCESS and WARM_ACCESS are unchanged. Also
+// charges EXTCODESIZE/EXTCODECOPY one extra WarmStorageReadCostEIP2929 (100)
+// for their second database read.
+func enable8038(jt *JumpTable) {
+	jt[SSTORE].dynamicGas = gasSStoreEIP8038
+
+	jt[BALANCE].dynamicGas = gasEip8038AccountCheck
+	jt[EXTCODEHASH].dynamicGas = gasEip8038AccountCheck
+
+	jt[EXTCODESIZE].constantGas = 2 * params.WarmStorageReadCostEIP2929
+	jt[EXTCODESIZE].dynamicGas = gasEip8038AccountCheck
+
+	jt[EXTCODECOPY].constantGas = 2 * params.WarmStorageReadCostEIP2929
+	jt[EXTCODECOPY].dynamicGas = gasExtCodeCopyEIP8038
+
+	jt[CALL].dynamicGas = gasCallEIP8038
+	jt[CALLCODE].dynamicGas = gasCallCodeEIP8038
+	jt[STATICCALL].dynamicGas = gasStaticCallEIP8038
+	jt[DELEGATECALL].dynamicGas = gasDelegateCallEIP8038
+
+	jt[SELFDESTRUCT].dynamicGas = gasSelfdestructEIP8038
+}
+
+// enable8037 applies EIP-8037 (state creation gas cost increase), scheduled
+// for the Glamsterdam network upgrade per EIP-7773. Must be applied after
+// enable8038 (newAmsterdamInstructionSet does this). It introduces the
+// "state-gas" dimension (see EVM.ChargeStateGas / StateGasReservoir) and
+// redirects the account-creation portion of CREATE/CREATE2/CALL/SELFDESTRUCT's
+// cost, and SSTORE's new-slot-creation cost, into that dimension - see the
+// gasXxxEIP8037 functions for exactly which component moves.
+func enable8037(jt *JumpTable) {
+	jt[CREATE].constantGas = params.CreateAccessGasEIP8038
+	jt[CREATE].dynamicGas = gasCreateEIP8037
+
+	jt[CREATE2].constantGas = params.CreateAccessGasEIP8038
+	jt[CREATE2].dynamicGas = gasCreate2EIP8037
+
+	jt[SSTORE].dynamicGas = gasSStoreEIP8037
+
+	jt[CALL].dynamicGas = gasCallEIP8037Full
+
+	jt[SELFDESTRUCT].dynamicGas = gasSelfdestructEIP8037
 }
 
 // enable8024 applies EIP-8024 (backward compatible DUPN, SWAPN, EXCHANGE

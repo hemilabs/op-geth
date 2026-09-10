@@ -236,7 +236,7 @@ func TestApplyTransactionBtcAttrReceiptNonceHvm0(t *testing.T) {
 		evm.SetTxContext(NewEVMTxContext(msg))
 
 		usedGas := uint64(0)
-		receipt, err := ApplyTransactionWithEVM(msg, new(GasPool).AddGas(30_000_000), statedb, header.Number, common.Hash{}, header.Time, btcTx, &usedGas, evm)
+		receipt, err := ApplyTransactionWithEVM(msg, new(GasPool).AddGas(30_000_000), new(StateGasPool).AddGas(30_000_000), statedb, header.Number, common.Hash{}, header.Time, btcTx, &usedGas, evm)
 		require.NoError(t, err)
 		require.Equal(t, uint64(6), statedb.GetNonce(types.BtcAttributesDepositedSenderAddress), "the system tx must increment the sender nonce 5->6")
 		return receipt
@@ -322,7 +322,7 @@ func TestApplyTransactionDepositReceiptNonceRegolith(t *testing.T) {
 		evm.SetTxContext(NewEVMTxContext(msg))
 
 		usedGas := uint64(0)
-		receipt, err := ApplyTransactionWithEVM(msg, new(GasPool).AddGas(30_000_000), statedb, header.Number, common.Hash{}, header.Time, depTx, &usedGas, evm)
+		receipt, err := ApplyTransactionWithEVM(msg, new(GasPool).AddGas(30_000_000), new(StateGasPool).AddGas(30_000_000), statedb, header.Number, common.Hash{}, header.Time, depTx, &usedGas, evm)
 		require.NoError(t, err)
 		// The deposit must INCREMENT the sender nonce (5->6) regardless of Regolith — this is what makes the
 		// recorded DepositNonce a genuine "pre-increment" value rather than a coincidental read.
@@ -387,7 +387,7 @@ func TestApplyTransactionTracerHooksSystemTx(t *testing.T) {
 			evm.SetTxContext(NewEVMTxContext(msg))
 
 			usedGas := uint64(0)
-			_, err = ApplyTransactionWithEVM(msg, new(GasPool).AddGas(30_000_000), statedb, header.Number, common.Hash{}, header.Time, tc.tx, &usedGas, evm)
+			_, err = ApplyTransactionWithEVM(msg, new(GasPool).AddGas(30_000_000), new(StateGasPool).AddGas(30_000_000), statedb, header.Number, common.Hash{}, header.Time, tc.tx, &usedGas, evm)
 			require.NoError(t, err)
 			require.True(t, sawStart, "OnTxStart must fire")
 			require.True(t, sawEnd, "OnTxEnd must fire")

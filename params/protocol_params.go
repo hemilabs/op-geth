@@ -86,6 +86,74 @@ const (
 	// Which becomes: 5000 - 2100 + 1900 = 4800
 	SstoreClearsScheduleRefundEIP3529 uint64 = SstoreResetGasEIP2200 - ColdSloadCostEIP2929 + TxAccessListStorageKeyGas
 
+	// EIP-8038 (state-access gas cost update, Amsterdam/Glamsterdam) reprices
+	// the EIP-2929-era access/write/refund costs. ColdSloadCostEIP2929 and
+	// WarmStorageReadCostEIP2929 are unchanged by EIP-8038 and are reused
+	// directly; only the values below actually change.
+	ColdAccountAccessCostEIP8038 = uint64(3000)  // COLD_ACCOUNT_ACCESS, was 2600
+	AccountWriteGasEIP8038       = uint64(9000)  // ACCOUNT_WRITE component, kept as a standalone constant so EIP-8037 can later redirect part of it into state-gas
+	StorageWriteGasEIP8038       = uint64(10000) // STORAGE_WRITE component, standalone for the same reason
+	// CreateAccessGasEIP8038 = ACCOUNT_WRITE + COLD_ACCOUNT_ACCESS, per EIP-8038's own derivation formula.
+	// Deferred to EIP-8037's wiring: EIP-8037 restructures CREATE/CREATE2's account-creation cost
+	// into a state-gas + CreateAccessGasEIP8038 execution-gas split, so this constant is defined here
+	// (matching EIP-8038's numbering) but not yet consumed until that piece lands.
+	CreateAccessGasEIP8038 uint64 = AccountWriteGasEIP8038 + ColdAccountAccessCostEIP8038
+	// CallValueTransferGasEIP8038 is EIP-8038's repriced CALL_VALUE: the spec states
+	// "CALL_VALUE is composed of ACCOUNT_WRITE + CALL_STIPEND" (confirmed by the pre-8038
+	// composition 6700 + 2300 = 9000, exactly op-geth's existing CallValueTransferGas),
+	// so under Amsterdam this becomes AccountWriteGasEIP8038 + CallStipend = 9000 + 2300 = 11300.
+	CallValueTransferGasEIP8038 uint64 = AccountWriteGasEIP8038 + CallStipend
+	// SstoreClearsScheduleRefundEIP8038 is given directly by EIP-8038 (11616), rather than
+	// re-derived, since op-geth's own SSTORE_RESET_GAS differs slightly from the EIP's abstract value.
+	SstoreClearsScheduleRefundEIP8038 uint64 = 11616
+	// TxAccessListAddressGasEIP8038/TxAccessListStorageKeyGasEIP8038 = COLD_ACCOUNT_ACCESS/COLD_STORAGE_ACCESS - WARM_ACCESS.
+	TxAccessListAddressGasEIP8038    uint64 = ColdAccountAccessCostEIP8038 - WarmStorageReadCostEIP2929
+	TxAccessListStorageKeyGasEIP8038 uint64 = ColdSloadCostEIP2929 - WarmStorageReadCostEIP2929
+
+	// EIP-8037 (state creation gas cost increase, Amsterdam/Glamsterdam) introduces a
+	// second "state-gas" dimension, denominated in these state-byte-derived costs.
+	// CPSBEIP8037 is COST_PER_STATE_BYTE.
+	CPSBEIP8037                    = uint64(1530)
+	StateBytesPerStorageSetEIP8037 = uint64(64)
+	StateBytesPerNewAccountEIP8037 = uint64(120)
+	StateBytesPerAuthBaseEIP8037   = uint64(23)
+	// GasNewAccountStateEIP8037 = STATE_BYTES_PER_NEW_ACCOUNT * CPSB: state-gas charged when
+	// CALL/SELFDESTRUCT/CREATE/CREATE2 brings a new account into existence, replacing the
+	// pre-8037 flat CallNewAccountGas/CreateBySelfdestructGas execution-gas costs for that case.
+	GasNewAccountStateEIP8037 uint64 = StateBytesPerNewAccountEIP8037 * CPSBEIP8037
+	// GasStorageSetStateEIP8037 = STATE_BYTES_PER_STORAGE_SET * CPSB: state-gas charged when
+	// SSTORE creates a new nonzero slot from zero, replacing that case's execution-gas cost.
+	GasStorageSetStateEIP8037 uint64 = StateBytesPerStorageSetEIP8037 * CPSBEIP8037
+	// GasCodeDepositStateEIP8037 is the per-byte state-gas cost for CREATE/CREATE2's deposited
+	// code, replacing the pre-8037 flat 200 gas/byte execution-gas cost (CreateDataGas).
+	GasCodeDepositStateEIP8037 uint64 = CPSBEIP8037
+	// GasAuthStateEIP8037 = STATE_BYTES_PER_AUTH_BASE * CPSB: state-gas charged when an
+	// EIP-7702 authorization's authority account doesn't already exist ("state gas for
+	// one 23-byte delegation indicator" per EIP-2780/8037), a runtime charge separate
+	// from ExecutionPerAuthBaseCostEIP8037's intrinsic-gas component.
+	GasAuthStateEIP8037 uint64 = StateBytesPerAuthBaseEIP8037 * CPSBEIP8037
+	// ExecutionPerAuthBaseCostEIP8037 is EIP-2780/8037's EXECUTION_PER_AUTH_BASE_COST:
+	// the intrinsic, unconditional execution-gas cost per EIP-7702 authorization tuple
+	// under Amsterdam, replacing the pre-Amsterdam flat CallNewAccountGas cost for this case.
+	ExecutionPerAuthBaseCostEIP8037 uint64 = 7816
+
+	// EIP-2780 (resource-based intrinsic transaction gas, Amsterdam/Glamsterdam)
+	// replaces the flat TxGas/TxGasContractCreation base with these itemized
+	// components for a non-contract-creation transaction: TxBaseCostEIP2780
+	// covers signature recovery, sender access/write and block inclusion;
+	// TxValueCostEIP2780 is charged in addition whenever the transaction moves
+	// a nonzero value (recipient balance write + the EIP-7708 transfer log).
+	// A contract-creation transaction instead uses TxBaseCostEIP2780 +
+	// CreateAccessGasEIP8038 (the execution-gas access+write component EIP-8037
+	// assigns to account creation) - unlike the CREATE/CREATE2 *opcode* (which
+	// this implementation correctly splits into state-gas, see
+	// GasNewAccountStateEIP8037/gasCreateEIP8037), a top-level contract-creation
+	// *transaction*'s account-creation cost is not redirected into state-gas
+	// here, since IntrinsicGas has no *vm.EVM to charge against - a known
+	// simplification.
+	TxBaseCostEIP2780  uint64 = 12000
+	TxValueCostEIP2780 uint64 = 6000
+
 	JumpdestGas   uint64 = 1     // Once per JUMPDEST operation.
 	EpochDuration uint64 = 30000 // Duration between proof-of-work epochs.
 
@@ -241,6 +309,11 @@ var (
 var (
 	// SystemAddress is where the system-transaction is sent from as per EIP-4788
 	SystemAddress = common.HexToAddress("0xfffffffffffffffffffffffffffffffffffffffe")
+
+	// TransferLogTopic is topic[0] of the synthetic ETH-transfer log added by
+	// EIP-7708: keccak256("Transfer(address,address,uint256)"), the standard
+	// ERC-20 Transfer event signature.
+	TransferLogTopic = common.HexToHash("0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef")
 
 	// EIP-4788 - Beacon block root in the EVM
 	BeaconRootsAddress = common.HexToAddress("0x000F3df6D732807Ef1319fB7B8bB8522d0Beac02")

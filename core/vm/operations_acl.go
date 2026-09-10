@@ -90,6 +90,106 @@ func makeGasSStoreFunc(clearingRefund uint64) gasFunc {
 	}
 }
 
+// gasSStoreEIP8037 is the Amsterdam (EIP-8037+8038) counterpart of
+// makeGasSStoreFunc: EIP-8038 replaces the legacy SstoreResetGasEIP2200-derived
+// write cost with a flat StorageWriteGasEIP8038 (10,000) execution-gas
+// component, charged uniformly whenever a slot's value actually changes
+// (create, write, or delete); on top of that, EIP-8037 additionally charges
+// GasStorageSetStateEIP8037 as state-gas (via evm.ChargeStateGas) when the
+// slot is created from zero. Since both "reset to original inexistent slot"
+// and "reset to original existing slot" now refund against the same
+// StorageWriteGasEIP8038 execution-gas write cost, they collapse into a
+// single refund magnitude below. State-gas charges are treated as
+// non-refundable state-growth costs in this implementation (see
+// EVM.ChargeStateGas), so a same-tx create-then-reset doesn't get back the
+// state-gas portion, only the execution-gas portion it originally spilled
+// (if any). This is a deliberate simplification, not a spec guarantee.
+func gasSStoreEIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	if contract.Gas <= params.SstoreSentryGasEIP2200 {
+		return 0, errors.New("not enough gas for reentrancy sentry")
+	}
+	var (
+		y, x              = stack.Back(1), stack.peek()
+		slot              = common.Hash(x.Bytes32())
+		current, original = evm.StateDB.GetStateAndCommittedState(contract.Address(), slot)
+		cost              = uint64(0)
+	)
+	if _, slotPresent := evm.StateDB.SlotInAccessList(contract.Address(), slot); !slotPresent {
+		cost = params.ColdSloadCostEIP2929
+		evm.StateDB.AddSlotToAccessList(contract.Address(), slot)
+	}
+	value := common.Hash(y.Bytes32())
+
+	if current == value { // noop (1)
+		return cost + params.WarmStorageReadCostEIP2929, nil
+	}
+	if original == current {
+		if original == (common.Hash{}) { // create slot (2.1.1)
+			execSpill := evm.ChargeStateGas(params.GasStorageSetStateEIP8037)
+			return cost + params.StorageWriteGasEIP8038 + execSpill, nil
+		}
+		if value == (common.Hash{}) { // delete slot (2.1.2b)
+			evm.StateDB.AddRefund(params.SstoreClearsScheduleRefundEIP8038)
+		}
+		return cost + params.StorageWriteGasEIP8038, nil // write existing slot (2.1.2)
+	}
+	if original != (common.Hash{}) {
+		if current == (common.Hash{}) { // recreate slot (2.2.1.1)
+			evm.StateDB.SubRefund(params.SstoreClearsScheduleRefundEIP8038)
+		} else if value == (common.Hash{}) { // delete slot (2.2.1.2)
+			evm.StateDB.AddRefund(params.SstoreClearsScheduleRefundEIP8038)
+		}
+	}
+	if original == value { // reset to original value, whether inexistent or existing (2.2.2.1/2.2.2.2)
+		evm.StateDB.AddRefund(params.StorageWriteGasEIP8038 - params.WarmStorageReadCostEIP2929)
+	}
+	return cost + params.WarmStorageReadCostEIP2929, nil // dirty update (2.2)
+}
+
+// gasSStoreEIP8038 is the standalone-EIP-8038 counterpart of gasSStoreEIP8037,
+// for chain configs that enable EIP-8038 without EIP-8037 (e.g. via
+// Config.ExtraEips): same StorageWriteGasEIP8038 write-cost repricing and
+// SstoreClearsScheduleRefundEIP8038 refund, but the "create slot from zero"
+// case has no EIP-8037 state-gas dimension to redirect into, so it charges
+// the same flat StorageWriteGasEIP8038 execution-gas cost as any other write.
+func gasSStoreEIP8038(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	if contract.Gas <= params.SstoreSentryGasEIP2200 {
+		return 0, errors.New("not enough gas for reentrancy sentry")
+	}
+	var (
+		y, x              = stack.Back(1), stack.peek()
+		slot              = common.Hash(x.Bytes32())
+		current, original = evm.StateDB.GetStateAndCommittedState(contract.Address(), slot)
+		cost              = uint64(0)
+	)
+	if _, slotPresent := evm.StateDB.SlotInAccessList(contract.Address(), slot); !slotPresent {
+		cost = params.ColdSloadCostEIP2929
+		evm.StateDB.AddSlotToAccessList(contract.Address(), slot)
+	}
+	value := common.Hash(y.Bytes32())
+
+	if current == value { // noop (1)
+		return cost + params.WarmStorageReadCostEIP2929, nil
+	}
+	if original == current {
+		if value == (common.Hash{}) && original != (common.Hash{}) { // delete slot (2.1.2b)
+			evm.StateDB.AddRefund(params.SstoreClearsScheduleRefundEIP8038)
+		}
+		return cost + params.StorageWriteGasEIP8038, nil // create/write slot (2.1.1/2.1.2)
+	}
+	if original != (common.Hash{}) {
+		if current == (common.Hash{}) { // recreate slot (2.2.1.1)
+			evm.StateDB.SubRefund(params.SstoreClearsScheduleRefundEIP8038)
+		} else if value == (common.Hash{}) { // delete slot (2.2.1.2)
+			evm.StateDB.AddRefund(params.SstoreClearsScheduleRefundEIP8038)
+		}
+	}
+	if original == value { // reset to original value, whether inexistent or existing (2.2.2.1/2.2.2.2)
+		evm.StateDB.AddRefund(params.StorageWriteGasEIP8038 - params.WarmStorageReadCostEIP2929)
+	}
+	return cost + params.WarmStorageReadCostEIP2929, nil // dirty update (2.2)
+}
+
 // gasSLoadEIP2929 calculates dynamic gas for SLOAD according to EIP-2929
 // For SLOAD, if the (address, storage_key) pair (where address is the address of the contract
 // whose storage is being read) is not yet in accessed_storage_keys,
@@ -244,13 +344,132 @@ func makeSelfdestructGasFn(refundsEnabled bool) gasFunc {
 }
 
 var (
-	gasCallEIP7702         = makeCallVariantGasCallEIP7702(gasCall)
-	gasDelegateCallEIP7702 = makeCallVariantGasCallEIP7702(gasDelegateCall)
-	gasStaticCallEIP7702   = makeCallVariantGasCallEIP7702(gasStaticCall)
-	gasCallCodeEIP7702     = makeCallVariantGasCallEIP7702(gasCallCode)
+	gasCallEIP7702         = makeCallVariantGasCallEIP7702(gasCall, params.ColdAccountAccessCostEIP2929)
+	gasDelegateCallEIP7702 = makeCallVariantGasCallEIP7702(gasDelegateCall, params.ColdAccountAccessCostEIP2929)
+	gasStaticCallEIP7702   = makeCallVariantGasCallEIP7702(gasStaticCall, params.ColdAccountAccessCostEIP2929)
+	gasCallCodeEIP7702     = makeCallVariantGasCallEIP7702(gasCallCode, params.ColdAccountAccessCostEIP2929)
 )
 
-func makeCallVariantGasCallEIP7702(oldCalculator gasFunc) gasFunc {
+// gasEip8038AccountCheck is the EIP-8038 (Amsterdam) counterpart of
+// gasEip2929AccountCheck: same account-access-list bookkeeping, but the cold
+// surcharge is derived from the repriced ColdAccountAccessCostEIP8038 (3000)
+// instead of ColdAccountAccessCostEIP2929 (2600). Used by BALANCE,
+// EXTCODEHASH and EXTCODESIZE.
+func gasEip8038AccountCheck(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	addr := common.Address(stack.peek().Bytes20())
+	if !evm.StateDB.AddressInAccessList(addr) {
+		evm.StateDB.AddAddressToAccessList(addr)
+		return params.ColdAccountAccessCostEIP8038 - params.WarmStorageReadCostEIP2929, nil
+	}
+	return 0, nil
+}
+
+// gasExtCodeCopyEIP8038 is the EIP-8038 counterpart of gasExtCodeCopyEIP2929,
+// using the repriced cold-access cost.
+func gasExtCodeCopyEIP8038(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	gas, err := gasExtCodeCopy(evm, contract, stack, mem, memorySize)
+	if err != nil {
+		return 0, err
+	}
+	addr := common.Address(stack.peek().Bytes20())
+	if !evm.StateDB.AddressInAccessList(addr) {
+		evm.StateDB.AddAddressToAccessList(addr)
+		var overflow bool
+		if gas, overflow = math.SafeAdd(gas, params.ColdAccountAccessCostEIP8038-params.WarmStorageReadCostEIP2929); overflow {
+			return 0, ErrGasUintOverflow
+		}
+		return gas, nil
+	}
+	return gas, nil
+}
+
+var (
+	// Amsterdam inherits EIP-7702 (Prague) delegation-resolution gas accounting for
+	// the CALL family, so the EIP-8038 repricing is layered on top of
+	// makeCallVariantGasCallEIP7702 (parameterized below), not the plain EIP-2929
+	// wrapper - using the latter would silently drop EIP-7702's delegation-resolution
+	// charge starting at Amsterdam.
+	gasCallEIP8038         = makeCallVariantGasCallEIP7702(gasCall, params.ColdAccountAccessCostEIP8038)
+	gasDelegateCallEIP8038 = makeCallVariantGasCallEIP7702(gasDelegateCall, params.ColdAccountAccessCostEIP8038)
+	gasStaticCallEIP8038   = makeCallVariantGasCallEIP7702(gasStaticCall, params.ColdAccountAccessCostEIP8038)
+	// CALLCODE's notional value-transfer surcharge is repriced under EIP-8038
+	// too (see gasCallCodeEIP8038Repriced) - wrapping plain gasCallCode here
+	// would silently keep charging the legacy CallValueTransferGas.
+	gasCallCodeEIP8038     = makeCallVariantGasCallEIP7702(gasCallCodeEIP8038Repriced, params.ColdAccountAccessCostEIP8038)
+	gasSelfdestructEIP8038 = makeSelfdestructGasFnEIP8038(false) // EIP-3529 (no self-destruct refunds) already applies by Amsterdam
+)
+
+// makeSelfdestructGasFnEIP8038 is the EIP-8038 counterpart of
+// makeSelfdestructGasFn: repriced cold-access cost, and - per the spec, "an
+// additional charge of ACCOUNT_WRITE is added if a positive balance is sent
+// to a dead account" - the new-account cost is now AccountWriteGasEIP8038
+// (9,000), replacing the legacy flat CreateBySelfdestructGas (25,000).
+func makeSelfdestructGasFnEIP8038(refundsEnabled bool) gasFunc {
+	return func(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+		var (
+			gas     uint64
+			address = common.Address(stack.peek().Bytes20())
+		)
+		if !evm.StateDB.AddressInAccessList(address) {
+			evm.StateDB.AddAddressToAccessList(address)
+			gas = params.ColdAccountAccessCostEIP8038
+		}
+		if evm.StateDB.Empty(address) && evm.StateDB.GetBalance(contract.Address()).Sign() != 0 {
+			gas += params.AccountWriteGasEIP8038
+		}
+		if refundsEnabled && !evm.StateDB.HasSelfDestructed(contract.Address()) {
+			evm.StateDB.AddRefund(params.SelfdestructRefundGas)
+		}
+		return gas, nil
+	}
+}
+
+// makeSelfdestructGasFnEIP8037 is the EIP-8037 counterpart of
+// makeSelfdestructGasFnEIP8038: same repriced cold-access cost and
+// AccountWriteGasEIP8038 charge, plus EIP-8037's state-gas GasNewAccountStateEIP8037
+// charge (via evm.ChargeStateGas) for the same dead-beneficiary case - the two
+// components are additive, not alternatives (ACCOUNT_WRITE is execution gas;
+// GAS_NEW_ACCOUNT is the separate state-gas dimension EIP-8037 introduces).
+func makeSelfdestructGasFnEIP8037(refundsEnabled bool) gasFunc {
+	return func(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+		var (
+			gas     uint64
+			address = common.Address(stack.peek().Bytes20())
+		)
+		if !evm.StateDB.AddressInAccessList(address) {
+			evm.StateDB.AddAddressToAccessList(address)
+			gas = params.ColdAccountAccessCostEIP8038
+		}
+		if evm.StateDB.Empty(address) && evm.StateDB.GetBalance(contract.Address()).Sign() != 0 {
+			gas += params.AccountWriteGasEIP8038
+			gas += evm.ChargeStateGas(params.GasNewAccountStateEIP8037)
+		}
+		if refundsEnabled && !evm.StateDB.HasSelfDestructed(contract.Address()) {
+			evm.StateDB.AddRefund(params.SelfdestructRefundGas)
+		}
+		return gas, nil
+	}
+}
+
+var (
+	// gasCallEIP8037Full layers the EIP-7702 delegation-resolution wrapper over
+	// gasCallEIP8037 (which itself redirects the new-account cost to state-gas),
+	// using the EIP-8038 cold-access cost - the Amsterdam CALL dynamic-gas
+	// function combining all three EIPs' effects on CALL.
+	gasCallEIP8037Full     = makeCallVariantGasCallEIP7702(gasCallEIP8037, params.ColdAccountAccessCostEIP8038)
+	gasSelfdestructEIP8037 = makeSelfdestructGasFnEIP8037(false) // EIP-3529 (no self-destruct refunds) already applies by Amsterdam
+)
+
+// makeCallVariantGasCallEIP7702 builds the CALL-family dynamic-gas function
+// used from Prague (EIP-7702) onward: cold-account-access accounting plus a
+// charge for resolving an EIP-7702 delegation, if the target is one.
+// coldAccountAccessCost is the fork's cold-access constant - callers pass
+// params.ColdAccountAccessCostEIP2929 (Prague..Osaka) or the repriced
+// params.ColdAccountAccessCostEIP8038 (Amsterdam+), so this single
+// implementation stays correct as EIP-8038 changes that constant, instead of
+// silently reverting to pre-7702 behavior the way stacking a separate
+// EIP-8038-only wrapper on top of plain gasCall would.
+func makeCallVariantGasCallEIP7702(oldCalculator gasFunc, coldAccountAccessCost uint64) gasFunc {
 	return func(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 		var (
 			total uint64 // total dynamic gas used
@@ -262,7 +481,7 @@ func makeCallVariantGasCallEIP7702(oldCalculator gasFunc) gasFunc {
 			evm.StateDB.AddAddressToAccessList(addr)
 			// The WarmStorageReadCostEIP2929 (100) is already deducted in the form of a constant cost, so
 			// the cost to charge for cold access, if any, is Cold - Warm
-			coldCost := params.ColdAccountAccessCostEIP2929 - params.WarmStorageReadCostEIP2929
+			coldCost := coldAccountAccessCost - params.WarmStorageReadCostEIP2929
 			// Charge the remaining difference here already, to correctly calculate available
 			// gas for call
 			if !contract.UseGas(coldCost, evm.Config.Tracer, tracing.GasChangeCallStorageColdAccess) {
@@ -278,7 +497,7 @@ func makeCallVariantGasCallEIP7702(oldCalculator gasFunc) gasFunc {
 				cost = params.WarmStorageReadCostEIP2929
 			} else {
 				evm.StateDB.AddAddressToAccessList(target)
-				cost = params.ColdAccountAccessCostEIP2929
+				cost = coldAccountAccessCost
 			}
 			if !contract.UseGas(cost, evm.Config.Tracer, tracing.GasChangeCallStorageColdAccess) {
 				return 0, ErrOutOfGas

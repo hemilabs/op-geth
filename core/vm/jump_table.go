@@ -97,6 +97,8 @@ func newAmsterdamInstructionSet() JumpTable {
 	instructionSet := newOsakaInstructionSet()
 	enable7843(&instructionSet) // EIP-7843 (SLOTNUM opcode)
 	enable8024(&instructionSet) // EIP-8024 (backward compatible DUPN, SWAPN, EXCHANGE)
+	enable8038(&instructionSet) // EIP-8038 (state-access gas cost update)
+	enable8037(&instructionSet) // EIP-8037 (state creation gas cost increase / state-gas dimension)
 	return validate(instructionSet)
 }
 

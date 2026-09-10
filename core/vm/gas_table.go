@@ -342,6 +342,38 @@ func gasCreate2Eip3860(evm *EVM, contract *Contract, stack *Stack, mem *Memory, 
 	return gas, nil
 }
 
+// gasCreateEIP8037/gasCreate2EIP8037 are the Amsterdam counterparts of
+// gasCreateEip3860/gasCreate2Eip3860: identical memory/init-code accounting,
+// plus the EIP-8037 account-creation state-gas charge (GasNewAccountStateEIP8037),
+// which replaces most of the flat pre-Amsterdam CreateGas/Create2Gas constantGas
+// (enable8037 lowers that constantGas to CreateAccessGasEIP8038, the remaining
+// execution-gas access+write component).
+func gasCreateEIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	gas, err := gasCreateEip3860(evm, contract, stack, mem, memorySize)
+	if err != nil {
+		return 0, err
+	}
+	execSpill := evm.ChargeStateGas(params.GasNewAccountStateEIP8037)
+	var overflow bool
+	if gas, overflow = math.SafeAdd(gas, execSpill); overflow {
+		return 0, ErrGasUintOverflow
+	}
+	return gas, nil
+}
+
+func gasCreate2EIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	gas, err := gasCreate2Eip3860(evm, contract, stack, mem, memorySize)
+	if err != nil {
+		return 0, err
+	}
+	execSpill := evm.ChargeStateGas(params.GasNewAccountStateEIP8037)
+	var overflow bool
+	if gas, overflow = math.SafeAdd(gas, execSpill); overflow {
+		return 0, ErrGasUintOverflow
+	}
+	return gas, nil
+}
+
 func gasExpFrontier(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 	expByteLen := uint64((stack.data[stack.len()-2].BitLen() + 7) / 8)
 
@@ -404,6 +436,49 @@ func gasCall(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize
 	return gas, nil
 }
 
+// gasCallEIP8037 is the Amsterdam counterpart of gasCall: identical, except
+// the "new account" cost is charged as EIP-8037 state-gas (via
+// evm.ChargeStateGas) instead of the flat CallNewAccountGas execution-gas
+// cost. Only CALL needs this variant - CALLCODE/DELEGATECALL/STATICCALL never
+// bring a new account into existence.
+func gasCallEIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	var (
+		gas            uint64
+		transfersValue = !stack.Back(2).IsZero()
+		address        = common.Address(stack.Back(1).Bytes20())
+	)
+	if evm.chainRules.IsEIP158 {
+		if transfersValue && evm.StateDB.Empty(address) {
+			gas += evm.ChargeStateGas(params.GasNewAccountStateEIP8037)
+		}
+	} else if !evm.StateDB.Exist(address) {
+		gas += evm.ChargeStateGas(params.GasNewAccountStateEIP8037)
+	}
+	if transfersValue && !evm.chainRules.IsEIP4762 {
+		// EIP-8038: CALL_VALUE = ACCOUNT_WRITE + CALL_STIPEND, repriced from the
+		// legacy flat CallValueTransferGas.
+		gas += params.CallValueTransferGasEIP8038
+	}
+	memoryGas, err := memoryGasCost(mem, memorySize)
+	if err != nil {
+		return 0, err
+	}
+	var overflow bool
+	if gas, overflow = math.SafeAdd(gas, memoryGas); overflow {
+		return 0, ErrGasUintOverflow
+	}
+
+	evm.callGasTemp, err = callGas(evm.chainRules.IsEIP150, contract.Gas, gas, stack.Back(0))
+	if err != nil {
+		return 0, err
+	}
+	if gas, overflow = math.SafeAdd(gas, evm.callGasTemp); overflow {
+		return 0, ErrGasUintOverflow
+	}
+
+	return gas, nil
+}
+
 func gasCallCode(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 	memoryGas, err := memoryGasCost(mem, memorySize)
 	if err != nil {
@@ -415,6 +490,39 @@ func gasCallCode(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memory
 	)
 	if stack.Back(2).Sign() != 0 && !evm.chainRules.IsEIP4762 {
 		gas += params.CallValueTransferGas
+	}
+	if gas, overflow = math.SafeAdd(gas, memoryGas); overflow {
+		return 0, ErrGasUintOverflow
+	}
+	evm.callGasTemp, err = callGas(evm.chainRules.IsEIP150, contract.Gas, gas, stack.Back(0))
+	if err != nil {
+		return 0, err
+	}
+	if gas, overflow = math.SafeAdd(gas, evm.callGasTemp); overflow {
+		return 0, ErrGasUintOverflow
+	}
+	return gas, nil
+}
+
+// gasCallCodeEIP8038Repriced is the Amsterdam counterpart of gasCallCode:
+// identical memory/call-gas accounting, but uses EIP-8038's repriced
+// CallValueTransferGasEIP8038 (11,300 = ACCOUNT_WRITE + CALL_STIPEND) for its
+// notional value-transfer surcharge instead of the legacy flat
+// CallValueTransferGas (9,000). CALLCODE never actually moves value to a
+// different account (the "transfer" is to the calling contract's own
+// address), but the EVM has always charged this surcharge for it regardless -
+// EIP-8038 reprices that surcharge the same way it does for CALL.
+func gasCallCodeEIP8038Repriced(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
+	memoryGas, err := memoryGasCost(mem, memorySize)
+	if err != nil {
+		return 0, err
+	}
+	var (
+		gas      uint64
+		overflow bool
+	)
+	if stack.Back(2).Sign() != 0 && !evm.chainRules.IsEIP4762 {
+		gas += params.CallValueTransferGasEIP8038
 	}
 	if gas, overflow = math.SafeAdd(gas, memoryGas); overflow {
 		return 0, ErrGasUintOverflow

@@ -805,11 +805,12 @@ func newGasUsedTestEnv(t *testing.T) (*environment, *params.ChainConfig, *ecdsa.
 		Random:      &random, // post-merge
 	}
 	env := &environment{
-		signer:  types.MakeSigner(&cfg, header.Number, header.Time),
-		state:   statedb,
-		gasPool: new(core.GasPool).AddGas(header.GasLimit),
-		header:  header,
-		evm:     vm.NewEVM(blockCtx, statedb, &cfg, vm.Config{}),
+		signer:       types.MakeSigner(&cfg, header.Number, header.Time),
+		state:        statedb,
+		gasPool:      new(core.GasPool).AddGas(header.GasLimit),
+		stateGasPool: new(core.StateGasPool).AddGas(header.GasLimit),
+		header:       header,
+		evm:          vm.NewEVM(blockCtx, statedb, &cfg, vm.Config{}),
 	}
 	return env, &cfg, key, sender
 }

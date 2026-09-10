@@ -67,13 +67,14 @@ var (
 // environment is the worker's current environment and holds all
 // information of the sealing block generation.
 type environment struct {
-	signer   types.Signer
-	state    *state.StateDB // apply state changes here
-	tcount   int            // tx count in cycle
-	size     uint64         // size of the block we are building
-	gasPool  *core.GasPool  // available gas used to pack transactions
-	coinbase common.Address
-	evm      *vm.EVM
+	signer       types.Signer
+	state        *state.StateDB     // apply state changes here
+	tcount       int                // tx count in cycle
+	size         uint64             // size of the block we are building
+	gasPool      *core.GasPool      // available gas used to pack transactions
+	stateGasPool *core.StateGasPool // EIP-8037 available state-gas used to pack transactions
+	coinbase     common.Address
+	evm          *vm.EVM
 
 	// OP-Stack addition: DA footprint block limit
 	daFootprintGasScalar uint16
@@ -181,6 +182,7 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 			}
 		}
 		work.gasPool = new(core.GasPool).AddGas(gasLimit)
+		work.stateGasPool = new(core.StateGasPool).AddGas(gasLimit)
 	}
 
 	misc.EnsureCreate2Deployer(miner.chainConfig, work.header.Time, work.state)
@@ -537,6 +539,7 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 	var (
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Gas()
+		sgp  = env.stateGasPool.Gas()
 	)
 	// A transaction that invokes an hVM precompile with invalid input is NOT
 	// rejected here: EVM.runPrecompile normalizes the invalid-input sentinel to an
@@ -544,24 +547,56 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 	// every validator applies it on import. (Build-time rejection used to live here
 	// but was removed: it tried to RevertToSnapshot after core.ApplyTransaction had
 	// already Finalised the state, which panics, and it left header.GasUsed inflated.)
-	receipt, err := core.ApplyTransaction(env.evm, env.gasPool, env.state, env.header, tx, &env.header.GasUsed)
+	receipt, err := core.ApplyTransactionWithStateGas(env.evm, env.gasPool, env.stateGasPool, env.state, env.header, tx, &env.header.GasUsed)
 	if err != nil {
-		// core.ApplyTransaction only returns an error before it Finalises/charges
-		// gas, so reverting state and the gas pool fully undoes the attempt and the
+		// core.ApplyTransactionWithStateGas only returns an error before it Finalises/charges
+		// gas, so reverting state and the gas pools fully undoes the attempt and the
 		// snapshot is still valid; header.GasUsed was never incremented.
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.SetGas(gp)
+		env.stateGasPool.SetGas(sgp)
 	}
 	return receipt, err
+}
+
+// minPackableTxGas returns the cheapest a single transaction could possibly
+// be, for the "not enough gas left to bother trying" loop-termination check
+// in commitTransactions. EIP-2780 lowers this minimum under Amsterdam
+// (TX_BASE_COST, 12,000) below the legacy flat TxGas (21,000); using the old
+// constant there would make the miner stop packing the block prematurely,
+// before it's actually full.
+func minPackableTxGas(cfg *params.ChainConfig, number *big.Int, time uint64) uint64 {
+	if cfg.IsAmsterdam(number, time) {
+		return params.TxBaseCostEIP2780
+	}
+	return params.TxGas
+}
+
+// pendingGasLimitCap returns the txpool.PendingFilter.GasLimitCap to apply
+// when retrieving pending transactions to fill a block, enforcing EIP-7825's
+// per-transaction gas cap from Osaka onward. EIP-8037 redefines that cap to
+// bound only a transaction's execution-gas portion once Amsterdam is active,
+// so tx.gas may legitimately exceed MaxTxGas there (the excess funds the
+// state-gas reservoir) - filtering pending transactions by this cap under
+// Amsterdam would make that mechanism impossible to use, since the miner
+// would never even consider such a transaction for inclusion. Returns 0 (no
+// cap) when neither condition applies.
+func pendingGasLimitCap(cfg *params.ChainConfig, number *big.Int, time uint64) uint64 {
+	if cfg.IsOsaka(number, time) && !cfg.IsAmsterdam(number, time) {
+		return params.MaxTxGas
+	}
+	return 0
 }
 
 func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *transactionsByPriceAndNonce, interrupt *atomic.Int32) error {
 	var (
 		isCancun = miner.chainConfig.IsCancun(env.header.Number, env.header.Time)
 		gasLimit = env.header.GasLimit
+		minTxGas = minPackableTxGas(miner.chainConfig, env.header.Number, env.header.Time)
 	)
 	if env.gasPool == nil {
 		env.gasPool = new(core.GasPool).AddGas(gasLimit)
+		env.stateGasPool = new(core.StateGasPool).AddGas(gasLimit)
 	}
 
 	// OP-Stack additions: throttling and DA footprint limit
@@ -577,8 +612,8 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 			}
 		}
 		// If we don't have enough gas for any further transactions then we're done.
-		if env.gasPool.Gas() < params.TxGas {
-			log.Trace("Not enough gas for further transactions", "have", env.gasPool, "want", params.TxGas)
+		if env.gasPool.Gas() < minTxGas {
+			log.Trace("Not enough gas for further transactions", "have", env.gasPool, "want", minTxGas)
 			break
 		}
 
@@ -770,9 +805,7 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 	if env.header.ExcessBlobGas != nil {
 		filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(miner.chainConfig, env.header))
 	}
-	if miner.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
-		filter.GasLimitCap = params.MaxTxGas
-	}
+	filter.GasLimitCap = pendingGasLimitCap(miner.chainConfig, env.header.Number, env.header.Time)
 	filter.BlobTxs = false
 	pendingPlainTxs := miner.txpool.Pending(filter)
 

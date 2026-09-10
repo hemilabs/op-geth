@@ -144,15 +144,17 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 	var (
 		statedb     = MakePreState(rawdb.NewMemoryDatabase(), pre.Pre)
 		signer      = types.MakeSigner(chainConfig, new(big.Int).SetUint64(pre.Env.Number), pre.Env.Timestamp)
-		gaspool     = new(core.GasPool)
-		blockHash   = common.Hash{0x13, 0x37}
-		rejectedTxs []*rejectedTx
-		includedTxs types.Transactions
-		gasUsed     = uint64(0)
-		blobGasUsed = uint64(0)
-		receipts    = make(types.Receipts, 0)
+		gaspool      = new(core.GasPool)
+		stateGaspool = new(core.StateGasPool)
+		blockHash    = common.Hash{0x13, 0x37}
+		rejectedTxs  []*rejectedTx
+		includedTxs  types.Transactions
+		gasUsed      = uint64(0)
+		blobGasUsed  = uint64(0)
+		receipts     = make(types.Receipts, 0)
 	)
 	gaspool.AddGas(pre.Env.GasLimit)
+	stateGaspool.AddGas(pre.Env.GasLimit)
 	vmContext := vm.BlockContext{
 		CanTransfer: core.CanTransfer,
 		Transfer:    core.Transfer,
@@ -251,15 +253,17 @@ func (pre *Prestate) Apply(vmConfig vm.Config, chainConfig *params.ChainConfig, 
 		}
 		statedb.SetTxContext(tx.Hash(), len(receipts))
 		var (
-			snapshot = statedb.Snapshot()
-			prevGas  = gaspool.Gas()
+			snapshot     = statedb.Snapshot()
+			prevGas      = gaspool.Gas()
+			prevStateGas = stateGaspool.Gas()
 		)
-		receipt, err := core.ApplyTransactionWithEVM(msg, gaspool, statedb, vmContext.BlockNumber, blockHash, pre.Env.Timestamp, tx, &gasUsed, evm)
+		receipt, err := core.ApplyTransactionWithEVM(msg, gaspool, stateGaspool, statedb, vmContext.BlockNumber, blockHash, pre.Env.Timestamp, tx, &gasUsed, evm)
 		if err != nil {
 			statedb.RevertToSnapshot(snapshot)
 			log.Info("rejected tx", "index", i, "hash", tx.Hash(), "from", msg.From, "error", err)
 			rejectedTxs = append(rejectedTxs, &rejectedTx{i, err.Error()})
 			gaspool.SetGas(prevGas)
+			stateGaspool.SetGas(prevStateGas)
 			continue
 		}
 		includedTxs = append(includedTxs, tx)

@@ -48,6 +48,16 @@ type Options struct {
 	ErrorRatio float64 // Allowed overestimation ratio for faster estimation termination
 }
 
+// maxTxGasCapApplies reports whether the estimation search ceiling should be
+// capped at EIP-7825's MaxTxGas. EIP-8037 redefines MaxTxGas to bound only a
+// transaction's execution-gas portion under Amsterdam, so a call that needs
+// to fund a nonzero state-gas reservoir (e.g. a large contract deployment)
+// may legitimately need tx.gas above MaxTxGas - capping the search ceiling in
+// that case would make such a call impossible to estimate correctly.
+func maxTxGasCapApplies(cfg *params.ChainConfig, blockNumber *big.Int, blockTime uint64) bool {
+	return cfg.IsOsaka(blockNumber, blockTime) && !cfg.IsAmsterdam(blockNumber, blockTime)
+}
+
 // Estimate returns the lowest possible gas limit that allows the transaction to
 // run successfully with the provided context options. It returns an error if the
 // transaction would always revert, or if there are unexpected failures.
@@ -74,7 +84,7 @@ func Estimate(ctx context.Context, call *core.Message, opts *Options, gasCap uin
 				blockTime = uint64(*opts.BlockOverrides.Time)
 			}
 		}
-		if opts.Config.IsOsaka(blockNumber, blockTime) {
+		if maxTxGasCapApplies(opts.Config, blockNumber, blockTime) {
 			hi = params.MaxTxGas
 		}
 	}

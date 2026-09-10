@@ -136,7 +136,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	if rules.IsShanghai && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
 		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
 	}
-	if rules.IsOsaka && tx.Gas() > params.MaxTxGas {
+	// EIP-8037 redefines MaxTxGas to bound only a transaction's execution-gas
+	// portion once Amsterdam is active - see state_transition.go's preCheck.
+	if rules.IsOsaka && !rules.IsAmsterdam && tx.Gas() > params.MaxTxGas {
 		return fmt.Errorf("%w (cap: %d, tx: %d)", core.ErrGasLimitTooHigh, params.MaxTxGas, tx.Gas())
 	}
 	// Transactions can't be negative. This may never happen using RLP decoded
@@ -164,7 +166,8 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return core.ErrTipAboveFeeCap
 	}
 	// Make sure the transaction is signed properly
-	if _, err := types.Sender(signer, tx); err != nil {
+	sender, err := types.Sender(signer, tx)
+	if err != nil {
 		return fmt.Errorf("%w: %v", ErrInvalidSender, err)
 	}
 	// Limit nonce to 2^64-1 per EIP-2681
@@ -173,7 +176,9 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Ensure the transaction has more gas than the bare minimum needed to cover
 	// the transaction metadata
-	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai)
+	touchesDifferentAccount := tx.To() != nil && *tx.To() != sender
+	chargeValueCost := touchesDifferentAccount && tx.Value().Sign() != 0
+	intrGas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, true, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam, touchesDifferentAccount, chargeValueCost)
 	if err != nil {
 		return err
 	}
@@ -182,7 +187,7 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 	}
 	// Ensure the transaction can cover floor data gas.
 	if opts.Config.IsPrague(head.Number, head.Time) {
-		floorDataGas, err := core.FloorDataGas(tx.Data())
+		floorDataGas, err := core.FloorDataGas(tx.Data(), tx.To() == nil, rules.IsAmsterdam, touchesDifferentAccount, chargeValueCost)
 		if err != nil {
 			return err
 		}
