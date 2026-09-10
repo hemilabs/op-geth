@@ -42,6 +42,8 @@ var activators = map[int]func(*JumpTable){
 	4762: enable4762,
 	7702: enable7702,
 	7939: enable7939,
+	7843: enable7843,
+	8024: enable8024,
 }
 
 // EnableEIP enables the given EIP on the config.
@@ -345,6 +347,125 @@ func enable7843(jt *JumpTable) {
 		constantGas: GasQuickStep,
 		minStack:    minStack(0, 1),
 		maxStack:    maxStack(0, 1),
+	}
+}
+
+// dupSwapNImmediateDisallowed reports whether x is a disallowed immediate value
+// for DUPN/SWAPN (EIP-8024): JUMPDEST (0x5b) and PUSH1-PUSH32 (0x60-0x7f) are
+// excluded so that JUMPDEST analysis of existing bytecode is unaffected.
+func dupSwapNImmediateDisallowed(x byte) bool {
+	return x > 0x5a && x < 0x80
+}
+
+// exchangeImmediateDisallowed reports whether x is a disallowed immediate value
+// for EXCHANGE (EIP-8024). Narrower than dupSwapNImmediateDisallowed because
+// EXCHANGE's encoding uses a smaller domain.
+func exchangeImmediateDisallowed(x byte) bool {
+	return x > 0x51 && x < 0x80
+}
+
+// decodeDupSwapN decodes the 1-byte immediate shared by DUPN and SWAPN (EIP-8024)
+// into the stack depth n (17 <= n <= 235).
+func decodeDupSwapN(x byte) (n int, ok bool) {
+	if dupSwapNImmediateDisallowed(x) {
+		return 0, false
+	}
+	return int((uint16(x) + 145) % 256), true
+}
+
+// decodeExchange decodes the 1-byte immediate used by EXCHANGE (EIP-8024) into
+// the pair (n, m) with 1 <= n < m and n+m <= 30.
+func decodeExchange(x byte) (n, m int, ok bool) {
+	if exchangeImmediateDisallowed(x) {
+		return 0, 0, false
+	}
+	k := int(x) ^ 143
+	q, r := k/16, k%16
+	if q < r {
+		return q + 1, r + 1, true
+	}
+	return r + 1, 29 - q, true
+}
+
+// immediateByte reads the 1-byte immediate following the opcode at *pc,
+// returning 0 if the code ends before the immediate (matching the EVM's
+// implicit zero-padding at the end of code).
+func immediateByte(pc *uint64, scope *ScopeContext) byte {
+	if idx := *pc + 1; idx < uint64(len(scope.Contract.Code)) {
+		return scope.Contract.Code[idx]
+	}
+	return 0
+}
+
+// opDupN implements the DUPN opcode (EIP-8024).
+func opDupN(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	n, ok := decodeDupSwapN(immediateByte(pc, scope))
+	if !ok {
+		return nil, ErrInvalidImmediate
+	}
+	// The jump table's static minStack only guards the smallest depth any
+	// valid immediate could need; this instance's actual decoded n may be
+	// deeper, so it's re-checked here against the real stack size.
+	if sLen := scope.Stack.len(); sLen < n {
+		return nil, &ErrStackUnderflow{stackLen: sLen, required: n}
+	}
+	scope.Stack.dup(n)
+	*pc += 1
+	return nil, nil
+}
+
+// opSwapN implements the SWAPN opcode (EIP-8024).
+func opSwapN(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	n, ok := decodeDupSwapN(immediateByte(pc, scope))
+	if !ok {
+		return nil, ErrInvalidImmediate
+	}
+	// Same re-check as opDupN: the static minStack floor doesn't know this
+	// instance's actual decoded n.
+	if sLen := scope.Stack.len(); sLen < n+1 {
+		return nil, &ErrStackUnderflow{stackLen: sLen, required: n + 1}
+	}
+	scope.Stack.swapN(n)
+	*pc += 1
+	return nil, nil
+}
+
+// opExchange implements the EXCHANGE opcode (EIP-8024).
+func opExchange(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, error) {
+	n, m, ok := decodeExchange(immediateByte(pc, scope))
+	if !ok {
+		return nil, ErrInvalidImmediate
+	}
+	// Same re-check as opDupN: the static minStack floor doesn't know this
+	// instance's actual decoded (n, m).
+	if sLen := scope.Stack.len(); sLen < m+1 {
+		return nil, &ErrStackUnderflow{stackLen: sLen, required: m + 1}
+	}
+	scope.Stack.exchange(n, m)
+	*pc += 1
+	return nil, nil
+}
+
+// enable8024 applies EIP-8024 (backward compatible DUPN, SWAPN, EXCHANGE
+// opcodes), scheduled for the Glamsterdam network upgrade per EIP-7773.
+func enable8024(jt *JumpTable) {
+	jt[DUPN] = &operation{
+		execute:     opDupN,
+		constantGas: GasFastestStep,
+		minStack:    minDupStack(17),
+		maxStack:    maxDupStack(17),
+	}
+	jt[SWAPN] = &operation{
+		execute:     opSwapN,
+		constantGas: GasFastestStep,
+		minStack:    minSwapStack(18),
+		maxStack:    maxSwapStack(18),
+	}
+	jt[EXCHANGE] = &operation{
+		execute:     opExchange,
+		constantGas: GasFastestStep,
+		minStack:    minSwapStack(3),
+		maxStack:    maxSwapStack(3),
 	}
 }
 

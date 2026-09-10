@@ -19,6 +19,7 @@ package vm
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -1006,5 +1007,149 @@ func TestOpCLZ(t *testing.T) {
 		if got := result.Uint64(); got != tc.want {
 			t.Fatalf("clz(%q) = %d; want %d", tc.inputHex, got, tc.want)
 		}
+	}
+}
+
+// newDupSwapNScope builds a ScopeContext whose code is [op, immediate], with
+// the given stack, for exercising DUPN/SWAPN/EXCHANGE (EIP-8024).
+func newDupSwapNScope(op OpCode, immediate byte, stack *Stack) *ScopeContext {
+	return &ScopeContext{
+		Stack:    stack,
+		Contract: &Contract{Code: []byte{byte(op), immediate}},
+	}
+}
+
+func pushN(stack *Stack, n int) {
+	for i := 1; i <= n; i++ {
+		stack.push(new(uint256.Int).SetUint64(uint64(i)))
+	}
+}
+
+func TestOpDupN(t *testing.T) {
+	evm := NewEVM(BlockContext{}, nil, params.TestChainConfig, Config{})
+
+	// immediate 0x80 decodes to n=17: duplicate the 17th item from the top,
+	// i.e. the first-pushed item.
+	stack := newstack()
+	pushN(stack, 17)
+	scope := newDupSwapNScope(DUPN, 0x80, stack)
+	pc := uint64(0)
+	if _, err := opDupN(&pc, evm, scope); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pc != 1 {
+		t.Fatalf("pc = %d; want 1", pc)
+	}
+	if got := stack.len(); got != 18 {
+		t.Fatalf("stack length = %d; want 18", got)
+	}
+	if top := stack.pop(); top.Uint64() != 1 {
+		t.Fatalf("duplicated value = %d; want 1", top.Uint64())
+	}
+
+	// Stack underflow: n=17 but only 5 items available.
+	stack = newstack()
+	pushN(stack, 5)
+	scope = newDupSwapNScope(DUPN, 0x80, stack)
+	pc = 0
+	if _, err := opDupN(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
+		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+	}
+
+	// Invalid immediate: 0x60 is PUSH1, disallowed.
+	stack = newstack()
+	pushN(stack, 17)
+	scope = newDupSwapNScope(DUPN, 0x60, stack)
+	pc = 0
+	if _, err := opDupN(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
+		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+	}
+}
+
+func TestOpSwapN(t *testing.T) {
+	evm := NewEVM(BlockContext{}, nil, params.TestChainConfig, Config{})
+
+	// immediate 0x80 decodes to n=17: swap the top with the item 17 positions
+	// from the top (the first-pushed item), requiring 18 stack items.
+	stack := newstack()
+	pushN(stack, 18)
+	scope := newDupSwapNScope(SWAPN, 0x80, stack)
+	pc := uint64(0)
+	if _, err := opSwapN(&pc, evm, scope); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pc != 1 {
+		t.Fatalf("pc = %d; want 1", pc)
+	}
+	data := stack.Data()
+	if data[len(data)-1].Uint64() != 1 {
+		t.Fatalf("top = %d; want 1", data[len(data)-1].Uint64())
+	}
+	if data[0].Uint64() != 18 {
+		t.Fatalf("bottom = %d; want 18", data[0].Uint64())
+	}
+
+	// Stack underflow: n=17 needs 18 items, only 10 available.
+	stack = newstack()
+	pushN(stack, 10)
+	scope = newDupSwapNScope(SWAPN, 0x80, stack)
+	pc = 0
+	if _, err := opSwapN(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
+		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+	}
+
+	// Invalid immediate: 0x5b is JUMPDEST, disallowed.
+	stack = newstack()
+	pushN(stack, 18)
+	scope = newDupSwapNScope(SWAPN, 0x5b, stack)
+	pc = 0
+	if _, err := opSwapN(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
+		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+	}
+}
+
+func TestOpExchange(t *testing.T) {
+	evm := NewEVM(BlockContext{}, nil, params.TestChainConfig, Config{})
+
+	// immediate 0x80 decodes to (n=1, m=16): exchange the items 1 and 16
+	// positions from the top, requiring 17 stack items. The top itself
+	// (offset 0) is untouched.
+	stack := newstack()
+	pushN(stack, 17)
+	scope := newDupSwapNScope(EXCHANGE, 0x80, stack)
+	pc := uint64(0)
+	if _, err := opExchange(&pc, evm, scope); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pc != 1 {
+		t.Fatalf("pc = %d; want 1", pc)
+	}
+	data := stack.Data()
+	if got := data[len(data)-1].Uint64(); got != 17 {
+		t.Fatalf("top = %d; want 17 (untouched)", got)
+	}
+	if got := data[len(data)-1-1].Uint64(); got != 1 {
+		t.Fatalf("item at offset 1 = %d; want 1", got)
+	}
+	if got := data[len(data)-1-16].Uint64(); got != 16 {
+		t.Fatalf("item at offset 16 = %d; want 16", got)
+	}
+
+	// Stack underflow: (n=1, m=16) needs 17 items, only 5 available.
+	stack = newstack()
+	pushN(stack, 5)
+	scope = newDupSwapNScope(EXCHANGE, 0x80, stack)
+	pc = 0
+	if _, err := opExchange(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
+		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+	}
+
+	// Invalid immediate: 0x60 is PUSH1, disallowed for EXCHANGE too.
+	stack = newstack()
+	pushN(stack, 17)
+	scope = newDupSwapNScope(EXCHANGE, 0x60, stack)
+	pc = 0
+	if _, err := opExchange(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
+		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
 	}
 }
