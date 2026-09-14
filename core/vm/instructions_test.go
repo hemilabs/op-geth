@@ -29,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
@@ -1242,5 +1243,171 @@ func TestEmitTransferLog(t *testing.T) {
 	emitTransferLog(evm, from, from, value)
 	if got := len(statedb.Logs()); got != 0 {
 		t.Fatalf("same-account: got %d logs; want 0", got)
+	}
+}
+
+// newSelfDestruct8246TestEVM builds an EVM/StateDB pair with the given chain
+// config and CanTransfer/Transfer wired up so SELFDESTRUCT's value move works.
+func newSelfDestruct8246TestEVM(config *params.ChainConfig) (*EVM, *state.StateDB) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	random := common.Hash{}
+	vmctx := BlockContext{
+		CanTransfer: func(db StateDB, addr common.Address, amount *uint256.Int) bool {
+			return db.GetBalance(addr).Cmp(amount) >= 0
+		},
+		Transfer: func(db StateDB, from, to common.Address, amount *uint256.Int) {
+			db.SubBalance(from, amount, tracing.BalanceChangeUnspecified)
+			db.AddBalance(to, amount, tracing.BalanceChangeUnspecified)
+		},
+		BlockNumber: big.NewInt(0),
+		Random:      &random,
+	}
+	evm := NewEVM(vmctx, statedb, config, Config{})
+	return evm, statedb
+}
+
+// selfDestructConstructor returns initcode that: SSTOREs slot 0 = 1, then
+// SELFDESTRUCTs to the given beneficiary. Used to deploy-and-destruct a
+// contract within a single CREATE call, i.e. "same transaction as created".
+func selfDestructConstructor(beneficiary common.Address) []byte {
+	code := []byte{0x60, 0x01, 0x60, 0x00, 0x55} // PUSH1 1; PUSH1 0; SSTORE
+	code = append(code, 0x73)                    // PUSH20
+	code = append(code, beneficiary.Bytes()...)
+	code = append(code, 0xff) // SELFDESTRUCT
+	return code
+}
+
+// selfDestructToSelfConstructor is like selfDestructConstructor but uses the
+// ADDRESS opcode so the beneficiary is the contract's own address.
+func selfDestructToSelfConstructor() []byte {
+	return []byte{0x60, 0x01, 0x60, 0x00, 0x55, 0x30, 0xff} // ...; ADDRESS; SELFDESTRUCT
+}
+
+func TestSelfDestruct8246ToSelf(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	sender := common.Address{1}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructToSelfConstructor(), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	statedb.Finalise(true)
+
+	if !statedb.Exist(addr) {
+		t.Fatalf("account should still exist after an EIP-8246 self-destruct-to-self")
+	}
+	if bal := statedb.GetBalance(addr); bal.Cmp(uint256.NewInt(100)) != 0 {
+		t.Fatalf("balance = %d; want 100 (must not be burned)", bal)
+	}
+	if nonce := statedb.GetNonce(addr); nonce != 0 {
+		t.Fatalf("nonce = %d; want 0", nonce)
+	}
+	if h := statedb.GetCodeHash(addr); h != types.EmptyCodeHash {
+		t.Fatalf("code hash = %s; want empty", h)
+	}
+	if root := statedb.GetStorageRoot(addr); root != types.EmptyRootHash {
+		t.Fatalf("storage root = %s; want empty", root)
+	}
+	if got := statedb.GetState(addr, common.Hash{}); got != (common.Hash{}) {
+		t.Fatalf("slot 0 = %s; want zero (storage must be cleared)", got)
+	}
+	if statedb.HasSelfDestructed(addr) {
+		t.Fatalf("HasSelfDestructed = true; want false after finalization reset")
+	}
+}
+
+func TestSelfDestruct8246ToOther(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	sender := common.Address{1}
+	beneficiary := common.Address{2}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructConstructor(beneficiary), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	statedb.Finalise(true)
+
+	if statedb.Exist(addr) {
+		t.Fatalf("account should be pruned (empty) once its balance is transferred away")
+	}
+	if bal := statedb.GetBalance(beneficiary); bal.Cmp(uint256.NewInt(100)) != 0 {
+		t.Fatalf("beneficiary balance = %d; want 100", bal)
+	}
+}
+
+func TestSelfDestruct8246EtherReceivedAfterDestruct(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	sender := common.Address{1}
+	beneficiary := common.Address{2}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructConstructor(beneficiary), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Ether sent to the already-destructed address, later in the same tx
+	// (no Finalise has happened yet).
+	statedb.AddBalance(addr, uint256.NewInt(42), tracing.BalanceChangeUnspecified)
+	statedb.Finalise(true)
+
+	if !statedb.Exist(addr) {
+		t.Fatalf("account should survive: it holds ether received after the self-destruct")
+	}
+	if bal := statedb.GetBalance(addr); bal.Cmp(uint256.NewInt(42)) != 0 {
+		t.Fatalf("balance = %d; want 42 (must not be burned)", bal)
+	}
+}
+
+func TestSelfDestruct8246PreExistingContractUnaffected(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	addr := common.Address{3}
+	beneficiary := common.Address{4}
+
+	statedb.CreateAccount(addr)
+	statedb.SetCode(addr, []byte{0x00}, tracing.CodeChangeUnspecified) // arbitrary non-empty code
+	statedb.SetState(addr, common.Hash{}, common.BytesToHash([]byte{1}))
+	statedb.AddBalance(addr, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
+	statedb.Finalise(true) // ends the "creation" tx: newContract resets to false
+
+	// Now self-destruct it, in a later "transaction" - EIP-6780/8246 must
+	// leave it exactly as a plain balance transfer, no deletion/reset at all.
+	balBefore := *statedb.GetBalance(addr)
+	statedb.SubBalance(addr, &balBefore, tracing.BalanceChangeUnspecified)
+	statedb.AddBalance(beneficiary, &balBefore, tracing.BalanceChangeUnspecified)
+	bal, changed := evm.StateDB.SelfDestruct8246(addr)
+	if changed {
+		t.Fatalf("changed = true; want false for a pre-existing contract (EIP-6780 no-op case)")
+	}
+	if bal.Sign() != 0 {
+		t.Fatalf("returned balance = %d; want 0 (already transferred away by the caller, as opSelfdestruct6780 would)", &bal)
+	}
+	statedb.Finalise(true)
+
+	if !statedb.Exist(addr) {
+		t.Fatalf("pre-existing contract must not be deleted by EIP-8246")
+	}
+	if statedb.GetCodeSize(addr) == 0 {
+		t.Fatalf("code must survive: EIP-8246 only affects same-tx-created contracts")
+	}
+	if got := statedb.GetState(addr, common.Hash{}); got != common.BytesToHash([]byte{1}) {
+		t.Fatalf("slot 0 = %s; want unchanged", got)
+	}
+}
+
+func TestSelfDestruct8246PreAmsterdamStillBurns(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(params.TestChainConfig)
+	sender := common.Address{1}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructToSelfConstructor(), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	statedb.Finalise(true)
+
+	if statedb.Exist(addr) {
+		t.Fatalf("pre-Amsterdam: account should still be fully deleted (the burn EIP-8246 removes)")
 	}
 }

@@ -3695,6 +3695,87 @@ func testCreateThenDelete(t *testing.T, config *params.ChainConfig) {
 	}
 }
 
+// TestSelfDestruct8246Blockchain runs a real block through InsertChain
+// containing a single contract-creation transaction whose constructor
+// SSTOREs a slot and then SELFDESTRUCTs to its own address, under an
+// Amsterdam-active chain config. It checks - via the reloaded post-import
+// state, exercising the full block-building/receipt/trie-commit pipeline,
+// not just in-memory StateDB calls - that the account survives with its
+// endowment intact, nonce reset to 0, and code/storage cleared.
+func TestSelfDestruct8246Blockchain(t *testing.T) {
+	var (
+		config  = *params.MergedTestChainConfig
+		engine  = beacon.New(ethash.NewFaker())
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		addr    = crypto.PubkeyToAddress(key.PublicKey)
+		created = crypto.CreateAddress(addr, 0)
+		funds   = new(big.Int).Mul(common.Big1, big.NewInt(params.Ether))
+	)
+	zero := uint64(0)
+	config.AmsterdamTime = &zero
+	config.BlobScheduleConfig.Amsterdam = params.DefaultOsakaBlobConfig
+	signer := types.LatestSigner(&config)
+
+	// Constructor: SSTORE(0, 1); SELFDESTRUCT(ADDRESS).
+	initCode := []byte{
+		byte(vm.PUSH1), 0x1,
+		byte(vm.PUSH1), 0x0,
+		byte(vm.SSTORE),
+		byte(vm.ADDRESS),
+		byte(vm.SELFDESTRUCT),
+	}
+
+	gspec := &Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			addr: {Balance: funds},
+		},
+	}
+	endowment := big.NewInt(1_000_000_000)
+	_, blocks, _ := GenerateChainWithGenesis(gspec, engine, 1, func(i int, b *BlockGen) {
+		tx, err := types.SignNewTx(key, signer, &types.LegacyTx{
+			Nonce:    0,
+			GasPrice: new(big.Int).Set(b.header.BaseFee),
+			Gas:      1_000_000,
+			Value:    endowment,
+			Data:     initCode,
+		})
+		if err != nil {
+			t.Fatalf("sign tx: %v", err)
+		}
+		b.AddTx(tx)
+	})
+
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, t.Context())
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	defer chain.Stop()
+	if n, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+
+	statedb, err := chain.State()
+	if err != nil {
+		t.Fatalf("chain.State: %v", err)
+	}
+	if !statedb.Exist(created) {
+		t.Fatalf("created account should survive its own self-destruct-to-self (endowment preserved it)")
+	}
+	if got := statedb.GetBalance(created); got.ToBig().Cmp(endowment) != 0 {
+		t.Fatalf("balance = %v; want %v", got, endowment)
+	}
+	if got := statedb.GetNonce(created); got != 0 {
+		t.Fatalf("nonce = %d; want 0", got)
+	}
+	if got := statedb.GetCodeHash(created); got != types.EmptyCodeHash {
+		t.Fatalf("code hash = %s; want empty", got)
+	}
+	if got := statedb.GetState(created, common.Hash{}); got != (common.Hash{}) {
+		t.Fatalf("slot 0 = %s; want zero (storage must be cleared)", got)
+	}
+}
+
 func TestDeleteThenCreate(t *testing.T) {
 	var (
 		engine      = ethash.NewFaker()

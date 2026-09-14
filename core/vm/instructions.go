@@ -909,7 +909,11 @@ func opSelfdestruct6780(pc *uint64, evm *EVM, scope *ScopeContext) ([]byte, erro
 	evm.StateDB.SubBalance(scope.Contract.Address(), balance, tracing.BalanceDecreaseSelfdestruct)
 	evm.StateDB.AddBalance(beneficiary.Bytes20(), balance, tracing.BalanceIncreaseSelfdestruct)
 	emitTransferLog(evm, scope.Contract.Address(), beneficiary.Bytes20(), balance)
-	evm.StateDB.SelfDestruct6780(scope.Contract.Address())
+	if evm.chainRules.IsAmsterdam {
+		evm.StateDB.SelfDestruct8246(scope.Contract.Address())
+	} else {
+		evm.StateDB.SelfDestruct6780(scope.Contract.Address())
+	}
 	if tracer := evm.Config.Tracer; tracer != nil {
 		if tracer.OnEnter != nil {
 			tracer.OnEnter(evm.depth, byte(SELFDESTRUCT), scope.Contract.Address(), beneficiary.Bytes20(), []byte{}, 0, balance.ToBig())
