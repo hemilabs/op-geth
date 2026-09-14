@@ -63,6 +63,7 @@ var (
 	verkleInstructionSet           = newVerkleInstructionSet()
 	pragueInstructionSet           = newPragueInstructionSet()
 	osakaInstructionSet            = newOsakaInstructionSet()
+	amsterdamInstructionSet        = newAmsterdamInstructionSet()
 )
 
 // JumpTable contains the EVM opcodes supported at a given fork.
@@ -89,6 +90,15 @@ func validate(jt JumpTable) JumpTable {
 func newVerkleInstructionSet() JumpTable {
 	instructionSet := newShanghaiInstructionSet()
 	enable4762(&instructionSet)
+	return validate(instructionSet)
+}
+
+func newAmsterdamInstructionSet() JumpTable {
+	instructionSet := newOsakaInstructionSet()
+	enable7843(&instructionSet) // EIP-7843 (SLOTNUM opcode)
+	enable8024(&instructionSet) // EIP-8024 (backward compatible DUPN, SWAPN, EXCHANGE)
+	enable8038(&instructionSet) // EIP-8038 (state-access gas cost update)
+	enable8037(&instructionSet) // EIP-8037 (state creation gas cost increase / state-gas dimension)
 	return validate(instructionSet)
 }
 

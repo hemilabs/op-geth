@@ -117,6 +117,14 @@ func (st *Stack) dup(n int) {
 	st.push(&st.data[st.len()-n])
 }
 
+func (st *Stack) swapN(n int) {
+	st.data[st.len()-1-n], st.data[st.len()-1] = st.data[st.len()-1], st.data[st.len()-1-n]
+}
+
+func (st *Stack) exchange(n, m int) {
+	st.data[st.len()-1-n], st.data[st.len()-1-m] = st.data[st.len()-1-m], st.data[st.len()-1-n]
+}
+
 func (st *Stack) peek() *uint256.Int {
 	return &st.data[st.len()-1]
 }

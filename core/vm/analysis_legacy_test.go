@@ -59,6 +59,60 @@ func TestJumpDestAnalysis(t *testing.T) {
 	}
 }
 
+// TestEIP8024JumpDestAnalysis checks that the code bitmap treats the 1-byte
+// immediates of DUPN/SWAPN/EXCHANGE (EIP-8024) as data, except when doing so
+// would change JUMPDEST validity relative to pre-EIP-8024 analysis: an
+// immediate equal to JUMPDEST (0x5b) or in the PUSH1-PUSH32 range (0x60-0x7f)
+// must be left as its own code position instead.
+func TestEIP8024JumpDestAnalysis(t *testing.T) {
+	// Normal immediate: skipped as data, and the following JUMPDEST is a
+	// valid, ordinary code position.
+	code := []byte{byte(DUPN), 0x01, byte(JUMPDEST)}
+	bv := codeBitmap(code)
+	if bv.codeSegment(1) {
+		t.Fatalf("normal DUPN immediate at pos 1 should be marked as data")
+	}
+	if !bv.codeSegment(2) {
+		t.Fatalf("JUMPDEST at pos 2 should remain a valid code position")
+	}
+
+	// Immediate == JUMPDEST: must NOT be skipped, so it remains a valid jump
+	// target, matching what analysis with no knowledge of DUPN would produce.
+	code = []byte{byte(SWAPN), byte(JUMPDEST), 0x01}
+	bv = codeBitmap(code)
+	if !bv.codeSegment(1) {
+		t.Fatalf("SWAPN immediate equal to JUMPDEST at pos 1 must not be marked as data")
+	}
+
+	// Immediate in PUSH1-PUSH32 range: must NOT be skipped as DUPN/SWAPN/
+	// EXCHANGE's own data, so the PUSH opcode's own immediate skip logic still
+	// applies to the bytes that follow it.
+	code = []byte{byte(EXCHANGE), byte(PUSH1), 0x01, byte(JUMPDEST)}
+	bv = codeBitmap(code)
+	if !bv.codeSegment(1) {
+		t.Fatalf("EXCHANGE immediate in PUSH1-PUSH32 range at pos 1 must not be marked as data")
+	}
+	if bv.codeSegment(2) {
+		t.Fatalf("PUSH1's own immediate at pos 2 should be marked as data")
+	}
+	if !bv.codeSegment(3) {
+		t.Fatalf("JUMPDEST at pos 3 should remain a valid code position")
+	}
+
+	// EXCHANGE has a narrower disallowed range than DUPN/SWAPN: 0x52 is
+	// disallowed for EXCHANGE but allowed for DUPN/SWAPN.
+	code = []byte{byte(DUPN), 0x52, byte(JUMPDEST)}
+	bv = codeBitmap(code)
+	if bv.codeSegment(1) {
+		t.Fatalf("0x52 immediate after DUPN should be marked as data")
+	}
+	code = []byte{byte(EXCHANGE), 0x52, byte(JUMPDEST)}
+	bv = codeBitmap(code)
+	if !bv.codeSegment(1) {
+		t.Fatalf("0x52 immediate after EXCHANGE should not be marked as data")
+	}
+}
+
 const analysisCodeSize = 1200 * 1024
 
 func BenchmarkJumpdestAnalysis_1200k(bench *testing.B) {

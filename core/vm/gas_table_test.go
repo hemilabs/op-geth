@@ -111,6 +111,192 @@ func TestEIP2200(t *testing.T) {
 	}
 }
 
+// TestEIP8038AccountCheck checks the repriced cold-account-access surcharge
+// (2600->3000, i.e. cold-warm = 2900 vs 2500) used by BALANCE/EXTCODEHASH/
+// EXTCODESIZE under EIP-8038.
+func TestEIP8038AccountCheck(t *testing.T) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	addr := common.Address{1}
+	contract := NewContract(common.Address{}, common.Address{2}, new(uint256.Int), 0, nil)
+	stack := newstack()
+	stack.push(new(uint256.Int).SetBytes(addr.Bytes()))
+	evm := NewEVM(BlockContext{}, statedb, params.TestChainConfig, Config{})
+
+	got, err := gasEip8038AccountCheck(evm, contract, stack, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := params.ColdAccountAccessCostEIP8038 - params.WarmStorageReadCostEIP2929
+	if got != want {
+		t.Fatalf("cold cost = %d; want %d", got, want)
+	}
+	if got != 2900 {
+		t.Fatalf("cold cost = %d; want 2900 (EIP-8038's 3000 - 100)", got)
+	}
+
+	// Now warm: should be free.
+	stack2 := newstack()
+	stack2.push(new(uint256.Int).SetBytes(addr.Bytes()))
+	got, err = gasEip8038AccountCheck(evm, contract, stack2, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got != 0 {
+		t.Fatalf("warm cost = %d; want 0", got)
+	}
+}
+
+// TestEIP8038SStoreRefund checks the repriced storage-clear refund
+// (4800->11616) used by SSTORE under EIP-8038.
+func TestEIP8038SStoreRefund(t *testing.T) {
+	address := common.BytesToAddress([]byte("contract"))
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	statedb.CreateAccount(address)
+	// SSTORE(0, 0): clear an existing non-zero slot to zero.
+	statedb.SetCode(address, hexutil.MustDecode("0x60006000556000600055"), tracing.CodeChangeUnspecified)
+	statedb.SetState(address, common.Hash{}, common.BytesToHash([]byte{1}))
+	statedb.Finalise(true)
+
+	vmctx := BlockContext{
+		CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
+		Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int) {},
+	}
+	evm := NewEVM(vmctx, statedb, params.TestChainConfig, Config{ExtraEips: []int{8038}})
+	_, _, err := evm.Call(common.Address{}, address, nil, 100000, new(uint256.Int))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if refund := evm.StateDB.GetRefund(); refund != params.SstoreClearsScheduleRefundEIP8038 {
+		t.Fatalf("refund = %d; want %d", refund, params.SstoreClearsScheduleRefundEIP8038)
+	}
+}
+
+// TestEIP8038SStoreWriteCost checks that SSTORE charges the repriced
+// StorageWriteGasEIP8038 (10,000, up from the legacy ~2,900 write component)
+// for both writing an existing slot (gasSStoreEIP8038) and creating a new one
+// (gasSStoreEIP8037, which additionally spills the EIP-8037 state-gas
+// account-creation charge into execution gas since no reservoir is set up in
+// this raw-gas-function test).
+func TestEIP8038SStoreWriteCost(t *testing.T) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	address := common.Address{1}
+	statedb.CreateAccount(address)
+	statedb.SetState(address, common.Hash{}, common.BytesToHash([]byte{1}))
+	statedb.Finalise(true)
+
+	contract := NewContract(common.Address{}, address, new(uint256.Int), 100000, nil)
+	stack := newstack()
+	stack.push(uint256.NewInt(2)) // value
+	stack.push(uint256.NewInt(0)) // slot
+	evm := NewEVM(BlockContext{}, statedb, params.TestChainConfig, Config{})
+
+	got, err := gasSStoreEIP8038(evm, contract, stack, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := params.ColdSloadCostEIP2929 + params.StorageWriteGasEIP8038
+	if got != want {
+		t.Fatalf("write-existing-slot cost = %d; want %d (ColdSloadCostEIP2929 + StorageWriteGasEIP8038)", got, want)
+	}
+
+	// Creating a brand new slot from zero: same StorageWriteGasEIP8038
+	// execution-gas write cost, plus EIP-8037's state-gas charge (which, with
+	// no reservoir configured on this bare *EVM, spills entirely into the
+	// returned execution gas).
+	statedb2, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	statedb2.CreateAccount(address)
+	statedb2.Finalise(true)
+	contract2 := NewContract(common.Address{}, address, new(uint256.Int), 100000, nil)
+	stack2 := newstack()
+	stack2.push(uint256.NewInt(2))
+	stack2.push(uint256.NewInt(0))
+	evm2 := NewEVM(BlockContext{}, statedb2, params.TestChainConfig, Config{})
+
+	got, err = gasSStoreEIP8037(evm2, contract2, stack2, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want = params.ColdSloadCostEIP2929 + params.StorageWriteGasEIP8038 + params.GasStorageSetStateEIP8037
+	if got != want {
+		t.Fatalf("create-slot cost = %d; want %d (ColdSloadCostEIP2929 + StorageWriteGasEIP8038 + GasStorageSetStateEIP8037)", got, want)
+	}
+}
+
+// TestEIP8038SelfdestructAccountWrite checks that SELFDESTRUCT charges
+// AccountWriteGasEIP8038 (9,000) - not the legacy CreateBySelfdestructGas
+// (25,000) - when a positive balance is sent to a dead (empty) beneficiary,
+// for both the standalone-EIP-8038 and the EIP-8037 (state-gas) variants.
+func TestEIP8038SelfdestructAccountWrite(t *testing.T) {
+	beneficiary := common.Address{2}
+	contractAddr := common.Address{1}
+
+	newEnv := func() (*EVM, *Contract, *Stack) {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		statedb.CreateAccount(contractAddr)
+		statedb.AddBalance(contractAddr, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
+		statedb.Finalise(true)
+		contract := NewContract(common.Address{}, contractAddr, new(uint256.Int), 100000, nil)
+		stack := newstack()
+		stack.push(new(uint256.Int).SetBytes(beneficiary.Bytes()))
+		evm := NewEVM(BlockContext{}, statedb, params.TestChainConfig, Config{})
+		return evm, contract, stack
+	}
+
+	evm, contract, stack := newEnv()
+	got, err := gasSelfdestructEIP8038(evm, contract, stack, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := params.ColdAccountAccessCostEIP8038 + params.AccountWriteGasEIP8038
+	if got != want {
+		t.Fatalf("gasSelfdestructEIP8038 = %d; want %d (ColdAccountAccessCostEIP8038 + AccountWriteGasEIP8038)", got, want)
+	}
+
+	evm2, contract2, stack2 := newEnv()
+	got, err = gasSelfdestructEIP8037(evm2, contract2, stack2, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want = params.ColdAccountAccessCostEIP8038 + params.AccountWriteGasEIP8038 + params.GasNewAccountStateEIP8037
+	if got != want {
+		t.Fatalf("gasSelfdestructEIP8037 = %d; want %d (ColdAccountAccessCostEIP8038 + AccountWriteGasEIP8038 + GasNewAccountStateEIP8037)", got, want)
+	}
+}
+
+// TestEIP8038CallCodeValueTransferCost checks that CALLCODE's notional
+// value-transfer surcharge uses the repriced CallValueTransferGasEIP8038
+// (11,300) under Amsterdam, not the legacy flat CallValueTransferGas (9,000).
+func TestEIP8038CallCodeValueTransferCost(t *testing.T) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	contract := NewContract(common.Address{}, common.Address{1}, new(uint256.Int), 100000, nil)
+	stack := newstack()
+	// Push order is bottom-to-top; Stack.Back(n) counts from the top, so the
+	// last-pushed item (gas) is Back(0), then addr is Back(1), value Back(2).
+	stack.push(uint256.NewInt(1))                                    // value (nonzero)
+	stack.push(new(uint256.Int).SetBytes(common.Address{2}.Bytes())) // addr
+	stack.push(uint256.NewInt(1))                                    // gas
+	evm := NewEVM(BlockContext{}, statedb, params.TestChainConfig, Config{})
+
+	got, err := gasCallCodeEIP8038Repriced(evm, contract, stack, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	// got includes the forwarded call gas (stack.Back(0) = 1) on top of the
+	// value-transfer surcharge; isolate the surcharge by comparing against a
+	// zero-value call, which charges no surcharge at all.
+	stackNoValue := newstack()
+	stackNoValue.push(uint256.NewInt(0)) // value = 0
+	stackNoValue.push(new(uint256.Int).SetBytes(common.Address{2}.Bytes()))
+	stackNoValue.push(uint256.NewInt(1)) // gas
+	base, err := gasCallCodeEIP8038Repriced(evm, contract, stackNoValue, nil, 0)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if surcharge := got - base; surcharge != params.CallValueTransferGasEIP8038 {
+		t.Fatalf("value-transfer surcharge = %d; want %d (CallValueTransferGasEIP8038)", surcharge, params.CallValueTransferGasEIP8038)
+	}
+}
+
 var createGasTests = []struct {
 	code       string
 	eip3860    bool
@@ -178,5 +364,56 @@ func TestCreateGas(t *testing.T) {
 				t.Errorf("test %d: gas used mismatch: have %v, want %v", i, gasUsed, tt.gasUsed)
 			}
 		}
+	}
+}
+
+// TestEIP7954InitCodeSizeLimit checks that CREATE/CREATE2's initcode size
+// limit follows params.MaxInitCodeSizeFor: unchanged pre-Amsterdam, raised
+// from Amsterdam onwards (EIP-7954).
+func TestEIP7954InitCodeSizeLimit(t *testing.T) {
+	random := common.Hash{}
+	newEnv := func(amsterdam bool) (*EVM, *Contract) {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		cfg := params.TestChainConfig
+		if amsterdam {
+			cfg = amsterdamTestChainConfig()
+		}
+		evm := NewEVM(BlockContext{BlockNumber: big.NewInt(0), Random: &random}, statedb, cfg, Config{})
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), math.MaxInt64, nil)
+		return evm, contract
+	}
+	stackWithSize := func(size uint64) *Stack {
+		st := newstack()
+		st.push(uint256.NewInt(size)) // size
+		st.push(new(uint256.Int))     // offset
+		st.push(new(uint256.Int))     // value
+		return st
+	}
+	tests := []struct {
+		name      string
+		size      uint64
+		amsterdam bool
+		wantErr   error
+	}{
+		{"pre-Amsterdam at old limit", params.MaxInitCodeSize, false, nil},
+		{"pre-Amsterdam over old limit", params.MaxInitCodeSize + 1, false, ErrMaxInitCodeSizeExceeded},
+		{"Amsterdam between old and new limit", params.MaxInitCodeSize + 1, true, nil},
+		{"Amsterdam at new limit", params.MaxInitCodeSizeEIP7954, true, nil},
+		{"Amsterdam over new limit", params.MaxInitCodeSizeEIP7954 + 1, true, ErrMaxInitCodeSizeExceeded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, gasFn := range []func(*EVM, *Contract, *Stack, *Memory, uint64) (uint64, error){gasCreateEip3860, gasCreate2Eip3860} {
+				evm, contract := newEnv(tt.amsterdam)
+				_, err := gasFn(evm, contract, stackWithSize(uint64(tt.size)), NewMemory(), 0)
+				if tt.wantErr == nil {
+					if err != nil {
+						t.Fatalf("unexpected error: %v", err)
+					}
+				} else if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("got err %v, want %v", err, tt.wantErr)
+				}
+			}
+		})
 	}
 }

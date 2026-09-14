@@ -533,6 +533,7 @@ func (api *ConsensusAPI) forkchoiceUpdated(update engine.ForkchoiceStateV1, payl
 			Version:       payloadVersion,
 			EIP1559Params: eip1559Params,
 			MinBaseFee:    payloadAttributes.MinBaseFee,
+			SlotNumber:    payloadAttributes.SlotNumber,
 		}
 		id := args.Id()
 		// If we already are busy generating this work, then we do not need
@@ -826,6 +827,9 @@ func (api *ConsensusAPI) NewPayloadV3(params engine.ExecutableData, versionedHas
 }
 
 // NewPayloadV4 creates an Eth1 block, inserts it in the chain, and returns the status of the chain.
+// TODO(HEMI): EIP-7843 (SLOTNUM, Glamsterdam) has no assigned Engine API version yet
+// upstream, so its slotNumber field currently rides along on this V4 method instead of
+// a dedicated NewPayloadV5. Revisit once the spec assigns a real version.
 func (api *ConsensusAPI) NewPayloadV4(params engine.ExecutableData, versionedHashes []common.Hash, beaconRoot *common.Hash, executionRequests []hexutil.Bytes) (engine.PayloadStatusV1, error) {
 	switch {
 	case params.Withdrawals == nil:

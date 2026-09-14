@@ -68,6 +68,14 @@ type StateDB interface {
 	// true iff the object was indeed destructed.
 	SelfDestruct6780(common.Address) (uint256.Int, bool)
 
+	// SelfDestruct8246 is the EIP-6780 + EIP-8246 (Amsterdam) selfdestruct:
+	// same same-tx-creation gating as SelfDestruct6780, but a destructed
+	// object's balance is preserved rather than burned - the account is reset
+	// (nonce/code/storage cleared) rather than deleted at finalization.
+	// This method returns the current balance, along with a boolean which is
+	// true if the object was marked for the finalization-time reset.
+	SelfDestruct8246(common.Address) (uint256.Int, bool)
+
 	// Exist reports whether the given account exists in state.
 	// Notably this also returns true for self-destructed accounts within the current transaction.
 	Exist(common.Address) bool

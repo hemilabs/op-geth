@@ -67,6 +67,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		blockNumber = block.Number()
 		allLogs     []*types.Log
 		gp          = new(GasPool).AddGas(block.GasLimit())
+		sgp         = new(StateGasPool).AddGas(block.GasLimit())
 	)
 
 	// Mutate the block and state according to any hard-fork specs
@@ -101,7 +102,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 		}
 		statedb.SetTxContext(tx.Hash(), i)
 
-		receipt, err := ApplyTransactionWithEVM(msg, gp, statedb, blockNumber, blockHash, context.Time, tx, usedGas, evm)
+		receipt, err := ApplyTransactionWithEVM(msg, gp, sgp, statedb, blockNumber, blockHash, context.Time, tx, usedGas, evm)
 		if err != nil {
 			return nil, fmt.Errorf("could not apply tx %d [%v]: %w", i, tx.Hash().Hex(), err)
 		}
@@ -147,7 +148,7 @@ func (p *StateProcessor) Process(block *types.Block, statedb *state.StateDB, cfg
 // ApplyTransactionWithEVM attempts to apply a transaction to the given state database
 // and uses the input parameters for its environment similar to ApplyTransaction. However,
 // this method takes an already created EVM instance as input.
-func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, blockTime uint64, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, err error) {
+func ApplyTransactionWithEVM(msg *Message, gp *GasPool, sgp *StateGasPool, statedb *state.StateDB, blockNumber *big.Int, blockHash common.Hash, blockTime uint64, tx *types.Transaction, usedGas *uint64, evm *vm.EVM) (receipt *types.Receipt, err error) {
 	if hooks := evm.Config.Tracer; hooks != nil {
 		if hooks.OnTxStart != nil {
 			hooks.OnTxStart(evm.GetVMContext(), tx, msg.From)
@@ -164,7 +165,7 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 	}
 
 	// Apply the transaction to the current state (included in the env).
-	result, err := ApplyMessage(evm, msg, gp)
+	result, err := ApplyMessageWithStateGas(evm, msg, gp, sgp)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +176,12 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, statedb *state.StateDB, 
 	} else {
 		root = statedb.IntermediateRoot(evm.ChainConfig().IsEIP158(blockNumber)).Bytes()
 	}
-	*usedGas += result.UsedGas
+	// EIP-7778: block-level gas accounting uses gross (pre-refund) usage.
+	if evm.ChainConfig().IsAmsterdam(blockNumber, blockTime) {
+		*usedGas += result.MaxUsedGas
+	} else {
+		*usedGas += result.UsedGas
+	}
 
 	// Merge the tx-local access event into the "block-local" one, in order to collect
 	// all values, so that the witness can be built.
@@ -196,7 +202,11 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 		receipt.Status = types.ReceiptStatusSuccessful
 	}
 	receipt.TxHash = tx.Hash()
-	receipt.GasUsed = result.UsedGas
+	if config.IsAmsterdam(blockNumber, blockTime) {
+		receipt.GasUsed = result.MaxUsedGas
+	} else {
+		receipt.GasUsed = result.UsedGas
+	}
 
 	if tx.IsDepositTx() && config.IsOptimismRegolith(evm.Context.Time) {
 		// The actual nonce for deposit transactions is only recorded from Regolith onwards and
@@ -245,12 +255,18 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 // for the transaction, gas used and an error if the transaction failed,
 // indicating the block was invalid.
 func ApplyTransaction(evm *vm.EVM, gp *GasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, error) {
+	return ApplyTransactionWithStateGas(evm, gp, new(StateGasPool).AddGas(gp.Gas()), statedb, header, tx, usedGas)
+}
+
+// ApplyTransactionWithStateGas is like ApplyTransaction, but takes an
+// explicit EIP-8037 state-gas pool - see ApplyMessageWithStateGas.
+func ApplyTransactionWithStateGas(evm *vm.EVM, gp *GasPool, sgp *StateGasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, error) {
 	msg, err := TransactionToMessage(tx, types.MakeSigner(evm.ChainConfig(), header.Number, header.Time), header.BaseFee)
 	if err != nil {
 		return nil, err
 	}
 	// Create a new context to be used in the EVM environment
-	return ApplyTransactionWithEVM(msg, gp, statedb, header.Number, header.Hash(), header.Time, tx, usedGas, evm)
+	return ApplyTransactionWithEVM(msg, gp, sgp, statedb, header.Number, header.Hash(), header.Time, tx, usedGas, evm)
 }
 
 // ProcessBeaconBlockRoot applies the EIP-4788 system call to the beacon block root

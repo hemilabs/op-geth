@@ -29,7 +29,10 @@ import (
 	"github.com/ethereum/go-ethereum/consensus/misc/eip1559"
 	"github.com/ethereum/go-ethereum/consensus/misc/eip4844"
 	"github.com/ethereum/go-ethereum/core/rawdb"
+	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/core/vm"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
 	"github.com/ethereum/go-ethereum/trie"
@@ -428,4 +431,88 @@ func GenerateBadBlock(parent *types.Block, engine consensus.Engine, txs types.Tr
 		body.Withdrawals = []*types.Withdrawal{}
 	}
 	return types.NewBlock(header, body, receipts, trie.NewStackTrie(nil), config)
+}
+
+// TestApplyTransactionEIP7778GrossGasUsed checks that ApplyTransactionWithEVM
+// and MakeReceipt report gross (pre-refund) gas usage under Amsterdam, and net
+// (post-refund) usage otherwise, for a transaction that earns an actual refund.
+func TestApplyTransactionEIP7778GrossGasUsed(t *testing.T) {
+	key, err := crypto.GenerateKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := crypto.PubkeyToAddress(key.PublicKey)
+	target := common.Address{0xAA}
+
+	newState := func() *state.StateDB {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		statedb.AddBalance(sender, uint256.NewInt(1_000_000_000_000_000_000), tracing.BalanceChangeUnspecified)
+		statedb.CreateAccount(target)
+		statedb.SetCode(target, []byte{0x60, 0x00, 0x60, 0x00, 0x55, 0x00}, tracing.CodeChangeUnspecified) // PUSH1 0; PUSH1 0; SSTORE; STOP
+		statedb.SetState(target, common.Hash{}, common.BytesToHash([]byte{1}))
+		statedb.Finalise(true)
+		return statedb
+	}
+
+	run := func(cfg *params.ChainConfig) (*types.Receipt, uint64, uint64) {
+		statedb := newState()
+		header := &types.Header{Number: big.NewInt(1), Time: 1, BaseFee: big.NewInt(0), GasLimit: 30_000_000}
+		random := common.Hash{}
+		vmctx := vm.BlockContext{
+			CanTransfer: CanTransfer,
+			Transfer:    Transfer,
+			BlockNumber: header.Number,
+			Time:        header.Time,
+			GasLimit:    header.GasLimit,
+			BaseFee:     header.BaseFee,
+			Random:      &random,
+		}
+		evm := vm.NewEVM(vmctx, statedb, cfg, vm.Config{})
+		signer := types.LatestSigner(cfg)
+		tx, err := types.SignNewTx(key, signer, &types.LegacyTx{Nonce: 0, GasPrice: big.NewInt(0), Gas: 100_000, To: &target})
+		if err != nil {
+			t.Fatal(err)
+		}
+		msg, err := TransactionToMessage(tx, signer, header.BaseFee)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// Dry run to learn the tx's actual net vs gross split, independent of what
+		// ApplyTransactionWithEVM chooses to report.
+		dryResult, err := ApplyMessage(vm.NewEVM(vmctx, statedb.Copy(), cfg, vm.Config{}), msg, new(GasPool).AddGas(msg.GasLimit))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		statedb.SetTxContext(tx.Hash(), 0)
+		usedGas := new(uint64)
+		gp, sgp := new(GasPool).AddGas(header.GasLimit), new(StateGasPool).AddGas(header.GasLimit)
+		receipt, err := ApplyTransactionWithEVM(msg, gp, sgp, statedb, header.Number, common.Hash{}, header.Time, tx, usedGas, evm)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return receipt, dryResult.UsedGas, dryResult.MaxUsedGas
+	}
+
+	preReceipt, preNet, preGross := run(params.TestChainConfig)
+	if preNet >= preGross {
+		t.Fatalf("test setup: tx must have an actual refund gap (net %d, gross %d)", preNet, preGross)
+	}
+	if preReceipt.GasUsed != preNet {
+		t.Fatalf("pre-Amsterdam GasUsed = %d; want net %d", preReceipt.GasUsed, preNet)
+	}
+	if preReceipt.CumulativeGasUsed != preReceipt.GasUsed {
+		t.Fatalf("pre-Amsterdam CumulativeGasUsed = %d; want %d", preReceipt.CumulativeGasUsed, preReceipt.GasUsed)
+	}
+
+	postReceipt, postNet, postGross := run(amsterdamTestChainConfig())
+	if postReceipt.GasUsed != postGross {
+		t.Fatalf("Amsterdam GasUsed = %d; want gross %d", postReceipt.GasUsed, postGross)
+	}
+	if postReceipt.GasUsed == postNet {
+		t.Fatalf("Amsterdam GasUsed = %d; must differ from net %d", postReceipt.GasUsed, postNet)
+	}
+	if postReceipt.CumulativeGasUsed != postReceipt.GasUsed {
+		t.Fatalf("Amsterdam CumulativeGasUsed = %d; want %d", postReceipt.CumulativeGasUsed, postReceipt.GasUsed)
+	}
 }

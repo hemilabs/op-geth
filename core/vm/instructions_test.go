@@ -19,6 +19,7 @@ package vm
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math/big"
 	"os"
@@ -28,6 +29,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/math"
 	"github.com/ethereum/go-ethereum/core/state"
+	"github.com/ethereum/go-ethereum/core/tracing"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/params"
@@ -1006,5 +1008,457 @@ func TestOpCLZ(t *testing.T) {
 		if got := result.Uint64(); got != tc.want {
 			t.Fatalf("clz(%q) = %d; want %d", tc.inputHex, got, tc.want)
 		}
+	}
+}
+
+// newDupSwapNScope builds a ScopeContext whose code is [op, immediate], with
+// the given stack, for exercising DUPN/SWAPN/EXCHANGE (EIP-8024).
+func newDupSwapNScope(op OpCode, immediate byte, stack *Stack) *ScopeContext {
+	return &ScopeContext{
+		Stack:    stack,
+		Contract: &Contract{Code: []byte{byte(op), immediate}},
+	}
+}
+
+func pushN(stack *Stack, n int) {
+	for i := 1; i <= n; i++ {
+		stack.push(new(uint256.Int).SetUint64(uint64(i)))
+	}
+}
+
+func TestOpDupN(t *testing.T) {
+	evm := NewEVM(BlockContext{}, nil, params.TestChainConfig, Config{})
+
+	// immediate 0x80 decodes to n=17: duplicate the 17th item from the top,
+	// i.e. the first-pushed item.
+	stack := newstack()
+	pushN(stack, 17)
+	scope := newDupSwapNScope(DUPN, 0x80, stack)
+	pc := uint64(0)
+	if _, err := opDupN(&pc, evm, scope); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pc != 1 {
+		t.Fatalf("pc = %d; want 1", pc)
+	}
+	if got := stack.len(); got != 18 {
+		t.Fatalf("stack length = %d; want 18", got)
+	}
+	if top := stack.pop(); top.Uint64() != 1 {
+		t.Fatalf("duplicated value = %d; want 1", top.Uint64())
+	}
+
+	// Stack underflow: n=17 but only 5 items available.
+	stack = newstack()
+	pushN(stack, 5)
+	scope = newDupSwapNScope(DUPN, 0x80, stack)
+	pc = 0
+	if _, err := opDupN(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
+		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+	}
+
+	// Invalid immediate: 0x60 is PUSH1, disallowed.
+	stack = newstack()
+	pushN(stack, 17)
+	scope = newDupSwapNScope(DUPN, 0x60, stack)
+	pc = 0
+	if _, err := opDupN(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
+		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+	}
+}
+
+func TestOpSwapN(t *testing.T) {
+	evm := NewEVM(BlockContext{}, nil, params.TestChainConfig, Config{})
+
+	// immediate 0x80 decodes to n=17: swap the top with the item 17 positions
+	// from the top (the first-pushed item), requiring 18 stack items.
+	stack := newstack()
+	pushN(stack, 18)
+	scope := newDupSwapNScope(SWAPN, 0x80, stack)
+	pc := uint64(0)
+	if _, err := opSwapN(&pc, evm, scope); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pc != 1 {
+		t.Fatalf("pc = %d; want 1", pc)
+	}
+	data := stack.Data()
+	if data[len(data)-1].Uint64() != 1 {
+		t.Fatalf("top = %d; want 1", data[len(data)-1].Uint64())
+	}
+	if data[0].Uint64() != 18 {
+		t.Fatalf("bottom = %d; want 18", data[0].Uint64())
+	}
+
+	// Stack underflow: n=17 needs 18 items, only 10 available.
+	stack = newstack()
+	pushN(stack, 10)
+	scope = newDupSwapNScope(SWAPN, 0x80, stack)
+	pc = 0
+	if _, err := opSwapN(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
+		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+	}
+
+	// Invalid immediate: 0x5b is JUMPDEST, disallowed.
+	stack = newstack()
+	pushN(stack, 18)
+	scope = newDupSwapNScope(SWAPN, 0x5b, stack)
+	pc = 0
+	if _, err := opSwapN(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
+		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+	}
+}
+
+func TestOpExchange(t *testing.T) {
+	evm := NewEVM(BlockContext{}, nil, params.TestChainConfig, Config{})
+
+	// immediate 0x80 decodes to (n=1, m=16): exchange the items 1 and 16
+	// positions from the top, requiring 17 stack items. The top itself
+	// (offset 0) is untouched.
+	stack := newstack()
+	pushN(stack, 17)
+	scope := newDupSwapNScope(EXCHANGE, 0x80, stack)
+	pc := uint64(0)
+	if _, err := opExchange(&pc, evm, scope); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if pc != 1 {
+		t.Fatalf("pc = %d; want 1", pc)
+	}
+	data := stack.Data()
+	if got := data[len(data)-1].Uint64(); got != 17 {
+		t.Fatalf("top = %d; want 17 (untouched)", got)
+	}
+	if got := data[len(data)-1-1].Uint64(); got != 1 {
+		t.Fatalf("item at offset 1 = %d; want 1", got)
+	}
+	if got := data[len(data)-1-16].Uint64(); got != 16 {
+		t.Fatalf("item at offset 16 = %d; want 16", got)
+	}
+
+	// Stack underflow: (n=1, m=16) needs 17 items, only 5 available.
+	stack = newstack()
+	pushN(stack, 5)
+	scope = newDupSwapNScope(EXCHANGE, 0x80, stack)
+	pc = 0
+	if _, err := opExchange(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
+		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+	}
+
+	// Invalid immediate: 0x60 is PUSH1, disallowed for EXCHANGE too.
+	stack = newstack()
+	pushN(stack, 17)
+	scope = newDupSwapNScope(EXCHANGE, 0x60, stack)
+	pc = 0
+	if _, err := opExchange(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
+		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+	}
+}
+
+// TestChargeStateGas checks EIP-8037's reservoir-then-spillover accounting.
+func TestChargeStateGas(t *testing.T) {
+	evm := &EVM{}
+	evm.StateGasReservoir = 100
+
+	// Fully covered by the reservoir: no spillover, reservoir decremented.
+	if spill := evm.ChargeStateGas(40); spill != 0 {
+		t.Fatalf("spill = %d; want 0", spill)
+	}
+	if evm.StateGasReservoir != 60 {
+		t.Fatalf("reservoir = %d; want 60", evm.StateGasReservoir)
+	}
+
+	// Partially covered: reservoir exhausted, remainder spills to execution gas.
+	if spill := evm.ChargeStateGas(90); spill != 30 {
+		t.Fatalf("spill = %d; want 30", spill)
+	}
+	if evm.StateGasReservoir != 0 {
+		t.Fatalf("reservoir = %d; want 0", evm.StateGasReservoir)
+	}
+
+	// Reservoir already empty: charge spills entirely to execution gas.
+	if spill := evm.ChargeStateGas(15); spill != 15 {
+		t.Fatalf("spill = %d; want 15", spill)
+	}
+	if evm.StateGasReservoir != 0 {
+		t.Fatalf("reservoir = %d; want 0", evm.StateGasReservoir)
+	}
+}
+
+// amsterdamTestChainConfig returns a chain config with Amsterdam active from
+// genesis, for exercising EIP-7708/8038/8037/2780 behavior directly.
+func amsterdamTestChainConfig() *params.ChainConfig {
+	cfg := *params.TestChainConfig
+	zero := uint64(0)
+	cfg.AmsterdamTime = &zero
+	return &cfg
+}
+
+// TestEIP7954MaxCodeSize checks that the deployed-code size limit follows
+// params.MaxCodeSizeFor: unchanged pre-Amsterdam, raised from Amsterdam
+// onwards (EIP-7954).
+func TestEIP7954MaxCodeSize(t *testing.T) {
+	random := common.Hash{}
+	newEVM := func(amsterdam bool) *EVM {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		cfg := params.TestChainConfig
+		if amsterdam {
+			cfg = amsterdamTestChainConfig()
+		}
+		vmctx := BlockContext{
+			CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
+			Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int) {},
+			BlockNumber: big.NewInt(0),
+			Random:      &random,
+		}
+		return NewEVM(vmctx, statedb, cfg, Config{})
+	}
+	// initcode that RETURNs `size` zero-filled bytes, regardless of content.
+	returnCodeOfSize := func(size uint64) []byte {
+		return append(append([]byte{byte(PUSH3), byte(size >> 16), byte(size >> 8), byte(size)}, byte(PUSH1), 0x00), byte(RETURN))
+	}
+	tests := []struct {
+		name      string
+		size      uint64
+		amsterdam bool
+		wantErr   error
+	}{
+		{"pre-Amsterdam at old limit", params.MaxCodeSize, false, nil},
+		{"pre-Amsterdam over old limit", params.MaxCodeSize + 1, false, ErrMaxCodeSizeExceeded},
+		{"Amsterdam between old and new limit", params.MaxCodeSize + 1, true, nil},
+		{"Amsterdam at new limit", params.MaxCodeSizeEIP7954, true, nil},
+		{"Amsterdam over new limit", params.MaxCodeSizeEIP7954 + 1, true, ErrMaxCodeSizeExceeded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evm := newEVM(tt.amsterdam)
+			initcode := returnCodeOfSize(uint64(tt.size))
+			_, _, _, err := evm.Create(common.Address{1}, initcode, 300_000_000, new(uint256.Int))
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("got err %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestEmitTransferLog(t *testing.T) {
+	random := common.Hash{}
+	newEVM := func(config *params.ChainConfig) (*EVM, *state.StateDB) {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		evm := NewEVM(BlockContext{BlockNumber: big.NewInt(0), Random: &random}, statedb, config, Config{})
+		return evm, statedb
+	}
+	from := common.Address{1}
+	to := common.Address{2}
+	value := uint256.NewInt(100)
+
+	// Pre-Amsterdam: no log.
+	evm, statedb := newEVM(params.TestChainConfig)
+	emitTransferLog(evm, from, to, value)
+	if got := len(statedb.Logs()); got != 0 {
+		t.Fatalf("pre-Amsterdam: got %d logs; want 0", got)
+	}
+
+	// Amsterdam, normal transfer: one log with the expected shape.
+	evm, statedb = newEVM(amsterdamTestChainConfig())
+	emitTransferLog(evm, from, to, value)
+	logs := statedb.Logs()
+	if got := len(logs); got != 1 {
+		t.Fatalf("got %d logs; want 1", got)
+	}
+	log := logs[0]
+	if log.Address != params.SystemAddress {
+		t.Fatalf("log address = %s; want %s", log.Address, params.SystemAddress)
+	}
+	wantTopics := []common.Hash{params.TransferLogTopic, common.BytesToHash(from.Bytes()), common.BytesToHash(to.Bytes())}
+	if len(log.Topics) != 3 || log.Topics[0] != wantTopics[0] || log.Topics[1] != wantTopics[1] || log.Topics[2] != wantTopics[2] {
+		t.Fatalf("topics = %v; want %v", log.Topics, wantTopics)
+	}
+	if !bytes.Equal(log.Data, value.PaddedBytes(32)) {
+		t.Fatalf("data = %x; want %x", log.Data, value.PaddedBytes(32))
+	}
+
+	// Amsterdam, zero value: no log.
+	evm, statedb = newEVM(amsterdamTestChainConfig())
+	emitTransferLog(evm, from, to, uint256.NewInt(0))
+	if got := len(statedb.Logs()); got != 0 {
+		t.Fatalf("zero-value: got %d logs; want 0", got)
+	}
+
+	// Amsterdam, same account: no log.
+	evm, statedb = newEVM(amsterdamTestChainConfig())
+	emitTransferLog(evm, from, from, value)
+	if got := len(statedb.Logs()); got != 0 {
+		t.Fatalf("same-account: got %d logs; want 0", got)
+	}
+}
+
+// newSelfDestruct8246TestEVM builds an EVM/StateDB pair with the given chain
+// config and CanTransfer/Transfer wired up so SELFDESTRUCT's value move works.
+func newSelfDestruct8246TestEVM(config *params.ChainConfig) (*EVM, *state.StateDB) {
+	statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+	random := common.Hash{}
+	vmctx := BlockContext{
+		CanTransfer: func(db StateDB, addr common.Address, amount *uint256.Int) bool {
+			return db.GetBalance(addr).Cmp(amount) >= 0
+		},
+		Transfer: func(db StateDB, from, to common.Address, amount *uint256.Int) {
+			db.SubBalance(from, amount, tracing.BalanceChangeUnspecified)
+			db.AddBalance(to, amount, tracing.BalanceChangeUnspecified)
+		},
+		BlockNumber: big.NewInt(0),
+		Random:      &random,
+	}
+	evm := NewEVM(vmctx, statedb, config, Config{})
+	return evm, statedb
+}
+
+// selfDestructConstructor returns initcode that: SSTOREs slot 0 = 1, then
+// SELFDESTRUCTs to the given beneficiary. Used to deploy-and-destruct a
+// contract within a single CREATE call, i.e. "same transaction as created".
+func selfDestructConstructor(beneficiary common.Address) []byte {
+	code := []byte{0x60, 0x01, 0x60, 0x00, 0x55} // PUSH1 1; PUSH1 0; SSTORE
+	code = append(code, 0x73)                    // PUSH20
+	code = append(code, beneficiary.Bytes()...)
+	code = append(code, 0xff) // SELFDESTRUCT
+	return code
+}
+
+// selfDestructToSelfConstructor is like selfDestructConstructor but uses the
+// ADDRESS opcode so the beneficiary is the contract's own address.
+func selfDestructToSelfConstructor() []byte {
+	return []byte{0x60, 0x01, 0x60, 0x00, 0x55, 0x30, 0xff} // ...; ADDRESS; SELFDESTRUCT
+}
+
+func TestSelfDestruct8246ToSelf(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	sender := common.Address{1}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructToSelfConstructor(), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	statedb.Finalise(true)
+
+	if !statedb.Exist(addr) {
+		t.Fatalf("account should still exist after an EIP-8246 self-destruct-to-self")
+	}
+	if bal := statedb.GetBalance(addr); bal.Cmp(uint256.NewInt(100)) != 0 {
+		t.Fatalf("balance = %d; want 100 (must not be burned)", bal)
+	}
+	if nonce := statedb.GetNonce(addr); nonce != 0 {
+		t.Fatalf("nonce = %d; want 0", nonce)
+	}
+	if h := statedb.GetCodeHash(addr); h != types.EmptyCodeHash {
+		t.Fatalf("code hash = %s; want empty", h)
+	}
+	if root := statedb.GetStorageRoot(addr); root != types.EmptyRootHash {
+		t.Fatalf("storage root = %s; want empty", root)
+	}
+	if got := statedb.GetState(addr, common.Hash{}); got != (common.Hash{}) {
+		t.Fatalf("slot 0 = %s; want zero (storage must be cleared)", got)
+	}
+	if statedb.HasSelfDestructed(addr) {
+		t.Fatalf("HasSelfDestructed = true; want false after finalization reset")
+	}
+}
+
+func TestSelfDestruct8246ToOther(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	sender := common.Address{1}
+	beneficiary := common.Address{2}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructConstructor(beneficiary), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	statedb.Finalise(true)
+
+	if statedb.Exist(addr) {
+		t.Fatalf("account should be pruned (empty) once its balance is transferred away")
+	}
+	if bal := statedb.GetBalance(beneficiary); bal.Cmp(uint256.NewInt(100)) != 0 {
+		t.Fatalf("beneficiary balance = %d; want 100", bal)
+	}
+}
+
+func TestSelfDestruct8246EtherReceivedAfterDestruct(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	sender := common.Address{1}
+	beneficiary := common.Address{2}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructConstructor(beneficiary), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	// Ether sent to the already-destructed address, later in the same tx
+	// (no Finalise has happened yet).
+	statedb.AddBalance(addr, uint256.NewInt(42), tracing.BalanceChangeUnspecified)
+	statedb.Finalise(true)
+
+	if !statedb.Exist(addr) {
+		t.Fatalf("account should survive: it holds ether received after the self-destruct")
+	}
+	if bal := statedb.GetBalance(addr); bal.Cmp(uint256.NewInt(42)) != 0 {
+		t.Fatalf("balance = %d; want 42 (must not be burned)", bal)
+	}
+}
+
+func TestSelfDestruct8246PreExistingContractUnaffected(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(amsterdamTestChainConfig())
+	addr := common.Address{3}
+	beneficiary := common.Address{4}
+
+	statedb.CreateAccount(addr)
+	statedb.SetCode(addr, []byte{0x00}, tracing.CodeChangeUnspecified) // arbitrary non-empty code
+	statedb.SetState(addr, common.Hash{}, common.BytesToHash([]byte{1}))
+	statedb.AddBalance(addr, uint256.NewInt(100), tracing.BalanceChangeUnspecified)
+	statedb.Finalise(true) // ends the "creation" tx: newContract resets to false
+
+	// Now self-destruct it, in a later "transaction" - EIP-6780/8246 must
+	// leave it exactly as a plain balance transfer, no deletion/reset at all.
+	balBefore := *statedb.GetBalance(addr)
+	statedb.SubBalance(addr, &balBefore, tracing.BalanceChangeUnspecified)
+	statedb.AddBalance(beneficiary, &balBefore, tracing.BalanceChangeUnspecified)
+	bal, changed := evm.StateDB.SelfDestruct8246(addr)
+	if changed {
+		t.Fatalf("changed = true; want false for a pre-existing contract (EIP-6780 no-op case)")
+	}
+	if bal.Sign() != 0 {
+		t.Fatalf("returned balance = %d; want 0 (already transferred away by the caller, as opSelfdestruct6780 would)", &bal)
+	}
+	statedb.Finalise(true)
+
+	if !statedb.Exist(addr) {
+		t.Fatalf("pre-existing contract must not be deleted by EIP-8246")
+	}
+	if statedb.GetCodeSize(addr) == 0 {
+		t.Fatalf("code must survive: EIP-8246 only affects same-tx-created contracts")
+	}
+	if got := statedb.GetState(addr, common.Hash{}); got != common.BytesToHash([]byte{1}) {
+		t.Fatalf("slot 0 = %s; want unchanged", got)
+	}
+}
+
+func TestSelfDestruct8246PreAmsterdamStillBurns(t *testing.T) {
+	evm, statedb := newSelfDestruct8246TestEVM(params.TestChainConfig)
+	sender := common.Address{1}
+	statedb.AddBalance(sender, uint256.NewInt(1000), tracing.BalanceChangeUnspecified)
+
+	_, addr, _, err := evm.Create(sender, selfDestructToSelfConstructor(), 1_000_000, uint256.NewInt(100))
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	statedb.Finalise(true)
+
+	if statedb.Exist(addr) {
+		t.Fatalf("pre-Amsterdam: account should still be fully deleted (the burn EIP-8246 removes)")
 	}
 }

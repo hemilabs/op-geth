@@ -166,9 +166,11 @@ func (e *AccountAccess) validate() error {
 		return errors.New("nonce changes not in ascending order by tx index")
 	}
 
-	// Convert code change
+	// Convert code change. No fork context is available here, so bound
+	// against the largest possible contract size (EIP-7954) rather than
+	// reject a valid post-Amsterdam code change.
 	if len(e.Code) == 1 {
-		if len(e.Code[0].Code) > params.MaxCodeSize {
+		if len(e.Code[0].Code) > params.MaxCodeSizeEIP7954 {
 			return errors.New("code change contained oversized code")
 		}
 	}

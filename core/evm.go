@@ -66,6 +66,10 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 	if config.IsOptimismIsthmus(header.Time) {
 		operatorCostFn = types.NewOperatorCostFunc(config, statedb)
 	}
+	var slotNumber uint64
+	if header.SlotNumber != nil {
+		slotNumber = *header.SlotNumber
+	}
 	return vm.BlockContext{
 		CanTransfer: CanTransfer,
 		Transfer:    Transfer,
@@ -78,6 +82,7 @@ func NewEVMBlockContext(header *types.Header, chain ChainContext, author *common
 		BlobBaseFee: blobBaseFee,
 		GasLimit:    header.GasLimit,
 		Random:      random,
+		SlotNumber:  slotNumber,
 
 		// OP-Stack additions
 		L1CostFunc:       types.NewL1CostFunc(config, statedb),

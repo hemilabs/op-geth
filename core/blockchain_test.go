@@ -3695,6 +3695,172 @@ func testCreateThenDelete(t *testing.T, config *params.ChainConfig) {
 	}
 }
 
+// TestSelfDestruct8246Blockchain runs a real block through InsertChain
+// containing a single contract-creation transaction whose constructor
+// SSTOREs a slot and then SELFDESTRUCTs to its own address, under an
+// Amsterdam-active chain config. It checks - via the reloaded post-import
+// state, exercising the full block-building/receipt/trie-commit pipeline,
+// not just in-memory StateDB calls - that the account survives with its
+// endowment intact, nonce reset to 0, and code/storage cleared.
+func TestSelfDestruct8246Blockchain(t *testing.T) {
+	var (
+		config  = *params.MergedTestChainConfig
+		engine  = beacon.New(ethash.NewFaker())
+		key, _  = crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+		addr    = crypto.PubkeyToAddress(key.PublicKey)
+		created = crypto.CreateAddress(addr, 0)
+		funds   = new(big.Int).Mul(common.Big1, big.NewInt(params.Ether))
+	)
+	zero := uint64(0)
+	config.AmsterdamTime = &zero
+	config.BlobScheduleConfig.Amsterdam = params.DefaultOsakaBlobConfig
+	signer := types.LatestSigner(&config)
+
+	// Constructor: SSTORE(0, 1); SELFDESTRUCT(ADDRESS).
+	initCode := []byte{
+		byte(vm.PUSH1), 0x1,
+		byte(vm.PUSH1), 0x0,
+		byte(vm.SSTORE),
+		byte(vm.ADDRESS),
+		byte(vm.SELFDESTRUCT),
+	}
+
+	gspec := &Genesis{
+		Config: &config,
+		Alloc: types.GenesisAlloc{
+			addr: {Balance: funds},
+		},
+	}
+	endowment := big.NewInt(1_000_000_000)
+	_, blocks, _ := GenerateChainWithGenesis(gspec, engine, 1, func(i int, b *BlockGen) {
+		tx, err := types.SignNewTx(key, signer, &types.LegacyTx{
+			Nonce:    0,
+			GasPrice: new(big.Int).Set(b.header.BaseFee),
+			Gas:      1_000_000,
+			Value:    endowment,
+			Data:     initCode,
+		})
+		if err != nil {
+			t.Fatalf("sign tx: %v", err)
+		}
+		b.AddTx(tx)
+	})
+
+	chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, t.Context())
+	if err != nil {
+		t.Fatalf("failed to create tester chain: %v", err)
+	}
+	defer chain.Stop()
+	if n, err := chain.InsertChain(blocks); err != nil {
+		t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+	}
+
+	statedb, err := chain.State()
+	if err != nil {
+		t.Fatalf("chain.State: %v", err)
+	}
+	if !statedb.Exist(created) {
+		t.Fatalf("created account should survive its own self-destruct-to-self (endowment preserved it)")
+	}
+	if got := statedb.GetBalance(created); got.ToBig().Cmp(endowment) != 0 {
+		t.Fatalf("balance = %v; want %v", got, endowment)
+	}
+	if got := statedb.GetNonce(created); got != 0 {
+		t.Fatalf("nonce = %d; want 0", got)
+	}
+	if got := statedb.GetCodeHash(created); got != types.EmptyCodeHash {
+		t.Fatalf("code hash = %s; want empty", got)
+	}
+	if got := statedb.GetState(created, common.Hash{}); got != (common.Hash{}) {
+		t.Fatalf("slot 0 = %s; want zero (storage must be cleared)", got)
+	}
+}
+
+// TestEIP7778BlockGasUsedIsGross builds a block containing a refund-heavy
+// transaction under Amsterdam, checks the resulting header.GasUsed reflects
+// gross (pre-refund) usage, and that an independent validator can re-import
+// and validate the block (exercising block_validator.go's GasUsed equality
+// check end to end).
+func TestEIP7778BlockGasUsedIsGross(t *testing.T) {
+	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	addr := crypto.PubkeyToAddress(key.PublicKey)
+	target := common.Address{0xAA}
+	funds := new(big.Int).Mul(common.Big1, big.NewInt(params.Ether))
+
+	// PUSH1 0; PUSH1 0; SSTORE; STOP - clears an existing nonzero slot, earning
+	// the EIP-8038 storage-clear refund.
+	code := []byte{byte(vm.PUSH1), 0x0, byte(vm.PUSH1), 0x0, byte(vm.SSTORE), byte(vm.STOP)}
+
+	build := func(t *testing.T, config *params.ChainConfig) *types.Block {
+		engine := beacon.New(ethash.NewFaker())
+		signer := types.LatestSigner(config)
+		gspec := &Genesis{
+			Config: config,
+			Alloc: types.GenesisAlloc{
+				addr:   {Balance: funds},
+				target: {Code: code, Storage: map[common.Hash]common.Hash{{}: common.BytesToHash([]byte{1})}},
+			},
+		}
+		_, blocks, _ := GenerateChainWithGenesis(gspec, engine, 1, func(i int, b *BlockGen) {
+			tx, err := types.SignNewTx(key, signer, &types.LegacyTx{
+				Nonce:    0,
+				GasPrice: new(big.Int).Set(b.header.BaseFee),
+				Gas:      100_000,
+				To:       &target,
+			})
+			if err != nil {
+				t.Fatalf("sign tx: %v", err)
+			}
+			b.AddTx(tx)
+		})
+		block := blocks[0]
+
+		chain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, t.Context())
+		if err != nil {
+			t.Fatalf("failed to create tester chain: %v", err)
+		}
+		defer chain.Stop()
+		if n, err := chain.InsertChain(blocks); err != nil {
+			t.Fatalf("block %d: failed to insert into chain: %v", n, err)
+		}
+		receipts := chain.GetReceiptsByHash(block.Hash())
+		if len(receipts) != 1 {
+			t.Fatalf("got %d receipts; want 1", len(receipts))
+		}
+		if receipts[0].GasUsed != block.GasUsed() {
+			t.Fatalf("receipt.GasUsed = %d; want block.GasUsed() = %d (single tx in block)", receipts[0].GasUsed, block.GasUsed())
+		}
+
+		// Independent re-import must also succeed: exercises block_validator.go's
+		// re-execution equality check against the header's committed GasUsed.
+		vchain, err := NewBlockChain(rawdb.NewMemoryDatabase(), gspec, nil, engine, nil, nil, nil, t.Context())
+		if err != nil {
+			t.Fatalf("failed to create validator chain: %v", err)
+		}
+		defer vchain.Stop()
+		if n, err := vchain.InsertChain(blocks); err != nil {
+			t.Fatalf("validator: block %d: failed to insert into chain: %v", n, err)
+		}
+		if got := vchain.CurrentBlock().GasUsed; got != block.GasUsed() {
+			t.Fatalf("validator GasUsed = %d; want %d", got, block.GasUsed())
+		}
+		return block
+	}
+
+	preConfig := *params.MergedTestChainConfig
+	preBlock := build(t, &preConfig)
+
+	amsterdamConfig := *params.MergedTestChainConfig
+	zero := uint64(0)
+	amsterdamConfig.AmsterdamTime = &zero
+	amsterdamConfig.BlobScheduleConfig.Amsterdam = params.DefaultOsakaBlobConfig
+	amsterdamBlock := build(t, &amsterdamConfig)
+
+	if amsterdamBlock.GasUsed() <= preBlock.GasUsed() {
+		t.Fatalf("Amsterdam GasUsed = %d; want strictly more than pre-Amsterdam %d (gross vs net)", amsterdamBlock.GasUsed(), preBlock.GasUsed())
+	}
+}
+
 func TestDeleteThenCreate(t *testing.T) {
 	var (
 		engine      = ethash.NewFaker()

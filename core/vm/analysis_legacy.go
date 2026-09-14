@@ -76,6 +76,26 @@ func codeBitmapInternal(code, bits BitVec) BitVec {
 	for pc := uint64(0); pc < uint64(len(code)); {
 		op := OpCode(code[pc])
 		pc++
+		if op == DUPN || op == SWAPN || op == EXCHANGE {
+			// EIP-8024: these opcodes carry a 1-byte immediate operand, except when
+			// that immediate would itself be JUMPDEST or a PUSH1-PUSH32 opcode value
+			// - the EIP forbids those specific immediate values precisely so this
+			// bitmap can skip the immediate in every other case while still
+			// reproducing byte-for-byte the JUMPDEST set that analysis without any
+			// knowledge of these opcodes would have produced.
+			if pc < uint64(len(code)) {
+				next := code[pc]
+				disallowed := dupSwapNImmediateDisallowed(next)
+				if op == EXCHANGE {
+					disallowed = exchangeImmediateDisallowed(next)
+				}
+				if !disallowed {
+					bits.set1(pc)
+					pc++
+				}
+			}
+			continue
+		}
 		if int8(op) < int8(PUSH1) { // If not PUSH (the int8(op) > int(PUSH32) is always false).
 			continue
 		}

@@ -57,3 +57,44 @@ func (gp *GasPool) SetGas(gas uint64) {
 func (gp *GasPool) String() string {
 	return fmt.Sprintf("%d", *gp)
 }
+
+// StateGasPool tracks the "state-gas" dimension introduced by EIP-8037
+// (Amsterdam/Glamsterdam): a second, independently-tracked block-level gas
+// pool that meters state growth, seeded from the same block gas limit as the
+// execution GasPool rather than a distinct on-chain limit. Identical
+// semantics to GasPool; kept as its own type (not an alias) so call sites
+// can't accidentally mix the two pools up.
+type StateGasPool uint64
+
+// AddGas makes state-gas available.
+func (gp *StateGasPool) AddGas(amount uint64) *StateGasPool {
+	if uint64(*gp) > math.MaxUint64-amount {
+		panic("state gas pool pushed above uint64")
+	}
+	*(*uint64)(gp) += amount
+	return gp
+}
+
+// SubGas deducts the given amount from the state-gas pool if enough is
+// available and returns an error otherwise.
+func (gp *StateGasPool) SubGas(amount uint64) error {
+	if uint64(*gp) < amount {
+		return ErrGasLimitReached
+	}
+	*(*uint64)(gp) -= amount
+	return nil
+}
+
+// Gas returns the amount of state-gas remaining in the pool.
+func (gp *StateGasPool) Gas() uint64 {
+	return uint64(*gp)
+}
+
+// SetGas sets the amount of state-gas with the provided number.
+func (gp *StateGasPool) SetGas(gas uint64) {
+	*(*uint64)(gp) = gas
+}
+
+func (gp *StateGasPool) String() string {
+	return fmt.Sprintf("%d", *gp)
+}

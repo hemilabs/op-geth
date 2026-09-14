@@ -84,6 +84,12 @@ type stateObject struct {
 	// object was previously existent and is being deployed as a contract within
 	// the current transaction.
 	newContract bool
+
+	// selfDestructedNoBurn is set alongside selfDestructed for an EIP-8246
+	// (Amsterdam) self-destruct: instead of being deleted at Finalise, the
+	// object is reset in place (nonce/code/storage cleared, balance kept) -
+	// see stateObject.resetForSelfDestruct8246 and StateDB.Finalise.
+	selfDestructedNoBurn bool
 }
 
 // empty returns whether the account is considered empty.
@@ -112,6 +118,53 @@ func newObject(db *StateDB, address common.Address, acct *types.StateAccount) *s
 
 func (s *stateObject) markSelfdestructed() {
 	s.selfDestructed = true
+}
+
+func (s *stateObject) markSelfdestructedNoBurn() {
+	s.selfDestructed = true
+	s.selfDestructedNoBurn = true
+}
+
+// resetForSelfDestruct8246 implements EIP-8246's finalization-time behavior
+// for a same-tx-created contract marked selfDestructedNoBurn: instead of the
+// account being deleted, its nonce is reset to 0, code is cleared, and all
+// storage is cleared - balance is left untouched. It is only ever called
+// from StateDB.Finalise, after the transaction's journal has already served
+// its purpose, so it deliberately bypasses the journalling setters (SetNonce/
+// SetCode/etc.) - there is nothing left to revert into at this point, and
+// journalling here would mutate s.db.journal.dirties while Finalise is
+// ranging over it.
+//
+// This relies on the invariant (enforced by EIP-7610's collision check in
+// EVM.create, unconditional since Homestead) that any account with
+// newContract set - the same flag guarding EIP-6780/8246 eligibility - was
+// only ever created starting from an empty persisted storage root. So
+// "clearing all storage" here never needs to touch the trie/database: it is
+// purely resetting this stateObject's in-memory caches back to their
+// zero-value (freshly-created-object) state. The guard below double-checks
+// that invariant defensively; if it's ever violated, this returns false and
+// the caller must fall back to the normal delete-the-account path instead of
+// risking silently orphaning on-disk storage.
+func (s *stateObject) resetForSelfDestruct8246() bool {
+	if s.origin != nil && s.origin.Root != types.EmptyRootHash {
+		log.Error("EIP-8246 self-destruct on account with non-empty persisted storage root, falling back to deletion",
+			"address", s.address, "root", s.origin.Root)
+		return false
+	}
+	s.setNonce(0)
+	s.code = nil
+	s.data.CodeHash = types.EmptyCodeHash.Bytes()
+	s.dirtyCode = false
+	s.trie = nil
+	s.data.Root = types.EmptyRootHash
+	s.originStorage = make(Storage)
+	s.dirtyStorage = make(Storage)
+	s.pendingStorage = make(Storage)
+	s.uncommittedStorage = make(Storage)
+	s.selfDestructed = false
+	s.selfDestructedNoBurn = false
+	s.newContract = false
+	return true
 }
 
 func (s *stateObject) touch() {
@@ -481,19 +534,20 @@ func (s *stateObject) setBalance(amount *uint256.Int) {
 
 func (s *stateObject) deepCopy(db *StateDB) *stateObject {
 	obj := &stateObject{
-		db:                 db,
-		address:            s.address,
-		addrHash:           s.addrHash,
-		origin:             s.origin,
-		data:               s.data,
-		code:               s.code,
-		originStorage:      s.originStorage.Copy(),
-		pendingStorage:     s.pendingStorage.Copy(),
-		dirtyStorage:       s.dirtyStorage.Copy(),
-		uncommittedStorage: s.uncommittedStorage.Copy(),
-		dirtyCode:          s.dirtyCode,
-		selfDestructed:     s.selfDestructed,
-		newContract:        s.newContract,
+		db:                   db,
+		address:              s.address,
+		addrHash:             s.addrHash,
+		origin:               s.origin,
+		data:                 s.data,
+		code:                 s.code,
+		originStorage:        s.originStorage.Copy(),
+		pendingStorage:       s.pendingStorage.Copy(),
+		dirtyStorage:         s.dirtyStorage.Copy(),
+		uncommittedStorage:   s.uncommittedStorage.Copy(),
+		dirtyCode:            s.dirtyCode,
+		selfDestructed:       s.selfDestructed,
+		selfDestructedNoBurn: s.selfDestructedNoBurn,
+		newContract:          s.newContract,
 	}
 
 	switch s.trie.(type) {

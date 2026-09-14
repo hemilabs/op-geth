@@ -53,6 +53,7 @@ type BuildPayloadArgs struct {
 	GasLimit      *uint64              // Optimism addition: override gas limit of the block to build
 	EIP1559Params []byte               // Optimism addition: encodes Holocene EIP-1559 params
 	MinBaseFee    *uint64              // Optimism addition: encodes minimum base fee
+	SlotNumber    *uint64              // The provided slot number (EIP-7843, Amsterdam)
 }
 
 // Id computes an 8-byte identifier by hashing the components of the payload arguments.
@@ -83,6 +84,9 @@ func (args *BuildPayloadArgs) Id() engine.PayloadID {
 	}
 	if args.MinBaseFee != nil {
 		binary.Write(hasher, binary.BigEndian, *args.MinBaseFee)
+	}
+	if args.SlotNumber != nil {
+		binary.Write(hasher, binary.BigEndian, *args.SlotNumber)
 	}
 
 	var out engine.PayloadID
@@ -315,6 +319,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 			gasLimit:      args.GasLimit,
 			eip1559Params: args.EIP1559Params,
 			minBaseFee:    args.MinBaseFee,
+			slotNumber:    args.SlotNumber,
 			// No RPC requests allowed.
 			rpcCtx: nil,
 		}
@@ -345,6 +350,7 @@ func (miner *Miner) buildPayload(args *BuildPayloadArgs, witness bool) (*Payload
 		gasLimit:      args.GasLimit,
 		eip1559Params: args.EIP1559Params,
 		minBaseFee:    args.MinBaseFee,
+		slotNumber:    args.SlotNumber,
 	}
 
 	// Since we skip building the empty block when using the tx pool, we need to explicitly

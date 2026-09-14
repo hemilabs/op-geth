@@ -77,6 +77,40 @@ func TestBurn(t *testing.T) {
 	}
 }
 
+// TestNoBurn8246 checks that EIP-8246's SelfDestruct8246 - unlike the legacy
+// SelfDestruct6780 exercised by TestBurn - never triggers a
+// BalanceDecreaseSelfdestructBurn event: ether sent to an EIP-8246-destructed
+// account after its self-destruct is preserved, not burned, so no burn event
+// should fire for it, on top of the balance genuinely surviving.
+func TestNoBurn8246(t *testing.T) {
+	var burned = new(uint256.Int)
+	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	hooked := NewHookedState(s, &tracing.Hooks{
+		OnBalanceChange: func(addr common.Address, prev, new *big.Int, reason tracing.BalanceChangeReason) {
+			if reason == tracing.BalanceDecreaseSelfdestructBurn {
+				burned.Add(burned, uint256.MustFromBig(prev))
+			}
+		},
+	})
+	addr := common.Address{0xdd}
+	hooked.CreateAccount(addr)
+	hooked.CreateContract(addr)
+	hooked.SelfDestruct8246(addr)
+	// Ether sent post-selfdestruct, same tx.
+	hooked.AddBalance(addr, uint256.NewInt(200), tracing.BalanceChangeUnspecified)
+	hooked.Finalise(true)
+	if got := s.GetBalance(addr); got.Uint64() != 200 {
+		t.Fatalf("balance = %d; want 200 (must survive)", got.Uint64())
+	}
+	if _, err := s.Commit(0, true, false); err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	if !burned.IsZero() {
+		t.Fatalf("burn-count wrong, have %v want 0 (EIP-8246 must not burn)", burned)
+	}
+}
+
 // TestHooks is a basic sanity-check of all hooks
 func TestHooks(t *testing.T) {
 	inner, _ := New(types.EmptyRootHash, NewDatabaseForTesting())

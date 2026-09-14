@@ -322,6 +322,7 @@ func (ch selfDestructChange) revert(s *StateDB) {
 	obj := s.getStateObject(ch.account)
 	if obj != nil {
 		obj.selfDestructed = false
+		obj.selfDestructedNoBurn = false
 	}
 }
 

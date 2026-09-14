@@ -134,7 +134,9 @@ func Transaction(ctx *cli.Context) error {
 		}
 		// Check intrinsic gas
 		rules := chainConfig.Rules(common.Big0, true, 0)
-		gas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai)
+		touchesDifferentAccount := tx.To() != nil && *tx.To() != r.Address
+		chargeValueCost := touchesDifferentAccount && tx.Value().Sign() != 0
+		gas, err := core.IntrinsicGas(tx.Data(), tx.AccessList(), tx.SetCodeAuthorizations(), tx.To() == nil, rules.IsHomestead, rules.IsIstanbul, rules.IsShanghai, rules.IsAmsterdam, touchesDifferentAccount, chargeValueCost)
 		if err != nil {
 			r.Error = err
 			results = append(results, r)
@@ -148,7 +150,7 @@ func Transaction(ctx *cli.Context) error {
 		}
 		// For Prague txs, validate the floor data gas.
 		if rules.IsPrague {
-			floorDataGas, err := core.FloorDataGas(tx.Data())
+			floorDataGas, err := core.FloorDataGas(tx.Data(), tx.To() == nil, rules.IsAmsterdam, touchesDifferentAccount, chargeValueCost)
 			if err != nil {
 				r.Error = err
 				results = append(results, r)
@@ -180,10 +182,10 @@ func Transaction(ctx *cli.Context) error {
 			r.Error = errors.New("gas * maxFeePerGas exceeds 256 bits")
 		}
 		// Check whether the init code size has been exceeded.
-		if chainConfig.IsShanghai(new(big.Int), 0) && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
+		if chainConfig.IsShanghai(new(big.Int), 0) && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSizeFor(chainConfig.IsAmsterdam(new(big.Int), 0)) {
 			r.Error = errors.New("max initcode size exceeded")
 		}
-		if chainConfig.IsOsaka(new(big.Int), 0) && tx.Gas() > params.MaxTxGas {
+		if chainConfig.IsOsaka(new(big.Int), 0) && !chainConfig.IsAmsterdam(new(big.Int), 0) && tx.Gas() > params.MaxTxGas {
 			r.Error = errors.New("gas limit exceeds maximum")
 		}
 		results = append(results, r)

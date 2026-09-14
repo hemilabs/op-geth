@@ -35,6 +35,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 		BlobGasUsed      *hexutil.Uint64         `json:"blobGasUsed"`
 		ExcessBlobGas    *hexutil.Uint64         `json:"excessBlobGas"`
 		ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
+		SlotNumber       *hexutil.Uint64         `json:"slotNumber,omitempty"`
 		WithdrawalsRoot  *common.Hash            `json:"withdrawalsRoot,omitempty"`
 	}
 	var enc ExecutableData
@@ -61,6 +62,7 @@ func (e ExecutableData) MarshalJSON() ([]byte, error) {
 	enc.BlobGasUsed = (*hexutil.Uint64)(e.BlobGasUsed)
 	enc.ExcessBlobGas = (*hexutil.Uint64)(e.ExcessBlobGas)
 	enc.ExecutionWitness = e.ExecutionWitness
+	enc.SlotNumber = (*hexutil.Uint64)(e.SlotNumber)
 	enc.WithdrawalsRoot = e.WithdrawalsRoot
 	return json.Marshal(&enc)
 }
@@ -86,6 +88,7 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 		BlobGasUsed      *hexutil.Uint64         `json:"blobGasUsed"`
 		ExcessBlobGas    *hexutil.Uint64         `json:"excessBlobGas"`
 		ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
+		SlotNumber       *hexutil.Uint64         `json:"slotNumber,omitempty"`
 		WithdrawalsRoot  *common.Hash            `json:"withdrawalsRoot,omitempty"`
 	}
 	var dec ExecutableData
@@ -162,6 +165,9 @@ func (e *ExecutableData) UnmarshalJSON(input []byte) error {
 	}
 	if dec.ExecutionWitness != nil {
 		e.ExecutionWitness = dec.ExecutionWitness
+	}
+	if dec.SlotNumber != nil {
+		e.SlotNumber = (*uint64)(dec.SlotNumber)
 	}
 	if dec.WithdrawalsRoot != nil {
 		e.WithdrawalsRoot = dec.WithdrawalsRoot
