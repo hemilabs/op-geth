@@ -341,3 +341,70 @@ func TestAmsterdamExecutionGasCapped(t *testing.T) {
 		t.Fatalf("UsedGas = %d; want %d (MaxTxGas)", result.UsedGas, params.MaxTxGas)
 	}
 }
+
+// TestInitCodeSizeLimitEIP7954 checks that a contract-creation transaction's
+// init code (msg.Data) is admitted against params.MaxInitCodeSizeFor:
+// unchanged pre-Amsterdam, raised from Amsterdam onwards.
+func TestInitCodeSizeLimitEIP7954(t *testing.T) {
+	newConfig := func(amsterdam bool) *params.ChainConfig {
+		cfg := *params.MergedTestChainConfig
+		if amsterdam {
+			zero := uint64(0)
+			cfg.AmsterdamTime = &zero
+		}
+		return &cfg
+	}
+	run := func(t *testing.T, cfg *params.ChainConfig, size int) (*ExecutionResult, error) {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		sender := common.Address{1}
+		statedb.AddBalance(sender, uint256.NewInt(1_000_000_000_000_000_000), tracing.BalanceChangeUnspecified)
+		statedb.Finalise(true)
+
+		random := common.Hash{}
+		vmctx := vm.BlockContext{
+			CanTransfer: func(vm.StateDB, common.Address, *uint256.Int) bool { return true },
+			Transfer:    func(vm.StateDB, common.Address, common.Address, *uint256.Int) {},
+			BlockNumber: big.NewInt(0),
+			BaseFee:     big.NewInt(0),
+			Random:      &random,
+		}
+		evm := vm.NewEVM(vmctx, statedb, cfg, vm.Config{NoBaseFee: true})
+		msg := &Message{
+			From:      sender,
+			To:        nil,
+			Value:     big.NewInt(0),
+			Data:      make([]byte, size),
+			GasLimit:  params.MaxTxGas,
+			GasPrice:  big.NewInt(0),
+			GasFeeCap: big.NewInt(0),
+			GasTipCap: big.NewInt(0),
+		}
+		return ApplyMessage(evm, msg, new(GasPool).AddGas(msg.GasLimit))
+	}
+
+	t.Run("pre-Amsterdam at old limit", func(t *testing.T) {
+		if result, err := run(t, newConfig(false), params.MaxInitCodeSize); err != nil || result.Err != nil {
+			t.Fatalf("unexpected error: %v / %v", err, result)
+		}
+	})
+	t.Run("pre-Amsterdam over old limit", func(t *testing.T) {
+		if _, err := run(t, newConfig(false), params.MaxInitCodeSize+1); !errors.Is(err, ErrMaxInitCodeSizeExceeded) {
+			t.Fatalf("got err %v, want %v", err, ErrMaxInitCodeSizeExceeded)
+		}
+	})
+	t.Run("Amsterdam between old and new limit", func(t *testing.T) {
+		if result, err := run(t, newConfig(true), params.MaxInitCodeSize+1); err != nil || result.Err != nil {
+			t.Fatalf("unexpected error: %v / %v", err, result)
+		}
+	})
+	t.Run("Amsterdam at new limit", func(t *testing.T) {
+		if result, err := run(t, newConfig(true), params.MaxInitCodeSizeEIP7954); err != nil || result.Err != nil {
+			t.Fatalf("unexpected error: %v / %v", err, result)
+		}
+	})
+	t.Run("Amsterdam over new limit", func(t *testing.T) {
+		if _, err := run(t, newConfig(true), params.MaxInitCodeSizeEIP7954+1); !errors.Is(err, ErrMaxInitCodeSizeExceeded) {
+			t.Fatalf("got err %v, want %v", err, ErrMaxInitCodeSizeExceeded)
+		}
+	})
+}

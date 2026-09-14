@@ -133,8 +133,8 @@ func ValidateTransaction(tx *types.Transaction, head *types.Header, signer types
 		return fmt.Errorf("%w: type %d rejected, pool not yet in Prague", core.ErrTxTypeNotSupported, tx.Type())
 	}
 	// Check whether the init code size has been exceeded
-	if rules.IsShanghai && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
-		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), params.MaxInitCodeSize)
+	if maxInitCodeSize := params.MaxInitCodeSizeFor(rules.IsAmsterdam); rules.IsShanghai && tx.To() == nil && len(tx.Data()) > maxInitCodeSize {
+		return fmt.Errorf("%w: code size %v, limit %v", core.ErrMaxInitCodeSizeExceeded, len(tx.Data()), maxInitCodeSize)
 	}
 	// EIP-8037 redefines MaxTxGas to bound only a transaction's execution-gas
 	// portion once Amsterdam is active - see state_transition.go's preCheck.

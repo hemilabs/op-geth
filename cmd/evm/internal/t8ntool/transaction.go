@@ -182,7 +182,7 @@ func Transaction(ctx *cli.Context) error {
 			r.Error = errors.New("gas * maxFeePerGas exceeds 256 bits")
 		}
 		// Check whether the init code size has been exceeded.
-		if chainConfig.IsShanghai(new(big.Int), 0) && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSize {
+		if chainConfig.IsShanghai(new(big.Int), 0) && tx.To() == nil && len(tx.Data()) > params.MaxInitCodeSizeFor(chainConfig.IsAmsterdam(new(big.Int), 0)) {
 			r.Error = errors.New("max initcode size exceeded")
 		}
 		if chainConfig.IsOsaka(new(big.Int), 0) && !chainConfig.IsAmsterdam(new(big.Int), 0) && tx.Gas() > params.MaxTxGas {

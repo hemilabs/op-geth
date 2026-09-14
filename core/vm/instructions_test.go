@@ -1194,6 +1194,57 @@ func amsterdamTestChainConfig() *params.ChainConfig {
 	return &cfg
 }
 
+// TestEIP7954MaxCodeSize checks that the deployed-code size limit follows
+// params.MaxCodeSizeFor: unchanged pre-Amsterdam, raised from Amsterdam
+// onwards (EIP-7954).
+func TestEIP7954MaxCodeSize(t *testing.T) {
+	random := common.Hash{}
+	newEVM := func(amsterdam bool) *EVM {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		cfg := params.TestChainConfig
+		if amsterdam {
+			cfg = amsterdamTestChainConfig()
+		}
+		vmctx := BlockContext{
+			CanTransfer: func(StateDB, common.Address, *uint256.Int) bool { return true },
+			Transfer:    func(StateDB, common.Address, common.Address, *uint256.Int) {},
+			BlockNumber: big.NewInt(0),
+			Random:      &random,
+		}
+		return NewEVM(vmctx, statedb, cfg, Config{})
+	}
+	// initcode that RETURNs `size` zero-filled bytes, regardless of content.
+	returnCodeOfSize := func(size uint64) []byte {
+		return append(append([]byte{byte(PUSH3), byte(size >> 16), byte(size >> 8), byte(size)}, byte(PUSH1), 0x00), byte(RETURN))
+	}
+	tests := []struct {
+		name      string
+		size      uint64
+		amsterdam bool
+		wantErr   error
+	}{
+		{"pre-Amsterdam at old limit", params.MaxCodeSize, false, nil},
+		{"pre-Amsterdam over old limit", params.MaxCodeSize + 1, false, ErrMaxCodeSizeExceeded},
+		{"Amsterdam between old and new limit", params.MaxCodeSize + 1, true, nil},
+		{"Amsterdam at new limit", params.MaxCodeSizeEIP7954, true, nil},
+		{"Amsterdam over new limit", params.MaxCodeSizeEIP7954 + 1, true, ErrMaxCodeSizeExceeded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			evm := newEVM(tt.amsterdam)
+			initcode := returnCodeOfSize(uint64(tt.size))
+			_, _, _, err := evm.Create(common.Address{1}, initcode, 300_000_000, new(uint256.Int))
+			if tt.wantErr == nil {
+				if err != nil {
+					t.Fatalf("unexpected error: %v", err)
+				}
+			} else if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("got err %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestEmitTransferLog(t *testing.T) {
 	random := common.Hash{}
 	newEVM := func(config *params.ChainConfig) (*EVM, *state.StateDB) {

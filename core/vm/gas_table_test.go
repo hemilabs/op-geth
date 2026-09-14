@@ -366,3 +366,54 @@ func TestCreateGas(t *testing.T) {
 		}
 	}
 }
+
+// TestEIP7954InitCodeSizeLimit checks that CREATE/CREATE2's initcode size
+// limit follows params.MaxInitCodeSizeFor: unchanged pre-Amsterdam, raised
+// from Amsterdam onwards (EIP-7954).
+func TestEIP7954InitCodeSizeLimit(t *testing.T) {
+	random := common.Hash{}
+	newEnv := func(amsterdam bool) (*EVM, *Contract) {
+		statedb, _ := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
+		cfg := params.TestChainConfig
+		if amsterdam {
+			cfg = amsterdamTestChainConfig()
+		}
+		evm := NewEVM(BlockContext{BlockNumber: big.NewInt(0), Random: &random}, statedb, cfg, Config{})
+		contract := NewContract(common.Address{}, common.Address{}, new(uint256.Int), math.MaxInt64, nil)
+		return evm, contract
+	}
+	stackWithSize := func(size uint64) *Stack {
+		st := newstack()
+		st.push(uint256.NewInt(size)) // size
+		st.push(new(uint256.Int))     // offset
+		st.push(new(uint256.Int))     // value
+		return st
+	}
+	tests := []struct {
+		name      string
+		size      uint64
+		amsterdam bool
+		wantErr   error
+	}{
+		{"pre-Amsterdam at old limit", params.MaxInitCodeSize, false, nil},
+		{"pre-Amsterdam over old limit", params.MaxInitCodeSize + 1, false, ErrMaxInitCodeSizeExceeded},
+		{"Amsterdam between old and new limit", params.MaxInitCodeSize + 1, true, nil},
+		{"Amsterdam at new limit", params.MaxInitCodeSizeEIP7954, true, nil},
+		{"Amsterdam over new limit", params.MaxInitCodeSizeEIP7954 + 1, true, ErrMaxInitCodeSizeExceeded},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, gasFn := range []func(*EVM, *Contract, *Stack, *Memory, uint64) (uint64, error){gasCreateEip3860, gasCreate2Eip3860} {
+				evm, contract := newEnv(tt.amsterdam)
+				_, err := gasFn(evm, contract, stackWithSize(uint64(tt.size)), NewMemory(), 0)
+				if tt.wantErr == nil {
+					if err != nil {
+						t.Fatalf("unexpected error: %v", err)
+					}
+				} else if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("got err %v, want %v", err, tt.wantErr)
+				}
+			}
+		})
+	}
+}

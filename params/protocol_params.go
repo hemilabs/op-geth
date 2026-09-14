@@ -216,6 +216,10 @@ const (
 	MaxCodeSize     = 24576           // Maximum bytecode to permit for a contract
 	MaxInitCodeSize = 2 * MaxCodeSize // Maximum initcode to permit in a creation transaction and create instructions
 
+	// EIP-7954 raises the code/initcode size limits from Amsterdam onwards.
+	MaxCodeSizeEIP7954     = 65536
+	MaxInitCodeSizeEIP7954 = 2 * MaxCodeSizeEIP7954
+
 	// Precompiled contract gas prices
 
 	EcrecoverGas        uint64 = 3000 // Elliptic curve sender recovery gas price
@@ -290,6 +294,21 @@ const (
 
 	MaxBlockSize = 8_388_608 // maximum size of an RLP-encoded block
 )
+
+// MaxCodeSizeFor returns the maximum permitted contract bytecode size,
+// raised by EIP-7954 from the Amsterdam fork onwards.
+func MaxCodeSizeFor(isAmsterdam bool) int {
+	if isAmsterdam {
+		return MaxCodeSizeEIP7954
+	}
+	return MaxCodeSize
+}
+
+// MaxInitCodeSizeFor returns the maximum permitted initcode size, raised by
+// EIP-7954 from the Amsterdam fork onwards.
+func MaxInitCodeSizeFor(isAmsterdam bool) int {
+	return 2 * MaxCodeSizeFor(isAmsterdam)
+}
 
 // Bls12381G1MultiExpDiscountTable is the gas discount table for BLS12-381 G1 multi exponentiation operation
 var Bls12381G1MultiExpDiscountTable = [128]uint64{1000, 949, 848, 797, 764, 750, 738, 728, 719, 712, 705, 698, 692, 687, 682, 677, 673, 669, 665, 661, 658, 654, 651, 648, 645, 642, 640, 637, 635, 632, 630, 627, 625, 623, 621, 619, 617, 615, 613, 611, 609, 608, 606, 604, 603, 601, 599, 598, 596, 595, 593, 592, 591, 589, 588, 586, 585, 584, 582, 581, 580, 579, 577, 576, 575, 574, 573, 572, 570, 569, 568, 567, 566, 565, 564, 563, 562, 561, 560, 559, 558, 557, 556, 555, 554, 553, 552, 551, 550, 549, 548, 547, 547, 546, 545, 544, 543, 542, 541, 540, 540, 539, 538, 537, 536, 536, 535, 534, 533, 532, 532, 531, 530, 529, 528, 528, 527, 526, 525, 525, 524, 523, 522, 522, 521, 520, 520, 519}
