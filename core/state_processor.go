@@ -176,7 +176,12 @@ func ApplyTransactionWithEVM(msg *Message, gp *GasPool, sgp *StateGasPool, state
 	} else {
 		root = statedb.IntermediateRoot(evm.ChainConfig().IsEIP158(blockNumber)).Bytes()
 	}
-	*usedGas += result.UsedGas
+	// EIP-7778: block-level gas accounting uses gross (pre-refund) usage.
+	if evm.ChainConfig().IsAmsterdam(blockNumber, blockTime) {
+		*usedGas += result.MaxUsedGas
+	} else {
+		*usedGas += result.UsedGas
+	}
 
 	// Merge the tx-local access event into the "block-local" one, in order to collect
 	// all values, so that the witness can be built.
@@ -197,7 +202,11 @@ func MakeReceipt(evm *vm.EVM, result *ExecutionResult, statedb *state.StateDB, b
 		receipt.Status = types.ReceiptStatusSuccessful
 	}
 	receipt.TxHash = tx.Hash()
-	receipt.GasUsed = result.UsedGas
+	if config.IsAmsterdam(blockNumber, blockTime) {
+		receipt.GasUsed = result.MaxUsedGas
+	} else {
+		receipt.GasUsed = result.UsedGas
+	}
 
 	if tx.IsDepositTx() && config.IsOptimismRegolith(evm.Context.Time) {
 		// The actual nonce for deposit transactions is only recorded from Regolith onwards and

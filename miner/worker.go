@@ -60,6 +60,9 @@ var (
 	// OP-Stack addition
 	errSupervisorInFailsafe = errors.New("supervisor in failsafe")
 
+	// EIP-7778: gross (pre-refund) gas usage pushed the block over its gas limit.
+	errBlockGasLimitReached = errors.New("block gas limit reached")
+
 	txConditionalRejectedCounter = metrics.NewRegisteredCounter("miner/transactionConditional/rejected", nil)
 	txConditionalMinedTimer      = metrics.NewRegisteredTimer("miner/transactionConditional/elapsedtime", nil)
 )
@@ -536,6 +539,9 @@ func (miner *Miner) commitBlobTransaction(env *environment, tx *types.Transactio
 
 // applyTransaction runs the transaction. If execution fails, state and gas pool are reverted.
 func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*types.Receipt, error) {
+	if env.evm.ChainConfig().IsAmsterdam(env.header.Number, env.header.Time) {
+		return miner.applyTransactionEIP7778(env, tx)
+	}
 	var (
 		snap = env.state.Snapshot()
 		gp   = env.gasPool.Gas()
@@ -549,14 +555,37 @@ func (miner *Miner) applyTransaction(env *environment, tx *types.Transaction) (*
 	// already Finalised the state, which panics, and it left header.GasUsed inflated.)
 	receipt, err := core.ApplyTransactionWithStateGas(env.evm, env.gasPool, env.stateGasPool, env.state, env.header, tx, &env.header.GasUsed)
 	if err != nil {
-		// core.ApplyTransactionWithStateGas only returns an error before it Finalises/charges
-		// gas, so reverting state and the gas pools fully undoes the attempt and the
-		// snapshot is still valid; header.GasUsed was never incremented.
 		env.state.RevertToSnapshot(snap)
 		env.gasPool.SetGas(gp)
 		env.stateGasPool.SetGas(sgp)
 	}
 	return receipt, err
+}
+
+// applyTransactionEIP7778 is the Amsterdam counterpart of applyTransaction: it
+// speculatively executes tx against a copy of env's state, and only adopts
+// that copy (state, header.GasUsed, gas pools, evm) into env if the resulting
+// gross gas usage still fits the block's gas limit.
+func (miner *Miner) applyTransactionEIP7778(env *environment, tx *types.Transaction) (*types.Receipt, error) {
+	trialState := env.state.Copy()
+	header := *env.header
+	gasPool := new(core.GasPool).AddGas(env.gasPool.Gas())
+	stateGasPool := new(core.StateGasPool).AddGas(env.stateGasPool.Gas())
+	evm := vm.NewEVM(env.evm.Context, trialState, env.evm.ChainConfig(), env.evm.Config)
+
+	receipt, err := core.ApplyTransactionWithStateGas(evm, gasPool, stateGasPool, trialState, &header, tx, &header.GasUsed)
+	if err != nil {
+		return nil, err
+	}
+	if header.GasUsed > header.GasLimit {
+		return nil, errBlockGasLimitReached
+	}
+	env.state = trialState
+	env.header.GasUsed = header.GasUsed
+	env.gasPool.SetGas(gasPool.Gas())
+	env.stateGasPool.SetGas(stateGasPool.Gas())
+	env.evm = evm
+	return receipt, nil
 }
 
 // minPackableTxGas returns the cheapest a single transaction could possibly
@@ -745,6 +774,10 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 
 		err := miner.commitTransaction(env, tx)
 		switch {
+		case errors.Is(err, errBlockGasLimitReached):
+			log.Trace("Transaction's gross gas usage doesn't fit the block", "hash", ltx.Hash, "gasLimit", ltx.Gas)
+			txs.Pop()
+
 		case errors.Is(err, core.ErrNonceTooLow):
 			// New head notification data race between the transaction pool and miner, shift
 			log.Trace("Skipping transaction with low nonce", "hash", ltx.Hash, "sender", from, "nonce", tx.Nonce())

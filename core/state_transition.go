@@ -598,6 +598,7 @@ func (st *stateTransition) execute() (*ExecutionResult, error) {
 		}
 		result = &ExecutionResult{
 			UsedGas:    gasUsed,
+			MaxUsedGas: gasUsed,
 			Err:        fmt.Errorf("failed deposit: %w", err),
 			ReturnData: nil,
 		}
@@ -769,6 +770,7 @@ func (st *stateTransition) innerExecute() (*ExecutionResult, error) {
 		}
 		return &ExecutionResult{
 			UsedGas:    gasUsed,
+			MaxUsedGas: gasUsed,
 			Err:        vmerr,
 			ReturnData: ret,
 		}, nil
