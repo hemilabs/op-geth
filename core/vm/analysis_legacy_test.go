@@ -65,8 +65,7 @@ func TestJumpDestAnalysis(t *testing.T) {
 // immediate equal to JUMPDEST (0x5b) or in the PUSH1-PUSH32 range (0x60-0x7f)
 // must be left as its own code position instead.
 func TestEIP8024JumpDestAnalysis(t *testing.T) {
-	// Normal immediate: skipped as data, and the following JUMPDEST is a
-	// valid, ordinary code position.
+	// Normal immediate
 	code := []byte{byte(DUPN), 0x01, byte(JUMPDEST)}
 	bv := codeBitmap(code)
 	if bv.codeSegment(1) {
@@ -76,8 +75,7 @@ func TestEIP8024JumpDestAnalysis(t *testing.T) {
 		t.Fatalf("JUMPDEST at pos 2 should remain a valid code position")
 	}
 
-	// Immediate == JUMPDEST: must NOT be skipped, so it remains a valid jump
-	// target, matching what analysis with no knowledge of DUPN would produce.
+	// Immediate == JUMPDEST
 	code = []byte{byte(SWAPN), byte(JUMPDEST), 0x01}
 	bv = codeBitmap(code)
 	if !bv.codeSegment(1) {

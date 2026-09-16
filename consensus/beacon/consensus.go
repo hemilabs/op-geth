@@ -300,8 +300,8 @@ func (beacon *Beacon) verifyHeader(chain consensus.ChainHeaderReader, header, pa
 			return err
 		}
 	}
-	// Verify the existence / non-existence of the Amsterdam (Glamsterdam)
-	// slotNumber header field, added by EIP-7843.
+	// Verify the existence / non-existence of the Amsterdam
+	// slotNumber header field
 	amsterdam := chain.Config().IsAmsterdam(header.Number, header.Time)
 	if amsterdam && header.SlotNumber == nil {
 		return errors.New("missing slotNumber")

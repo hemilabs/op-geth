@@ -79,10 +79,7 @@ type PayloadAttributes struct {
 	MinBaseFee *uint64 `json:"minBaseFee,omitempty" gencodec:"optional"`
 	// SlotNumber was added by EIP-7843 (Glamsterdam): the consensus layer
 	// communicates the slot number the requested payload is being built for.
-	// TODO(HEMI): EIP-7843 is still in peer review upstream and has no assigned
-	// Engine API version yet (e.g. PayloadAttributesV4/GetPayloadV5). Once the
-	// spec lands, gate this field behind the proper versioned method instead of
-	// exposing it on every PayloadAttributes version.
+	// TODO(HEMI): Requires op-node API changes (NewPayloadV5).
 	SlotNumber *uint64 `json:"slotNumber,omitempty" gencodec:"optional"`
 }
 
@@ -118,8 +115,7 @@ type ExecutableData struct {
 	BlobGasUsed      *uint64                 `json:"blobGasUsed"`
 	ExcessBlobGas    *uint64                 `json:"excessBlobGas"`
 	ExecutionWitness *types.ExecutionWitness `json:"executionWitness,omitempty"`
-	// TODO(HEMI): see SlotNumber TODO on PayloadAttributes above — same
-	// API-versioning gap applies here (no NewPayloadV5/GetPayloadV5 yet).
+	// TODO(HEMI): Requires op-node API changes (NewPayloadV5).
 	SlotNumber *uint64 `json:"slotNumber,omitempty"`
 
 	// OP-Stack Isthmus specific field:

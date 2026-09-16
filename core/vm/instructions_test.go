@@ -1011,6 +1011,24 @@ func TestOpCLZ(t *testing.T) {
 	}
 }
 
+func TestOpSlotNum(t *testing.T) {
+	for _, slotNumber := range []uint64{0, 1, 12345, ^uint64(0)} {
+		evm := NewEVM(BlockContext{SlotNumber: slotNumber}, nil, params.TestChainConfig, Config{})
+
+		stack := newstack()
+		pc := uint64(0)
+		opSlotNum(&pc, evm, &ScopeContext{Stack: stack})
+
+		if gotLen := stack.len(); gotLen != 1 {
+			t.Fatalf("stack length = %d, want 1", gotLen)
+		}
+		result := stack.pop()
+		if got := result.Uint64(); got != slotNumber {
+			t.Fatalf("SLOTNUM = %d, want %d", got, slotNumber)
+		}
+	}
+}
+
 // newDupSwapNScope builds a ScopeContext whose code is [op, immediate], with
 // the given stack, for exercising DUPN/SWAPN/EXCHANGE (EIP-8024).
 func newDupSwapNScope(op OpCode, immediate byte, stack *Stack) *ScopeContext {
@@ -1039,22 +1057,22 @@ func TestOpDupN(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if pc != 1 {
-		t.Fatalf("pc = %d; want 1", pc)
+		t.Fatalf("pc = %d, want 1", pc)
 	}
 	if got := stack.len(); got != 18 {
-		t.Fatalf("stack length = %d; want 18", got)
+		t.Fatalf("stack length = %d, want 18", got)
 	}
 	if top := stack.pop(); top.Uint64() != 1 {
-		t.Fatalf("duplicated value = %d; want 1", top.Uint64())
+		t.Fatalf("duplicated value = %d, want 1", top.Uint64())
 	}
 
-	// Stack underflow: n=17 but only 5 items available.
+	// Stack underflow
 	stack = newstack()
 	pushN(stack, 5)
 	scope = newDupSwapNScope(DUPN, 0x80, stack)
 	pc = 0
 	if _, err := opDupN(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
-		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+		t.Fatalf("err = %v, want ErrStackUnderflow", err)
 	}
 
 	// Invalid immediate: 0x60 is PUSH1, disallowed.
@@ -1063,7 +1081,7 @@ func TestOpDupN(t *testing.T) {
 	scope = newDupSwapNScope(DUPN, 0x60, stack)
 	pc = 0
 	if _, err := opDupN(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
-		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+		t.Fatalf("err = %v, want ErrInvalidImmediate", err)
 	}
 }
 
@@ -1080,14 +1098,14 @@ func TestOpSwapN(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if pc != 1 {
-		t.Fatalf("pc = %d; want 1", pc)
+		t.Fatalf("pc = %d, want 1", pc)
 	}
 	data := stack.Data()
 	if data[len(data)-1].Uint64() != 1 {
-		t.Fatalf("top = %d; want 1", data[len(data)-1].Uint64())
+		t.Fatalf("top = %d, want 1", data[len(data)-1].Uint64())
 	}
 	if data[0].Uint64() != 18 {
-		t.Fatalf("bottom = %d; want 18", data[0].Uint64())
+		t.Fatalf("bottom = %d, want 18", data[0].Uint64())
 	}
 
 	// Stack underflow: n=17 needs 18 items, only 10 available.
@@ -1096,7 +1114,7 @@ func TestOpSwapN(t *testing.T) {
 	scope = newDupSwapNScope(SWAPN, 0x80, stack)
 	pc = 0
 	if _, err := opSwapN(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
-		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+		t.Fatalf("err = %v, want ErrStackUnderflow", err)
 	}
 
 	// Invalid immediate: 0x5b is JUMPDEST, disallowed.
@@ -1105,7 +1123,7 @@ func TestOpSwapN(t *testing.T) {
 	scope = newDupSwapNScope(SWAPN, 0x5b, stack)
 	pc = 0
 	if _, err := opSwapN(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
-		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+		t.Fatalf("err = %v, want ErrInvalidImmediate", err)
 	}
 }
 
@@ -1123,17 +1141,17 @@ func TestOpExchange(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if pc != 1 {
-		t.Fatalf("pc = %d; want 1", pc)
+		t.Fatalf("pc = %d, want 1", pc)
 	}
 	data := stack.Data()
 	if got := data[len(data)-1].Uint64(); got != 17 {
-		t.Fatalf("top = %d; want 17 (untouched)", got)
+		t.Fatalf("top = %d, want 17 (untouched)", got)
 	}
 	if got := data[len(data)-1-1].Uint64(); got != 1 {
-		t.Fatalf("item at offset 1 = %d; want 1", got)
+		t.Fatalf("item at offset 1 = %d, want 1", got)
 	}
 	if got := data[len(data)-1-16].Uint64(); got != 16 {
-		t.Fatalf("item at offset 16 = %d; want 16", got)
+		t.Fatalf("item at offset 16 = %d, want 16", got)
 	}
 
 	// Stack underflow: (n=1, m=16) needs 17 items, only 5 available.
@@ -1142,7 +1160,7 @@ func TestOpExchange(t *testing.T) {
 	scope = newDupSwapNScope(EXCHANGE, 0x80, stack)
 	pc = 0
 	if _, err := opExchange(&pc, evm, scope); !errors.As(err, new(*ErrStackUnderflow)) {
-		t.Fatalf("err = %v; want ErrStackUnderflow", err)
+		t.Fatalf("err = %v, want ErrStackUnderflow", err)
 	}
 
 	// Invalid immediate: 0x60 is PUSH1, disallowed for EXCHANGE too.
@@ -1151,7 +1169,7 @@ func TestOpExchange(t *testing.T) {
 	scope = newDupSwapNScope(EXCHANGE, 0x60, stack)
 	pc = 0
 	if _, err := opExchange(&pc, evm, scope); !errors.Is(err, ErrInvalidImmediate) {
-		t.Fatalf("err = %v; want ErrInvalidImmediate", err)
+		t.Fatalf("err = %v, want ErrInvalidImmediate", err)
 	}
 }
 
