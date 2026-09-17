@@ -33,9 +33,8 @@ import (
 	"github.com/holiman/uint256"
 )
 
-// TestIntrinsicGasEIP2780 checks the itemized Amsterdam intrinsic-gas formula
-// (EIP-2780/8038) against the pre-Amsterdam flat-cost formula, for the
-// representative transaction shapes the EIP is meant to reprice.
+// TestIntrinsicGasEIP2780 checks the Amsterdam intrinsic-gas formula
+// (EIP-2780/8038) against the pre-Amsterdam flat-cost formula.
 func TestIntrinsicGasEIP2780(t *testing.T) {
 	tests := []struct {
 		name                    string

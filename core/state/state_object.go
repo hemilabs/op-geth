@@ -128,21 +128,12 @@ func (s *stateObject) markSelfdestructedNoBurn() {
 // resetForSelfDestruct8246 implements EIP-8246's finalization-time behavior
 // for a same-tx-created contract marked selfDestructedNoBurn: instead of the
 // account being deleted, its nonce is reset to 0, code is cleared, and all
-// storage is cleared - balance is left untouched. It is only ever called
-// from StateDB.Finalise, after the transaction's journal has already served
-// its purpose, so it deliberately bypasses the journalling setters (SetNonce/
-// SetCode/etc.) - there is nothing left to revert into at this point, and
-// journalling here would mutate s.db.journal.dirties while Finalise is
-// ranging over it.
+// storage is cleared, but balance is left untouched.
 //
-// This relies on the invariant (enforced by EIP-7610's collision check in
-// EVM.create, unconditional since Homestead) that any account with
-// newContract set - the same flag guarding EIP-6780/8246 eligibility - was
-// only ever created starting from an empty persisted storage root. So
-// "clearing all storage" here never needs to touch the trie/database: it is
+// Clearing all storage here never needs to touch the trie/database: it is
 // purely resetting this stateObject's in-memory caches back to their
 // zero-value (freshly-created-object) state. The guard below double-checks
-// that invariant defensively; if it's ever violated, this returns false and
+// that invariant defensively, If it's ever violated, this returns false and
 // the caller must fall back to the normal delete-the-account path instead of
 // risking silently orphaning on-disk storage.
 func (s *stateObject) resetForSelfDestruct8246() bool {

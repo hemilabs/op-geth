@@ -166,7 +166,8 @@ func (e *AccountAccess) validate() error {
 		return errors.New("nonce changes not in ascending order by tx index")
 	}
 
-	// Convert code change. No fork context is available here, so bound
+	// Convert code change.
+	// XXX (HEMI): No fork context is available here, so bound
 	// against the largest possible contract size (EIP-7954) rather than
 	// reject a valid post-Amsterdam code change.
 	if len(e.Code) == 1 {

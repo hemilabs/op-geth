@@ -158,21 +158,14 @@ type EVM struct {
 
 	// StateGasReservoir is this transaction's remaining EIP-8037 state-gas
 	// reservoir, shared across the whole call tree. State-gas charges (see
-	// ChargeStateGas) draw from it first; once exhausted, the charge spills
+	// ChargeStateGas) draw from it first. Once exhausted, the charge spills
 	// over into ordinary execution gas via the caller's own Contract.Gas
-	// accounting. Zero (its default) outside Amsterdam or once exhausted.
+	// accounting. Zero outside Amsterdam or once exhausted.
 	StateGasReservoir uint64
 }
 
 // ChargeStateGas implements EIP-8037's reservoir-then-spillover accounting for
-// a single state-gas charge. It draws from evm.StateGasReservoir first; any
-// remainder is returned as execSpill, an amount of *execution* gas the caller
-// (a gas_table.go dynamic-gas function) must fold into its own return value so
-// it's charged against Contract.Gas exactly like any other execution-gas cost.
-// State-gas charges are treated as non-refundable state-growth costs (no
-// separate refund bookkeeping is needed here - see the EIP-8037 implementation
-// notes), consistent with this codebase having no account-creation refund
-// mechanism since EIP-3529/6780.
+// a single state-gas charge.
 func (evm *EVM) ChargeStateGas(amount uint64) (execSpill uint64) {
 	if evm.StateGasReservoir >= amount {
 		evm.StateGasReservoir -= amount

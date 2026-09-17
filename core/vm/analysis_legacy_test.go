@@ -82,9 +82,7 @@ func TestEIP8024JumpDestAnalysis(t *testing.T) {
 		t.Fatalf("SWAPN immediate equal to JUMPDEST at pos 1 must not be marked as data")
 	}
 
-	// Immediate in PUSH1-PUSH32 range: must NOT be skipped as DUPN/SWAPN/
-	// EXCHANGE's own data, so the PUSH opcode's own immediate skip logic still
-	// applies to the bytes that follow it.
+	// Immediate in PUSH1-PUSH32 range
 	code = []byte{byte(EXCHANGE), byte(PUSH1), 0x01, byte(JUMPDEST)}
 	bv = codeBitmap(code)
 	if !bv.codeSegment(1) {

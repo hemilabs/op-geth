@@ -304,6 +304,118 @@ func TestT8n(t *testing.T) {
 			output: t8nOutput{alloc: true, result: true},
 			expOut: "exp.json",
 		},
+		{ // Amsterdam test, EIP-2780/EIP-8038 reduced intrinsic gas + EIP-7708 ETH-transfer log
+			base: "./testdata/35",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Amsterdam", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // Same tx/state as testdata/35, but on Prague, for comparison (legacy 21000 gas, no synthetic log)
+			base: "./testdata/35",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Prague", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp_prague.json",
+		},
+		{ // Amsterdam test, EIP-2780 contract-creation intrinsic gas + EIP-8037 state-gas charges
+			base: "./testdata/36",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Amsterdam", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // Same tx/state as testdata/36, but on Prague, for comparison (legacy flat code-deposit gas)
+			base: "./testdata/36",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Prague", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp_prague.json",
+		},
+		{ // Amsterdam test, EIP-7778 block gas accounting without refunds
+			base: "./testdata/37",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Amsterdam", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // Same tx/state as testdata/37, but on Prague, for comparison (post-refund gasUsed)
+			base: "./testdata/37",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Prague", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp_prague.json",
+		},
+		{ // Amsterdam test, EIP-8246 remove SELFDESTRUCT burn (plus EIP-7708 ETH-transfer log)
+			base: "./testdata/38",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Amsterdam", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // Same tx/state as testdata/38, but on Prague, for comparison (same-tx selfdestruct-to-self burns the balance)
+			base: "./testdata/38",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Prague", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp_prague.json",
+		},
+		{ // Amsterdam test, EIP-7954 increase maximum contract size
+			base: "./testdata/39",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Amsterdam", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // Same tx/state as testdata/39, but on Prague, for comparison (exceeds legacy EIP-170 limit, tx fails)
+			base: "./testdata/39",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Prague", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp_prague.json",
+		},
+		{ // Amsterdam test, EIP-7843 SLOTNUM opcode
+			base: "./testdata/40",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Amsterdam", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // Same tx/state as testdata/40, but on Prague, for comparison (SLOTNUM still undefined)
+			base: "./testdata/40",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Prague", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp_prague.json",
+		},
+		{ // Amsterdam test, EIP-8024 backward-compatible SWAPN, DUPN, EXCHANGE
+			base: "./testdata/41",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Amsterdam", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp.json",
+		},
+		{ // Same tx/state as testdata/41, but on Prague, for comparison (opcodes still undefined)
+			base: "./testdata/41",
+			input: t8nInput{
+				"alloc.json", "txs.json", "env.json", "Prague", "",
+			},
+			output: t8nOutput{alloc: true, result: true},
+			expOut: "exp_prague.json",
+		},
 	} {
 		args := []string{"t8n"}
 		args = append(args, tc.output.get()...)
@@ -432,6 +544,55 @@ func TestT9n(t *testing.T) {
 				stFork: "London",
 			},
 			expExitCode: t8ntool.ErrorIO,
+		},
+		{ // Amsterdam tx: reduced intrinsic gas (EIP-2780/8038) validates fine
+			base: "./testdata/42",
+			input: t9nInput{
+				inTxs:  "signed_txs.rlp",
+				stFork: "Amsterdam",
+			},
+			expOut: "exp.json",
+		},
+		{ // Same tx fails on Prague: intrinsic gas too low with the legacy flat 21000 base
+			base: "./testdata/42",
+			input: t9nInput{
+				inTxs:  "signed_txs.rlp",
+				stFork: "Prague",
+			},
+			expOut: "exp2.json",
+		},
+		{ // Amsterdam tx: increased max initcode size (EIP-7954) validates fine
+			base: "./testdata/43",
+			input: t9nInput{
+				inTxs:  "signed_txs.rlp",
+				stFork: "Amsterdam",
+			},
+			expOut: "exp.json",
+		},
+		{ // Same tx fails on Prague: initcode size exceeds the legacy (pre-EIP-7954) limit
+			base: "./testdata/43",
+			input: t9nInput{
+				inTxs:  "signed_txs.rlp",
+				stFork: "Prague",
+			},
+			expOut: "exp2.json",
+		},
+		{ // Amsterdam tx: EIP-2780 deregulates Osaka's EIP-7825 tx gas limit cap, so a
+			// high-gas tx validates fine
+			base: "./testdata/44",
+			input: t9nInput{
+				inTxs:  "signed_txs.rlp",
+				stFork: "Amsterdam",
+			},
+			expOut: "exp.json",
+		},
+		{ // Same tx fails on Osaka: gas limit exceeds the EIP-7825 maximum
+			base: "./testdata/44",
+			input: t9nInput{
+				inTxs:  "signed_txs.rlp",
+				stFork: "Osaka",
+			},
+			expOut: "exp2.json",
 		},
 	} {
 		args := []string{"t9n"}

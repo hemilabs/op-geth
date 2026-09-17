@@ -583,8 +583,6 @@ func (s *StateDB) SelfDestruct6780(addr common.Address) (uint256.Int, bool) {
 	return *(stateObject.Balance()), false
 }
 
-// SelfDestruct8246 is identical EIP-6780 same-tx-creation gating,
-// but it never zeroes the account's balance.
 func (s *StateDB) SelfDestruct8246(addr common.Address) (uint256.Int, bool) {
 	stateObject := s.getStateObject(addr)
 	if stateObject == nil {
@@ -820,13 +818,9 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			continue
 		}
 		// EIP-8246 (Amsterdam): a same-tx-created self-destruct no longer
-		// deletes the account outright - reset it in place first (nonce/code/
-		// storage cleared, balance preserved), then let the branch below
-		// decide its fate purely from the resulting (now ordinary) state:
-		// only pruned here if that leaves it empty, via the normal EIP-161
-		// rule, not as a special self-destruct deletion. If the defensive
-		// invariant check inside the reset fails, fall through to the legacy
-		// delete-the-account path below instead of risking orphaned storage.
+		// deletes the account outright. If the defensive invariant check
+		// inside the reset fails, fall through to the legacy delete path
+		// below instead of risking orphaned storage.
 		destructDelete := obj.selfDestructed
 		if obj.selfDestructedNoBurn {
 			destructDelete = !obj.resetForSelfDestruct8246()

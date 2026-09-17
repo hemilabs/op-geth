@@ -343,11 +343,7 @@ func gasCreate2Eip3860(evm *EVM, contract *Contract, stack *Stack, mem *Memory, 
 }
 
 // gasCreateEIP8037/gasCreate2EIP8037 are the Amsterdam counterparts of
-// gasCreateEip3860/gasCreate2Eip3860: identical memory/init-code accounting,
-// plus the EIP-8037 account-creation state-gas charge (GasNewAccountStateEIP8037),
-// which replaces most of the flat pre-Amsterdam CreateGas/Create2Gas constantGas
-// (enable8037 lowers that constantGas to CreateAccessGasEIP8038, the remaining
-// execution-gas access+write component).
+// gasCreateEip3860/gasCreate2Eip3860.
 func gasCreateEIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 	gas, err := gasCreateEip3860(evm, contract, stack, mem, memorySize)
 	if err != nil {
@@ -437,10 +433,7 @@ func gasCall(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize
 }
 
 // gasCallEIP8037 is the Amsterdam counterpart of gasCall: identical, except
-// the "new account" cost is charged as EIP-8037 state-gas (via
-// evm.ChargeStateGas) instead of the flat CallNewAccountGas execution-gas
-// cost. Only CALL needs this variant - CALLCODE/DELEGATECALL/STATICCALL never
-// bring a new account into existence.
+// the "new account" cost is charged as EIP-8037 state-gas.
 func gasCallEIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 	var (
 		gas            uint64
@@ -508,10 +501,7 @@ func gasCallCode(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memory
 // identical memory/call-gas accounting, but uses EIP-8038's repriced
 // CallValueTransferGasEIP8038 (11,300 = ACCOUNT_WRITE + CALL_STIPEND) for its
 // notional value-transfer surcharge instead of the legacy flat
-// CallValueTransferGas (9,000). CALLCODE never actually moves value to a
-// different account (the "transfer" is to the calling contract's own
-// address), but the EVM has always charged this surcharge for it regardless -
-// EIP-8038 reprices that surcharge the same way it does for CALL.
+// CallValueTransferGas (9,000).
 func gasCallCodeEIP8038Repriced(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 	memoryGas, err := memoryGasCost(mem, memorySize)
 	if err != nil {

@@ -499,20 +499,20 @@ func TestApplyTransactionEIP7778GrossGasUsed(t *testing.T) {
 		t.Fatalf("test setup: tx must have an actual refund gap (net %d, gross %d)", preNet, preGross)
 	}
 	if preReceipt.GasUsed != preNet {
-		t.Fatalf("pre-Amsterdam GasUsed = %d; want net %d", preReceipt.GasUsed, preNet)
+		t.Fatalf("pre-Amsterdam GasUsed = %d, want net %d", preReceipt.GasUsed, preNet)
 	}
 	if preReceipt.CumulativeGasUsed != preReceipt.GasUsed {
-		t.Fatalf("pre-Amsterdam CumulativeGasUsed = %d; want %d", preReceipt.CumulativeGasUsed, preReceipt.GasUsed)
+		t.Fatalf("pre-Amsterdam CumulativeGasUsed = %d, want %d", preReceipt.CumulativeGasUsed, preReceipt.GasUsed)
 	}
 
 	postReceipt, postNet, postGross := run(amsterdamTestChainConfig())
 	if postReceipt.GasUsed != postGross {
-		t.Fatalf("Amsterdam GasUsed = %d; want gross %d", postReceipt.GasUsed, postGross)
+		t.Fatalf("Amsterdam GasUsed = %d, want gross %d", postReceipt.GasUsed, postGross)
 	}
 	if postReceipt.GasUsed == postNet {
-		t.Fatalf("Amsterdam GasUsed = %d; must differ from net %d", postReceipt.GasUsed, postNet)
+		t.Fatalf("Amsterdam GasUsed = %d, must differ from net %d", postReceipt.GasUsed, postNet)
 	}
 	if postReceipt.CumulativeGasUsed != postReceipt.GasUsed {
-		t.Fatalf("Amsterdam CumulativeGasUsed = %d; want %d", postReceipt.CumulativeGasUsed, postReceipt.GasUsed)
+		t.Fatalf("Amsterdam CumulativeGasUsed = %d, want %d", postReceipt.CumulativeGasUsed, postReceipt.GasUsed)
 	}
 }

@@ -259,7 +259,7 @@ func ApplyTransaction(evm *vm.EVM, gp *GasPool, statedb *state.StateDB, header *
 }
 
 // ApplyTransactionWithStateGas is like ApplyTransaction, but takes an
-// explicit EIP-8037 state-gas pool - see ApplyMessageWithStateGas.
+// explicit EIP-8037 state-gas pool.
 func ApplyTransactionWithStateGas(evm *vm.EVM, gp *GasPool, sgp *StateGasPool, statedb *state.StateDB, header *types.Header, tx *types.Transaction, usedGas *uint64) (*types.Receipt, error) {
 	msg, err := TransactionToMessage(tx, types.MakeSigner(evm.ChainConfig(), header.Number, header.Time), header.BaseFee)
 	if err != nil {

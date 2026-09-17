@@ -1,0 +1,8 @@
+[
+  {
+    "error": "max initcode size exceeded",
+    "address": "0xa94f5374fce5edbc8e2a8697c15331677e6ebf0b",
+    "hash": "0x0336ecb4522a33a4e857257393f28f5d72e8126da742b1247965e90e9c798ada",
+    "intrinsicGas": "0x3e87e"
+  }
+]

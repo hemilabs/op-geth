@@ -96,14 +96,7 @@ func makeGasSStoreFunc(clearingRefund uint64) gasFunc {
 // component, charged uniformly whenever a slot's value actually changes
 // (create, write, or delete); on top of that, EIP-8037 additionally charges
 // GasStorageSetStateEIP8037 as state-gas (via evm.ChargeStateGas) when the
-// slot is created from zero. Since both "reset to original inexistent slot"
-// and "reset to original existing slot" now refund against the same
-// StorageWriteGasEIP8038 execution-gas write cost, they collapse into a
-// single refund magnitude below. State-gas charges are treated as
-// non-refundable state-growth costs in this implementation (see
-// EVM.ChargeStateGas), so a same-tx create-then-reset doesn't get back the
-// state-gas portion, only the execution-gas portion it originally spilled
-// (if any). This is a deliberate simplification, not a spec guarantee.
+// slot is created from zero.
 func gasSStoreEIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, memorySize uint64) (uint64, error) {
 	if contract.Gas <= params.SstoreSentryGasEIP2200 {
 		return 0, errors.New("not enough gas for reentrancy sentry")
@@ -147,8 +140,8 @@ func gasSStoreEIP8037(evm *EVM, contract *Contract, stack *Stack, mem *Memory, m
 }
 
 // gasSStoreEIP8038 is the standalone-EIP-8038 counterpart of gasSStoreEIP8037,
-// for chain configs that enable EIP-8038 without EIP-8037 (e.g. via
-// Config.ExtraEips): same StorageWriteGasEIP8038 write-cost repricing and
+// for chain configs that enable EIP-8038 without EIP-8037: same
+// StorageWriteGasEIP8038 write-cost repricing and
 // SstoreClearsScheduleRefundEIP8038 refund, but the "create slot from zero"
 // case has no EIP-8037 state-gas dimension to redirect into, so it charges
 // the same flat StorageWriteGasEIP8038 execution-gas cost as any other write.

@@ -3695,13 +3695,6 @@ func testCreateThenDelete(t *testing.T, config *params.ChainConfig) {
 	}
 }
 
-// TestSelfDestruct8246Blockchain runs a real block through InsertChain
-// containing a single contract-creation transaction whose constructor
-// SSTOREs a slot and then SELFDESTRUCTs to its own address, under an
-// Amsterdam-active chain config. It checks - via the reloaded post-import
-// state, exercising the full block-building/receipt/trie-commit pipeline,
-// not just in-memory StateDB calls - that the account survives with its
-// endowment intact, nonce reset to 0, and code/storage cleared.
 func TestSelfDestruct8246Blockchain(t *testing.T) {
 	var (
 		config  = *params.MergedTestChainConfig
@@ -3711,7 +3704,7 @@ func TestSelfDestruct8246Blockchain(t *testing.T) {
 		created = crypto.CreateAddress(addr, 0)
 		funds   = new(big.Int).Mul(common.Big1, big.NewInt(params.Ether))
 	)
-	zero := uint64(0)
+	zero := uint64(0) // no new() available in this go version
 	config.AmsterdamTime = &zero
 	config.BlobScheduleConfig.Amsterdam = params.DefaultOsakaBlobConfig
 	signer := types.LatestSigner(&config)
@@ -3731,12 +3724,12 @@ func TestSelfDestruct8246Blockchain(t *testing.T) {
 			addr: {Balance: funds},
 		},
 	}
-	endowment := big.NewInt(1_000_000_000)
+	endowment := big.NewInt(1000000000)
 	_, blocks, _ := GenerateChainWithGenesis(gspec, engine, 1, func(i int, b *BlockGen) {
 		tx, err := types.SignNewTx(key, signer, &types.LegacyTx{
 			Nonce:    0,
 			GasPrice: new(big.Int).Set(b.header.BaseFee),
-			Gas:      1_000_000,
+			Gas:      1000000,
 			Value:    endowment,
 			Data:     initCode,
 		})
@@ -3760,27 +3753,22 @@ func TestSelfDestruct8246Blockchain(t *testing.T) {
 		t.Fatalf("chain.State: %v", err)
 	}
 	if !statedb.Exist(created) {
-		t.Fatalf("created account should survive its own self-destruct-to-self (endowment preserved it)")
+		t.Fatalf("created account should survive self-destruct")
 	}
 	if got := statedb.GetBalance(created); got.ToBig().Cmp(endowment) != 0 {
-		t.Fatalf("balance = %v; want %v", got, endowment)
+		t.Fatalf("balance = %v, want %v", got, endowment)
 	}
 	if got := statedb.GetNonce(created); got != 0 {
-		t.Fatalf("nonce = %d; want 0", got)
+		t.Fatalf("nonce = %d, want 0", got)
 	}
 	if got := statedb.GetCodeHash(created); got != types.EmptyCodeHash {
-		t.Fatalf("code hash = %s; want empty", got)
+		t.Fatalf("code hash = %s, want empty", got)
 	}
 	if got := statedb.GetState(created, common.Hash{}); got != (common.Hash{}) {
-		t.Fatalf("slot 0 = %s; want zero (storage must be cleared)", got)
+		t.Fatalf("slot 0 = %s, want zero (storage must be cleared)", got)
 	}
 }
 
-// TestEIP7778BlockGasUsedIsGross builds a block containing a refund-heavy
-// transaction under Amsterdam, checks the resulting header.GasUsed reflects
-// gross (pre-refund) usage, and that an independent validator can re-import
-// and validate the block (exercising block_validator.go's GasUsed equality
-// check end to end).
 func TestEIP7778BlockGasUsedIsGross(t *testing.T) {
 	key, _ := crypto.HexToECDSA("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
 	addr := crypto.PubkeyToAddress(key.PublicKey)
@@ -3805,7 +3793,7 @@ func TestEIP7778BlockGasUsedIsGross(t *testing.T) {
 			tx, err := types.SignNewTx(key, signer, &types.LegacyTx{
 				Nonce:    0,
 				GasPrice: new(big.Int).Set(b.header.BaseFee),
-				Gas:      100_000,
+				Gas:      100000,
 				To:       &target,
 			})
 			if err != nil {
@@ -3825,10 +3813,10 @@ func TestEIP7778BlockGasUsedIsGross(t *testing.T) {
 		}
 		receipts := chain.GetReceiptsByHash(block.Hash())
 		if len(receipts) != 1 {
-			t.Fatalf("got %d receipts; want 1", len(receipts))
+			t.Fatalf("got %d receipts, want 1", len(receipts))
 		}
 		if receipts[0].GasUsed != block.GasUsed() {
-			t.Fatalf("receipt.GasUsed = %d; want block.GasUsed() = %d (single tx in block)", receipts[0].GasUsed, block.GasUsed())
+			t.Fatalf("receipt.GasUsed = %d, want block.GasUsed() = %d", receipts[0].GasUsed, block.GasUsed())
 		}
 
 		// Independent re-import must also succeed: exercises block_validator.go's
@@ -3842,7 +3830,7 @@ func TestEIP7778BlockGasUsedIsGross(t *testing.T) {
 			t.Fatalf("validator: block %d: failed to insert into chain: %v", n, err)
 		}
 		if got := vchain.CurrentBlock().GasUsed; got != block.GasUsed() {
-			t.Fatalf("validator GasUsed = %d; want %d", got, block.GasUsed())
+			t.Fatalf("validator GasUsed = %d, want %d", got, block.GasUsed())
 		}
 		return block
 	}
@@ -3857,7 +3845,8 @@ func TestEIP7778BlockGasUsedIsGross(t *testing.T) {
 	amsterdamBlock := build(t, &amsterdamConfig)
 
 	if amsterdamBlock.GasUsed() <= preBlock.GasUsed() {
-		t.Fatalf("Amsterdam GasUsed = %d; want strictly more than pre-Amsterdam %d (gross vs net)", amsterdamBlock.GasUsed(), preBlock.GasUsed())
+		t.Fatalf("Amsterdam GasUsed = %d, want strictly more than pre-Amsterdam %d (gross vs net)",
+			amsterdamBlock.GasUsed(), preBlock.GasUsed())
 	}
 }
 

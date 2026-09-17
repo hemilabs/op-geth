@@ -77,11 +77,8 @@ func TestBurn(t *testing.T) {
 	}
 }
 
-// TestNoBurn8246 checks that EIP-8246's SelfDestruct8246 - unlike the legacy
-// SelfDestruct6780 exercised by TestBurn - never triggers a
-// BalanceDecreaseSelfdestructBurn event: ether sent to an EIP-8246-destructed
-// account after its self-destruct is preserved, not burned, so no burn event
-// should fire for it, on top of the balance genuinely surviving.
+// TestNoBurn8246 checks that EIP-8246's SelfDestruct8246 never triggers a
+// BalanceDecreaseSelfdestructBurn event
 func TestNoBurn8246(t *testing.T) {
 	var burned = new(uint256.Int)
 	s, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
