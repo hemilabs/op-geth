@@ -40,6 +40,10 @@ var (
 	ErrInvalidCode              = errors.New("invalid code: must not begin with 0xef")
 	ErrNonceUintOverflow        = errors.New("nonce uint64 overflow")
 
+	// ErrInvalidImmediate is returned by DUPN/SWAPN/EXCHANGE (EIP-8024) when their
+	// immediate byte falls in the range disallowed to preserve JUMPDEST analysis.
+	ErrInvalidImmediate = errors.New("invalid immediate value")
+
 	// ErrHVMInvalidPrecompileInput is returned by an hVM precompile when invoked with malformed
 	// input (e.g. a TxID query that is not 32 bytes). EVM.runPrecompile normalizes it to an empty
 	// successful return, so the transaction is included as a no-op identically on builders and validators.
@@ -162,6 +166,7 @@ const (
 	VMErrorCodeStackUnderflow
 	VMErrorCodeStackOverflow
 	VMErrorCodeInvalidOpCode
+	VMErrorCodeInvalidImmediate
 
 	// VMErrorCodeUnknown explicitly marks an error as unknown, this is useful when error is converted
 	// from an actual `error` in which case if the mapping is not known, we can use this value to indicate that.
@@ -196,6 +201,8 @@ func vmErrorCodeFromErr(err error) int {
 		return VMErrorCodeInvalidCode
 	case errors.Is(err, ErrNonceUintOverflow):
 		return VMErrorCodeNonceUintOverflow
+	case errors.Is(err, ErrInvalidImmediate):
+		return VMErrorCodeInvalidImmediate
 
 	default:
 		// Dynamic errors

@@ -1489,8 +1489,17 @@ func AccessList(ctx context.Context, b Backend, blockNrOrHash rpc.BlockNumberOrH
 		addressesToExclude[addr] = struct{}{}
 	}
 
-	// Prevent redundant operations if args contain more authorizations than EVM may handle
-	maxAuthorizations := uint64(*args.Gas) / params.CallNewAccountGas
+	// Prevent redundant operations if args contain more authorizations than EVM may handle.
+	// EIP-2780/8037 reprices each authorization's minimum cost to
+	// ExecutionPerAuthBaseCostEIP8037 (7,816) under Amsterdam, well below the
+	// legacy flat CallNewAccountGas (25,000) - using the old constant there
+	// would reject valid requests with many authorizations that a
+	// sufficiently large args.Gas could actually fund.
+	perAuthGas := params.CallNewAccountGas
+	if b.ChainConfig().IsAmsterdam(header.Number, header.Time) {
+		perAuthGas = params.ExecutionPerAuthBaseCostEIP8037
+	}
+	maxAuthorizations := uint64(*args.Gas) / perAuthGas
 	if uint64(len(args.AuthorizationList)) > maxAuthorizations {
 		return nil, 0, nil, errors.New("insufficient gas to process all authorizations")
 	}

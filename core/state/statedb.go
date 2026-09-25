@@ -583,6 +583,22 @@ func (s *StateDB) SelfDestruct6780(addr common.Address) (uint256.Int, bool) {
 	return *(stateObject.Balance()), false
 }
 
+func (s *StateDB) SelfDestruct8246(addr common.Address) (uint256.Int, bool) {
+	stateObject := s.getStateObject(addr)
+	if stateObject == nil {
+		return uint256.Int{}, false
+	}
+	if !stateObject.newContract {
+		return *(stateObject.Balance()), false
+	}
+	balance := *(stateObject.Balance())
+	if !stateObject.selfDestructed {
+		s.journal.destruct(addr)
+		stateObject.markSelfdestructedNoBurn()
+	}
+	return balance, true
+}
+
 // SetTransientState sets transient storage for a given account. It
 // adds the change to the journal so that it can be rolled back
 // to its previous value if there is a revert.
@@ -801,7 +817,15 @@ func (s *StateDB) Finalise(deleteEmptyObjects bool) {
 			// Thus, we can safely ignore it here
 			continue
 		}
-		if obj.selfDestructed || (deleteEmptyObjects && obj.empty()) {
+		// EIP-8246 (Amsterdam): a same-tx-created self-destruct no longer
+		// deletes the account outright. If the defensive invariant check
+		// inside the reset fails, fall through to the legacy delete path
+		// below instead of risking orphaned storage.
+		destructDelete := obj.selfDestructed
+		if obj.selfDestructedNoBurn {
+			destructDelete = !obj.resetForSelfDestruct8246()
+		}
+		if destructDelete || (deleteEmptyObjects && obj.empty()) {
 			delete(s.stateObjects, obj.address)
 			s.markDelete(addr)
 			// We need to maintain account deletions explicitly (will remain

@@ -805,11 +805,12 @@ func newGasUsedTestEnv(t *testing.T) (*environment, *params.ChainConfig, *ecdsa.
 		Random:      &random, // post-merge
 	}
 	env := &environment{
-		signer:  types.MakeSigner(&cfg, header.Number, header.Time),
-		state:   statedb,
-		gasPool: new(core.GasPool).AddGas(header.GasLimit),
-		header:  header,
-		evm:     vm.NewEVM(blockCtx, statedb, &cfg, vm.Config{}),
+		signer:       types.MakeSigner(&cfg, header.Number, header.Time),
+		state:        statedb,
+		gasPool:      new(core.GasPool).AddGas(header.GasLimit),
+		stateGasPool: new(core.StateGasPool).AddGas(header.GasLimit),
+		header:       header,
+		evm:          vm.NewEVM(blockCtx, statedb, &cfg, vm.Config{}),
 	}
 	return env, &cfg, key, sender
 }
@@ -1116,4 +1117,40 @@ func TestHVMUnderfundedInvalidInputBuildsAndValidatesAcrossNodes(t *testing.T) {
 	require.Len(t, receipts, 1, "exactly one receipt")
 	require.Equal(t, types.ReceiptStatusFailed, receipts[0].Status,
 		"under-funded invalid-hVM-input tx must revert (OOG), not be a success no-op")
+}
+
+// TestApplyTransactionEIP7778GrossOverflow checks the EIP-7778 admission gate: a transaction whose
+// declared gas limit would be fine, but whose gross (pre-refund) usage exceeds the remaining block gas
+// limit, must be excluded and fully reverted, even though its net (post-refund) usage would have fit.
+func TestApplyTransactionEIP7778GrossOverflow(t *testing.T) {
+	env, cfg, key, _ := newGasUsedTestEnv(t)
+	amsterdam := uint64(0)
+	cfg.AmsterdamTime = &amsterdam
+	env.evm = vm.NewEVM(env.evm.Context, env.state, cfg, vm.Config{})
+
+	target := common.Address{0xAA}
+	env.state.CreateAccount(target)
+	// PUSH1 0; PUSH1 0; SSTORE; STOP - clears an existing nonzero slot to zero, earning the EIP-8038
+	// storage-clear refund.
+	env.state.SetCode(target, []byte{0x60, 0x00, 0x60, 0x00, 0x55, 0x00}, tracing.CodeChangeUnspecified)
+	env.state.SetState(target, common.Hash{}, common.BytesToHash([]byte{1}))
+	env.state.Finalise(true)
+
+	tx := signTestTx(t, cfg, env.header, key, 0, target, nil)
+	env.state.SetTxContext(tx.Hash(), 0)
+
+	msg, err := core.TransactionToMessage(tx, env.signer, env.header.BaseFee)
+	require.NoError(t, err)
+	dryEVM := vm.NewEVM(env.evm.Context, env.state.Copy(), cfg, vm.Config{})
+	result, err := core.ApplyMessage(dryEVM, msg, new(core.GasPool).AddGas(msg.GasLimit))
+	require.NoError(t, err)
+	require.False(t, result.Failed())
+	require.Less(t, result.UsedGas, result.MaxUsedGas, "test setup: the tx must have an actual refund gap")
+
+	env.header.GasLimit = (result.UsedGas + result.MaxUsedGas) / 2
+
+	_, err = (&Miner{}).applyTransaction(env, tx)
+	require.ErrorIs(t, err, errBlockGasLimitReached)
+	require.Zero(t, env.header.GasUsed, "header.GasUsed must be fully reverted")
+	require.Zero(t, env.state.GetNonce(crypto.PubkeyToAddress(key.PublicKey)), "sender nonce must be fully reverted")
 }

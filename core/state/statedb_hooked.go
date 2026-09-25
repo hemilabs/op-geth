@@ -268,6 +268,31 @@ func (s *hookedStateDB) SelfDestruct6780(address common.Address) (uint256.Int, b
 	return prev, changed
 }
 
+func (s *hookedStateDB) SelfDestruct8246(address common.Address) (uint256.Int, bool) {
+	var prevCode []byte
+	var prevCodeHash common.Hash
+
+	if s.hooks.OnCodeChange != nil {
+		prevCodeHash = s.inner.GetCodeHash(address)
+		prevCode = s.inner.GetCode(address)
+	}
+
+	bal, changed := s.inner.SelfDestruct8246(address)
+
+	// Unlike SelfDestruct6780, the balance is not zeroed here under EIP-8246 -
+	// no OnBalanceChange(BalanceDecreaseSelfdestruct) is emitted.
+
+	if changed && len(prevCode) > 0 {
+		if s.hooks.OnCodeChangeV2 != nil {
+			s.hooks.OnCodeChangeV2(address, prevCodeHash, prevCode, types.EmptyCodeHash, nil, tracing.CodeChangeSelfDestruct)
+		} else if s.hooks.OnCodeChange != nil {
+			s.hooks.OnCodeChange(address, prevCodeHash, prevCode, types.EmptyCodeHash, nil)
+		}
+	}
+
+	return bal, changed
+}
+
 func (s *hookedStateDB) AddLog(log *types.Log) {
 	// The inner will modify the log (add fields), so invoke that first
 	s.inner.AddLog(log)
@@ -283,7 +308,11 @@ func (s *hookedStateDB) Finalise(deleteEmptyObjects bool) {
 	}
 	for addr := range s.inner.journal.dirties {
 		obj := s.inner.stateObjects[addr]
-		if obj != nil && obj.selfDestructed {
+		// selfDestructedNoBurn (EIP-8246) accounts are excluded: their balance
+		// is preserved, not burned, so no BalanceDecreaseSelfdestructBurn
+		// event should fire for them - only legacy (pre-Amsterdam) destructs
+		// still burn ether sent post-selfdestruct.
+		if obj != nil && obj.selfDestructed && !obj.selfDestructedNoBurn {
 			// If ether was sent to account post-selfdestruct it is burnt.
 			if bal := obj.Balance(); bal.Sign() != 0 {
 				s.hooks.OnBalanceChange(addr, bal.ToBig(), new(big.Int), tracing.BalanceDecreaseSelfdestructBurn)

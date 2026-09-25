@@ -954,6 +954,117 @@ func TestDeleteCreateRevert(t *testing.T) {
 	}
 }
 
+func setUpEIP8246Account(state *StateDB, addr common.Address, balance uint64) {
+	state.CreateAccount(addr)
+	state.CreateContract(addr)
+	state.SetNonce(addr, 1, tracing.NonceChangeUnspecified)
+	state.SetCode(addr, []byte{0x00}, tracing.CodeChangeUnspecified)
+	state.SetState(addr, common.Hash{}, common.BytesToHash([]byte{1}))
+	if balance != 0 {
+		state.AddBalance(addr, uint256.NewInt(balance), tracing.BalanceChangeUnspecified)
+	}
+}
+
+func TestSelfDestruct8246BalancePreserved(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	addr := common.BytesToAddress([]byte("eip8246-balance"))
+	setUpEIP8246Account(state, addr, 100)
+
+	bal, changed := state.SelfDestruct8246(addr)
+	if !changed {
+		t.Fatalf("changed = false; want true")
+	}
+	if bal.Uint64() != 100 {
+		t.Fatalf("returned balance = %d; want 100", bal.Uint64())
+	}
+	state.Finalise(true)
+	root, err := state.Commit(0, true, false)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	// Reopen from a fresh StateDB on the committed root.
+	reopened, err := New(root, state.db)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if !reopened.Exist(addr) {
+		t.Fatalf("account should still exist (nonzero balance survived)")
+	}
+	if got := reopened.GetBalance(addr); got.Uint64() != 100 {
+		t.Fatalf("balance = %d, want 100", got.Uint64())
+	}
+	if got := reopened.GetNonce(addr); got != 0 {
+		t.Fatalf("nonce = %d, want 0", got)
+	}
+	if got := reopened.GetCodeHash(addr); got != types.EmptyCodeHash {
+		t.Fatalf("code hash = %s, want empty", got)
+	}
+	if got := reopened.GetStorageRoot(addr); got != types.EmptyRootHash {
+		t.Fatalf("storage root = %s, want empty", got)
+	}
+	if got := reopened.GetState(addr, common.Hash{}); got != (common.Hash{}) {
+		t.Fatalf("slot 0 = %s, want zero", got)
+	}
+}
+
+// TestSelfDestruct8246ZeroBalanceDeleted checks that a SelfDestruct8246'd
+// account with a zero resulting balance is pruned by the ordinary EIP-161
+// empty-account rule.
+func TestSelfDestruct8246ZeroBalanceDeleted(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	addr := common.BytesToAddress([]byte("eip8246-empty"))
+	setUpEIP8246Account(state, addr, 0)
+
+	if _, changed := state.SelfDestruct8246(addr); !changed {
+		t.Fatalf("changed = false; want true")
+	}
+	state.Finalise(true)
+	root, err := state.Commit(0, true, false)
+	if err != nil {
+		t.Fatalf("Commit: %v", err)
+	}
+
+	reopened, err := New(root, state.db)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if reopened.Exist(addr) {
+		t.Fatalf("zero-balance account should have been pruned")
+	}
+}
+
+func TestSelfDestruct8246Revert(t *testing.T) {
+	state, _ := New(types.EmptyRootHash, NewDatabaseForTesting())
+	addr := common.BytesToAddress([]byte("eip8246-revert"))
+	setUpEIP8246Account(state, addr, 100)
+
+	id := state.Snapshot()
+	if _, changed := state.SelfDestruct8246(addr); !changed {
+		t.Fatalf("changed = false, want true")
+	}
+	if !state.HasSelfDestructed(addr) {
+		t.Fatalf("HasSelfDestructed = false, want true before revert")
+	}
+	state.RevertToSnapshot(id)
+
+	if state.HasSelfDestructed(addr) {
+		t.Fatalf("HasSelfDestructed = true, want false after revert")
+	}
+	if got := state.GetNonce(addr); got != 1 {
+		t.Fatalf("nonce = %d, want 1 (unchanged)", got)
+	}
+	if got := state.GetCodeSize(addr); got == 0 {
+		t.Fatalf("code should still be present after revert")
+	}
+	if got := state.GetState(addr, common.Hash{}); got != common.BytesToHash([]byte{1}) {
+		t.Fatalf("slot 0 = %s, want unchanged", got)
+	}
+	if got := state.GetBalance(addr); got.Uint64() != 100 {
+		t.Fatalf("balance = %d, want 100 (unchanged)", got.Uint64())
+	}
+}
+
 // TestMissingTrieNodes tests that if the StateDB fails to load parts of the trie,
 // the Commit operation fails with an error
 // If we are missing trie nodes, we should not continue writing to the trie
