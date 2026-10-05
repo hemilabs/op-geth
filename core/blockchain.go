@@ -1217,6 +1217,16 @@ func NewBlockChain(db ethdb.Database, genesis *Genesis, overrides *ChainOverride
 	if err != nil {
 		return nil, err
 	}
+	// This build understands the Amsterdam (Glamsterdam) header fields only so that
+	// post-Amsterdam L1 headers can be decoded and hash-verified by the L2 components
+	// importing this module as a library. It implements none of the Amsterdam execution
+	// rules, so refuse to run a chain whose configuration activates the fork rather than
+	// leaving it half-enabled (headers required to carry fields no block producer in this
+	// tree sets). The check lives here, not in params, so that upstream chain presets
+	// carrying an amsterdamTime remain usable by library consumers.
+	if chainConfig.AmsterdamTime != nil {
+		return nil, errors.New("amsterdamTime is not supported by this build: Amsterdam execution rules are not implemented")
+	}
 	log.Info("")
 	log.Info(strings.Repeat("-", 153))
 	for _, line := range strings.Split(chainConfig.Description(), "\n") {
