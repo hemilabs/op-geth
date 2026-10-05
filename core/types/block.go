@@ -107,6 +107,12 @@ type Header struct {
 
 	// RequestsHash was added by EIP-7685 and is ignored in legacy headers.
 	RequestsHash *common.Hash `json:"requestsHash" rlp:"optional"`
+
+	// BlockAccessListHash was added by EIP-7928 and is ignored in legacy headers.
+	BlockAccessListHash *common.Hash `json:"blockAccessListHash" rlp:"optional"`
+
+	// SlotNumber was added by EIP-7843 and is ignored in legacy headers.
+	SlotNumber *uint64 `json:"slotNumber" rlp:"optional"`
 }
 
 // field type overrides for gencodec
@@ -121,6 +127,7 @@ type headerMarshaling struct {
 	Hash          common.Hash `json:"hash"` // adds call to Hash() in MarshalJSON
 	BlobGasUsed   *hexutil.Uint64
 	ExcessBlobGas *hexutil.Uint64
+	SlotNumber    *hexutil.Uint64
 }
 
 // Hash returns the block hash of the header, which is simply the keccak256 hash of its
@@ -359,6 +366,14 @@ func CopyHeader(h *Header) *Header {
 		cpy.RequestsHash = new(common.Hash)
 		*cpy.RequestsHash = *h.RequestsHash
 	}
+	if h.BlockAccessListHash != nil {
+		cpy.BlockAccessListHash = new(common.Hash)
+		*cpy.BlockAccessListHash = *h.BlockAccessListHash
+	}
+	if h.SlotNumber != nil {
+		cpy.SlotNumber = new(uint64)
+		*cpy.SlotNumber = *h.SlotNumber
+	}
 	return &cpy
 }
 
@@ -448,6 +463,17 @@ func (b *Block) BaseFee() *big.Int {
 
 func (b *Block) BeaconRoot() *common.Hash   { return b.header.ParentBeaconRoot }
 func (b *Block) RequestsHash() *common.Hash { return b.header.RequestsHash }
+
+func (b *Block) BlockAccessListHash() *common.Hash { return b.header.BlockAccessListHash }
+
+func (b *Block) SlotNumber() *uint64 {
+	var slotNumber *uint64
+	if b.header.SlotNumber != nil {
+		slotNumber = new(uint64)
+		*slotNumber = *b.header.SlotNumber
+	}
+	return slotNumber
+}
 
 func (b *Block) ExcessBlobGas() *uint64 {
 	var excessBlobGas *uint64
