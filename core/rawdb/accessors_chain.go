@@ -860,7 +860,12 @@ func WriteBadBlock(db ethdb.KeyValueStore, block *types.Block) {
 	var badBlocks []*badBlock
 	if len(blob) > 0 {
 		if err := rlp.DecodeBytes(blob, &badBlocks); err != nil {
-			log.Crit("Failed to decode old bad blocks", "error", err)
+			// A stored bad block whose header does not round-trip through RLP (for
+			// example one that was constructed in-process with an optional header
+			// field set behind a nil one) must not take the whole node down the next
+			// time an invalid block is reported. Match upstream and start afresh.
+			log.Warn("Discarding undecodable bad block history", "error", err)
+			badBlocks = nil
 		}
 	}
 	for _, b := range badBlocks {
