@@ -26,7 +26,7 @@ all:
 
 #? test: Run the tests.
 test: all
-	$(GORUN) build/ci.go test
+	$(GORUN) build/ci.go test -v
 
 #? test-short: Run the tests with -short (skips the slow integration tests that carry a testing.Short() guard, for fast feedback). Does NOT run the ENFORCED hVM history gates (tip pins + HEMI_HISTORY_GATE_REQUIRED + run+PASS vacuity guard) — run those locally per core/vm/testdata/HISTORY_GATE.md, or in CI as the three enforced steps of the `test` job. Plain `make test` (and the CI `test-long` job) run the gate tests against committed fixtures but WITHOUT that enforcement.
 test-short: all

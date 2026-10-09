@@ -95,6 +95,9 @@ func NewPeer(version uint, p *p2p.Peer, rw p2p.MsgReadWriter, txpool TxPool) *Pe
 }
 
 func (p *Peer) setBlockChain(b *core.BlockChain) {
+	p.lock.Lock()
+	defer p.lock.Unlock()
+	
 	p.blockchain = b
 }
 

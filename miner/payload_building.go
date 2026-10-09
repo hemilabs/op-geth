@@ -217,6 +217,16 @@ func (payload *Payload) ResolveFull() *engine.ExecutionPayloadEnvelope {
 func (payload *Payload) WaitFull() {
 	payload.lock.Lock()
 	defer payload.lock.Unlock()
+
+	// if the payload stops building, we need to exit to avoid infinite
+	// waiting
+	select {
+	case <-payload.stop:
+		log.Warn("WaitFull() exiting; payload was stopped")
+		return
+	default:
+	}
+
 	payload.cond.Wait()
 }
 

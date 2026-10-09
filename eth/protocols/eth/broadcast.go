@@ -43,6 +43,7 @@ func (p *Peer) prefetchBTCBlocks() {
 	for {
 		select {
 		case <-time.After(5 * time.Second):
+			p.lock.Lock()
 			missingBlocks := p.blockchain.GetMissingBtcBlocks()
 			if missingBlocks != nil && len(missingBlocks) > 0 {
 				log.Info("Requesting missing BTC blocks from peer", "len", len(missingBlocks))
@@ -50,10 +51,11 @@ func (p *Peer) prefetchBTCBlocks() {
 				if err != nil {
 					// TODO: Change to Debug logging
 					log.Info("Error requesting BTC blocks from peer", "err", err)
+					p.lock.Unlock()
 					continue
 				}
 			}
-
+			p.lock.Unlock()
 		case <-p.term:
 			return
 		}
