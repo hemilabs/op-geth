@@ -688,6 +688,53 @@ func TestShouldFillFromMempool(t *testing.T) {
 	}
 }
 
+// TestBtcAttrAllowedForBlock pins the testnet-only BtcAttr cadence throttle: on the Hemi Sepolia testnet the
+// sequencer may attach a Bitcoin Attributes Deposited tx only every testnetBtcAttrBlockInterval'th block (so
+// a testnet3 difficulty bomb cannot starve user txs), while every other chain keeps the every-block behavior.
+// It is the build-path-only guard that pairs with shouldFillFromMempool, so it is unit-tested the same way.
+func TestBtcAttrAllowedForBlock(t *testing.T) {
+	cases := []struct {
+		name        string
+		chainID     *big.Int
+		blockNumber uint64
+		hasPending  bool
+		want        bool
+	}{
+		// Testnet: eligible (even) heights are never throttled, regardless of mempool demand — so user-tx load
+		// alone can never withhold a BtcAttr tx, which is what keeps demand from starving the BTC view.
+		{"testnet even height, pending", big.NewInt(hemiSepoliaTestnetChainID), 100, true, true},
+		{"testnet even height, idle", big.NewInt(hemiSepoliaTestnetChainID), 100, false, true},
+		{"testnet height 0, pending", big.NewInt(hemiSepoliaTestnetChainID), 0, true, true},
+		// Testnet: reserved (odd) heights are demand-gated — skipped only when user txs are waiting.
+		{"testnet odd height, pending -> throttled", big.NewInt(hemiSepoliaTestnetChainID), 101, true, false},
+		{"testnet odd height, idle -> still relays BTC", big.NewInt(hemiSepoliaTestnetChainID), 101, false, true},
+		{"testnet height 1, idle -> still relays BTC", big.NewInt(hemiSepoliaTestnetChainID), 1, false, true},
+		// Mainnet and other chains: never throttled, demand flag ignored.
+		{"mainnet never throttled (odd, pending)", big.NewInt(43111), 101, true, true},
+		{"mainnet never throttled (even, idle)", big.NewInt(43111), 100, false, true},
+		{"other chain never throttled (pending)", big.NewInt(1), 101, true, true},
+		{"nil chainID never throttled (pending)", nil, 101, true, true},
+	}
+	for _, c := range cases {
+		// demandEvaluated proves the thunk is consulted only when it can change the outcome (a reserved
+		// testnet height) and skipped — no mempool query — on every other branch.
+		demandEvaluated := false
+		demand := func() bool {
+			demandEvaluated = true
+			return c.hasPending
+		}
+		if got := btcAttrAllowedForBlock(c.chainID, c.blockNumber, demand); got != c.want {
+			t.Errorf("%s: btcAttrAllowedForBlock(%v, %d, hasPending=%v) = %v, want %v",
+				c.name, c.chainID, c.blockNumber, c.hasPending, got, c.want)
+		}
+		wantEvaluated := isHemiSepoliaTestnet(c.chainID) && c.blockNumber%testnetBtcAttrBlockInterval != 0
+		if demandEvaluated != wantEvaluated {
+			t.Errorf("%s: demand thunk evaluated = %v, want %v (should query only at a reserved testnet height)",
+				c.name, demandEvaluated, wantEvaluated)
+		}
+	}
+}
+
 // TestGenerateWorkMempoolFillGate proves the consolidated fillTransactions in generateWork actually consults
 // shouldFillFromMempool, by building the same block both ways and observing the gate flip: with noTxs=true
 // the seeded mempool is excluded, with noTxs=false it is filled. This exercises the exact exclusion code
@@ -749,6 +796,81 @@ func TestGenerateWorkMempoolFillGate(t *testing.T) {
 	require.NotNil(t, fill.block)
 	require.Positive(t, countUser(fill.block),
 		"noTxs=false must fill user txs from the mempool (gate returns true) — confirms the exclusion is meaningful")
+}
+
+// TestHasIncludablePendingTxs is the integration test for the BtcAttr throttle's demand signal. On a reserved
+// Hemi Sepolia testnet height the sequencer gives the block up to user txs (skipping the BtcAttr tx) only when
+// includable user txs are actually waiting, and it measures that with hasIncludablePendingTxs — the same
+// fee/DA filter fillTransactions applies — rather than a raw pool count. This drives that method against a
+// real txpool and pins the behavior that motivated choosing the filtered query over txpool.Stats(): a pool
+// that is non-empty but holds nothing the block would actually include is correctly reported as NO demand.
+//
+// Scope note: the end-to-end throttle arm in generateWork (skip-BtcAttr vs relay-BtcAttr at a reserved vs
+// eligible height) additionally requires hVM enabled and a live TBC node to emit a real BtcAttr tx from
+// GetBitcoinAttributesForNextBlock — this harness has none (b.chain.IsHvmEnabled() is false), and the backend
+// exposes a concrete *core.BlockChain with no injection seam, so that arm cannot be exercised here. The
+// decision logic layered on this signal is covered by TestBtcAttrAllowedForBlock; together they cover the
+// throttle's full decision without a TBC node.
+func TestHasIncludablePendingTxs(t *testing.T) {
+	cfg := jovianConfig()
+	engine := beacon.New(ethash.NewFaker())
+
+	// newEnv prepares a real sealing environment (header + state) for the block after genesis, exactly as
+	// generateWork would, so hasIncludablePendingTxs sees the same BaseFee/filters the fill path would.
+	newEnv := func(t *testing.T, w *Miner, b *testWorkerBackend) *environment {
+		parent := b.chain.CurrentBlock()
+		env, err := w.prepareWork(&generateParams{
+			parentHash:    parent.Hash(),
+			timestamp:     parent.Time + 12,
+			withdrawals:   types.Withdrawals{},
+			beaconRoot:    new(common.Hash),
+			gasLimit:      ptr(uint64(15_000_000)),
+			txs:           types.Transactions{types.NewTx(jovianDepositTx(testDAFootprintGasScalar))},
+			eip1559Params: eip1559.EncodeHolocene1559Params(250, 6),
+			minBaseFee:    new(uint64),
+		}, false)
+		require.NoError(t, err)
+		return env
+	}
+	addTxs := func(t *testing.T, b *testWorkerBackend, txs types.Transactions) {
+		for _, err := range b.txPool.Add(txs, true) {
+			require.NoError(t, err, "failed adding tx to pool")
+		}
+	}
+
+	t.Run("empty pool is not demand", func(t *testing.T) {
+		// Build WITHOUT newTestWorker's preloaded pending tx so the pool is genuinely empty.
+		b := newTestWorkerBackend(t, cfg, engine, rawdb.NewMemoryDatabase(), 0)
+		w := New(b, testConfig, engine)
+		require.False(t, w.hasIncludablePendingTxs(newEnv(t, w, b)),
+			"an empty mempool must report no includable demand")
+	})
+
+	t.Run("fee-eligible txs are demand", func(t *testing.T) {
+		w, b := newTestWorker(t, cfg, engine, rawdb.NewMemoryDatabase(), 0) // preloads a nonce-0 pending tx
+		addTxs(t, b, genTxs(1, 3))
+		require.True(t, w.hasIncludablePendingTxs(newEnv(t, w, b)),
+			"a pool of fee-eligible txs must report includable demand")
+	})
+
+	t.Run("non-empty pool with nothing meeting MinTip is not demand", func(t *testing.T) {
+		// The Stats()-vs-Pending() distinction that drove the round-2 design: the pool is non-empty, so a raw
+		// Stats() count would see "demand", but every tx fails the block's fee filter, so nothing is includable.
+		w, b := newTestWorker(t, cfg, engine, rawdb.NewMemoryDatabase(), 0)
+		addTxs(t, b, genTxs(1, 3))
+
+		// Raise the sequencer's min tip (the MinTip filter) above any tx's effective tip so the fill filter
+		// excludes them all. config is a per-miner copy, so this does not leak into other tests.
+		w.confMu.Lock()
+		w.config.GasPrice = new(big.Int).SetUint64(1_000_000_000_000_000_000) // 1e18 wei, unreachable tip
+		w.confMu.Unlock()
+
+		runnable, _ := b.txPool.Stats()
+		require.Positive(t, runnable, "pool must be non-empty so the assertion below is not vacuous (Stats sees demand)")
+		require.False(t, w.hasIncludablePendingTxs(newEnv(t, w, b)),
+			"a non-empty pool whose txs all fail the block's fee filter is NOT demand — this is exactly why the "+
+				"throttle uses the filtered Pending query rather than txpool.Stats()")
+	})
 }
 
 // Regression tests for applyTransaction's gas/state accounting around hVM precompiles.
