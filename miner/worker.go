@@ -150,6 +150,69 @@ func shouldFillFromMempool(noTxs, containsBtcAttrDepTx bool) bool {
 	return !noTxs && !containsBtcAttrDepTx
 }
 
+const (
+	// hemiSepoliaTestnetChainID is the L2 chain ID of the Hemi Sepolia (Hemi testnet) network. It is the
+	// only chain on which the BtcAttr block-cadence throttle below is active; every other chain (mainnet
+	// included) keeps the default "attach a BtcAttr tx to every block that has new BTC info" behavior.
+	hemiSepoliaTestnetChainID = 743111
+
+	// testnetBtcAttrBlockInterval sets how often a BtcAttr tx is eligible: one L2 height in every `interval`
+	// is eligible (blockNumber % interval == 0) and the other interval-1 heights are reserved for user txs.
+	// Raising the value therefore reserves MORE blocks for user txs, not fewer; at the chosen value of 2 this
+	// is exactly "every other block".
+	//
+	// A BtcAttr block excludes all mempool user txs (see shouldFillFromMempool), so when Bitcoin outruns Hemi
+	// — a testnet3 difficulty bomb produces more than one BTC block per 12s Hemi slot — an unthrottled
+	// sequencer attaches a BtcAttr tx to every block and starves user txs indefinitely. The throttle is also
+	// demand-gated (see btcAttrAllowedForBlock): a reserved height skips BtcAttr only while includable user
+	// txs wait, so an idle testnet still relays BTC every block and eligible heights are never withheld.
+	//
+	// Reserving a block drops no BTC header: GetBitcoinAttributesForNextBlock recomputes the full
+	// lightweight-vs-full-node diff for each new block, so anything not relayed is picked up by a later
+	// BtcAttr block. It is a rate limit — the build path caps each BtcAttr tx at a bounded number of headers —
+	// so under sustained demand the BTC view lags longer than unthrottled, draining once the bomb ends or the
+	// mempool quiets; it never stalls permanently.
+	testnetBtcAttrBlockInterval = 2
+)
+
+// isHemiSepoliaTestnet reports whether chainID is the Hemi Sepolia testnet — the only chain on which the
+// BtcAttr cadence throttle is active. nil-safe so a config without a chain ID is treated as non-testnet.
+func isHemiSepoliaTestnet(chainID *big.Int) bool {
+	return chainID != nil && chainID.Uint64() == hemiSepoliaTestnetChainID
+}
+
+// btcAttrAllowedForBlock reports whether the sequencer may attach a Bitcoin Attributes Deposited tx to the
+// block at the given height. It is a pure, consensus-neutral block-production policy: it only governs what
+// the testnet sequencer *builds*, never what any node *accepts* — a block with no BtcAttr tx is always valid
+// (the BTC view simply does not advance that block), and a BtcAttr block still obeys every existing rule, so
+// validators need no change and this stays safe to run as a sequencer-only patch.
+//
+// On mainnet and every non-testnet chain it always returns true (unchanged every-block behavior). On the
+// Hemi Sepolia testnet:
+//   - BtcAttr-eligible heights (blockNumber % interval == 0) always return true, so the throttle never
+//     withholds a BtcAttr tx for demand reasons — user-tx load alone cannot starve the BTC view (whether a
+//     tx is actually attached then still depends on new BTC info and the len(genParam.txs) < 2 gate).
+//   - Other (reserved) heights return true only when no includable user txs are pending: the block is given
+//     up to a BtcAttr tx only if sacrificing it would actually let user txs through. An idle testnet thus
+//     keeps relaying BTC every block, while during a difficulty bomb with user demand every other block is
+//     free for user txs.
+//
+// hasPendingUserTxs is a thunk evaluated only on the one branch that needs it (a reserved testnet height), so
+// callers pay for the mempool query lazily — never on mainnet, non-testnet chains, or eligible heights. The
+// height component is deterministic per block height (stable across restarts and reorgs); the demand
+// component depends on live mempool state, which is fine because only the sequencer evaluates this — no node
+// re-derives the decision. Kept as a small predicate so the throttle logic is unit-testable without a live
+// TBC node or mempool (pass a thunk returning the demand bool).
+func btcAttrAllowedForBlock(chainID *big.Int, blockNumber uint64, hasPendingUserTxs func() bool) bool {
+	if !isHemiSepoliaTestnet(chainID) {
+		return true
+	}
+	if blockNumber%testnetBtcAttrBlockInterval == 0 {
+		return true
+	}
+	return !hasPendingUserTxs()
+}
+
 // generateWork generates a sealing block based on the given parameters.
 func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPayloadResult {
 	work, err := miner.prepareWork(genParam, witness)
@@ -197,9 +260,27 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 
 	containsBtcAttrDepTx := false
 	if !genParam.noTxs && len(genParam.txs) < 2 {
-		// Check whether a new Bitcoin Attributes Deposited tx should be included. The IsHvmEnabled/IsHvm0
-		// gate is redundant: GetBitcoinAttributesForNextBlock returns nil with no error when hVM is off.
-		if miner.backend.BlockChain().IsHvmEnabled() && miner.chainConfig.IsHvm0(genParam.timestamp) {
+		// hVM gate first: GetBitcoinAttributesForNextBlock returns nil when hVM is off or before activation,
+		// so there is nothing to attach and — importantly — nothing for the testnet throttle to withhold.
+		// Evaluating the throttle only inside the hVM-active arm keeps it (and its mempool query, and its
+		// "reserving block" log) from firing in a regime where no BtcAttr tx would ever be generated.
+		hvmActive := miner.backend.BlockChain().IsHvmEnabled() && miner.chainConfig.IsHvm0(genParam.timestamp)
+		switch {
+		case !hvmActive:
+			log.Info("worker not generating a Bitcoin Attributes Deposited transaction")
+		case !btcAttrAllowedForBlock(miner.chainConfig.ChainID, work.header.Number.Uint64(), func() bool {
+			// Thunk: only runs at a reserved Hemi Sepolia testnet height. Reserve this block for user txs
+			// only when some would actually be included (same fee/DA filter as fillTransactions).
+			return miner.hasIncludablePendingTxs(work)
+		}):
+			// Testnet-only throttle: this reserved height has includable user txs waiting, so the sequencer
+			// skips the BtcAttr tx even if new Bitcoin information is available. No header is dropped — any
+			// accumulated BTC headers are relayed by the next BtcAttr-eligible block
+			// (GetBitcoinAttributesForNextBlock recomputes the full diff for each new block); see
+			// testnetBtcAttrBlockInterval for the throughput cost.
+			log.Info("Skipping Bitcoin Attributes Deposited transaction this block (testnet cadence throttle), reserving block for pending user transactions",
+				"number", work.header.Number.Uint64(), "interval", testnetBtcAttrBlockInterval)
+		default:
 			btcAttrDepTx, err := miner.backend.BlockChain().GetBitcoinAttributesForNextBlock(work.header.Time)
 			if err != nil {
 				log.Error("Failed to create a Bitcoin Attributes Deposited transaction in generateWork()", "err", err)
@@ -216,8 +297,6 @@ func (miner *Miner) generateWork(genParam *generateParams, witness bool) *newPay
 				containsBtcAttrDepTx = true
 				log.Info("Block contains BTC Attributes Deposited transaction, not adding mempool transactions")
 			}
-		} else {
-			log.Info("worker not generating a Bitcoin Attributes Deposited transaction")
 		}
 	}
 
@@ -741,6 +820,74 @@ func (miner *Miner) commitTransactions(env *environment, plainTxs, blobTxs *tran
 	return nil
 }
 
+// pendingTxFilters builds the (plain, blob) PendingFilter pair that selects the mempool transactions eligible
+// for inclusion in env's block — the dynamic-fee (1559/4844), DA-size and gas-limit filtering the fill path
+// applies. It is shared between fillTransactions (which actually includes the txs) and hasIncludablePendingTxs
+// (which only asks whether any exist), so the BtcAttr demand check measures demand by exactly what would be
+// included, never a looser pool count.
+//
+// tip (the configured GasPrice / min miner tip) is passed in rather than read here so the caller can take a
+// single confMu snapshot of every config value it needs at once — fillTransactions reads tip and prio
+// together under one lock, exactly as before this helper was extracted.
+func (miner *Miner) pendingTxFilters(env *environment, tip *big.Int) (plain, blob txpool.PendingFilter) {
+	base := txpool.PendingFilter{
+		MinTip:      uint256.MustFromBig(tip),
+		MaxDATxSize: miner.config.MaxDATxSize,
+	}
+	if env.header.BaseFee != nil {
+		base.BaseFee = uint256.MustFromBig(env.header.BaseFee)
+	}
+	if env.header.ExcessBlobGas != nil {
+		base.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(miner.chainConfig, env.header))
+	}
+	if miner.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
+		base.GasLimitCap = params.MaxTxGas
+	}
+
+	plain = base
+	plain.BlobTxs = false
+
+	blob = base
+	blob.BlobTxs = true
+	if miner.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
+		blob.BlobVersion = types.BlobSidecarVersion1
+	} else {
+		blob.BlobVersion = types.BlobSidecarVersion0
+	}
+	return plain, blob
+}
+
+// hasIncludablePendingTxs reports whether the mempool currently holds at least one transaction that would be
+// eligible for inclusion in env's block, using the same fee/DA filters as fillTransactions. The Hemi Sepolia
+// testnet BtcAttr throttle consults it so a reserved block is given up only when doing so genuinely lets a
+// user tx through; a pool holding only below-fee / filtered-out txs is correctly treated as no demand.
+//
+// It is a best-effort demand estimate, deliberately not a perfect predictor of what the subsequent
+// fillTransactions will actually commit:
+//   - it checks pool-level fee/DA eligibility, not the block's remaining gas budget or the nonce/state
+//     effects of the already-force-included deposit txs, so it can over-report (a tx that passes the fee
+//     filter but will not fit or is nonce-shadowed still counts as demand); and
+//   - the pool is sampled here and can change before fillTransactions runs (TOCTOU), so demand can evaporate
+//     (or appear) in between.
+//
+// Both cases are benign: a mis-estimate at worst yields one reserved block carrying neither a BtcAttr tx nor
+// a user tx — never a consensus problem, and never worse than the every-other-block BTC cadence of the
+// plain height-parity throttle. Because the fill path re-queries the pool itself, a throttled block runs up
+// to two Pending builds here (plain, then blob only if plain is empty) and two more in fillTransactions; that
+// redundancy is accepted to keep the hot fill path untouched (testnet only, and only on the reserved
+// heights — interval-1 of every interval).
+func (miner *Miner) hasIncludablePendingTxs(env *environment) bool {
+	miner.confMu.RLock()
+	tip := miner.config.GasPrice
+	miner.confMu.RUnlock()
+
+	plainFilter, blobFilter := miner.pendingTxFilters(env, tip)
+	if len(miner.txpool.Pending(plainFilter)) > 0 {
+		return true
+	}
+	return len(miner.txpool.Pending(blobFilter)) > 0
+}
+
 // fillTransactions retrieves the pending transactions from the txpool and fills them
 // into the given sealing block. The transaction selection and ordering strategy can
 // be customized with the plugin in the future.
@@ -751,29 +898,9 @@ func (miner *Miner) fillTransactions(interrupt *atomic.Int32, env *environment) 
 	miner.confMu.RUnlock()
 
 	// Retrieve the pending transactions pre-filtered by the 1559/4844 dynamic fees
-	filter := txpool.PendingFilter{
-		MinTip:      uint256.MustFromBig(tip),
-		MaxDATxSize: miner.config.MaxDATxSize,
-	}
-	if env.header.BaseFee != nil {
-		filter.BaseFee = uint256.MustFromBig(env.header.BaseFee)
-	}
-	if env.header.ExcessBlobGas != nil {
-		filter.BlobFee = uint256.MustFromBig(eip4844.CalcBlobFee(miner.chainConfig, env.header))
-	}
-	if miner.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
-		filter.GasLimitCap = params.MaxTxGas
-	}
-	filter.BlobTxs = false
-	pendingPlainTxs := miner.txpool.Pending(filter)
-
-	filter.BlobTxs = true
-	if miner.chainConfig.IsOsaka(env.header.Number, env.header.Time) {
-		filter.BlobVersion = types.BlobSidecarVersion1
-	} else {
-		filter.BlobVersion = types.BlobSidecarVersion0
-	}
-	pendingBlobTxs := miner.txpool.Pending(filter)
+	plainFilter, blobFilter := miner.pendingTxFilters(env, tip)
+	pendingPlainTxs := miner.txpool.Pending(plainFilter)
+	pendingBlobTxs := miner.txpool.Pending(blobFilter)
 
 	// Split the pending transactions into locals and remotes.
 	prioPlainTxs, normalPlainTxs := make(map[common.Address][]*txpool.LazyTransaction), pendingPlainTxs
