@@ -1155,6 +1155,11 @@ var (
 		Usage:    "Manually specify the hVM phase 0 activation timestamp, overriding the bundled setting",
 		Category: flags.EthCategory,
 	}
+	OverrideHvmPrecompiles = &cli.Uint64Flag{
+		Name:     "override.hvmprecompiles",
+		Usage:    "Timestamp from which hVM precompiles exist as empty no-ops before hVM phase 0 (testnet history replay only; do not set on mainnet)",
+		Category: flags.EthCategory,
+	}
 	RollupSequencerTxConditionalEnabledFlag = &cli.BoolFlag{
 		Name:     "rollup.sequencertxconditionalenabled",
 		Usage:    "Serve the eth_sendRawTransactionConditional endpoint and apply the conditional constraints on mempool inclusion & block building",

@@ -307,7 +307,8 @@ type ChainOverrides struct {
 	ApplySuperchainUpgrades  bool
 
 	// Hemi
-	OverrideHemiHvm0 *uint64
+	OverrideHemiHvm0           *uint64
+	OverrideHemiHvmPrecompiles *uint64
 }
 
 // apply applies the chain overrides on the supplied chain config.
@@ -391,6 +392,9 @@ func (o *ChainOverrides) apply(cfg *params.ChainConfig) error {
 	}
 	if o.OverrideHemiHvm0 != nil {
 		cfg.Hvm0Time = o.OverrideHemiHvm0
+	}
+	if o.OverrideHemiHvmPrecompiles != nil {
+		cfg.HvmPrecompilesTime = o.OverrideHemiHvmPrecompiles
 	}
 
 	// We check for validity after applying the overrides, even if there weren't any.

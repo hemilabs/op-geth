@@ -357,6 +357,10 @@ func makeFullNode(ctx *cli.Context) *node.Node {
 		v := ctx.Uint64(utils.OverrideHvm0.Name)
 		cfg.Eth.OverrideHemiHvm0 = &v
 	}
+	if ctx.IsSet(utils.OverrideHvmPrecompiles.Name) {
+		v := ctx.Uint64(utils.OverrideHvmPrecompiles.Name)
+		cfg.Eth.OverrideHemiHvmPrecompiles = &v
+	}
 	if ctx.IsSet(utils.HealthDeucalionAddress.Name) {
 		v := ctx.String(utils.HealthDeucalionAddress.Name)
 		cfg.Eth.DeucalionAddress = v

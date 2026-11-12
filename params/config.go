@@ -519,6 +519,11 @@ type ChainConfig struct {
 
 	// Hemi-specific activations
 	Hvm0Time *uint64 `json:"hvm0Time,omitempty"` // HVM Phase 0 activation time
+	// HvmPrecompilesTime exposes the hVM precompile set (warm addresses, RequiredGas charged) before
+	// Hvm0Time. Between HvmPrecompilesTime and Hvm0Time every hVM precompile is an empty no-op that never
+	// queries TBC. It exists only to re-execute testnet history produced while hVM Phase 0 was scheduled
+	// earlier; leave it nil on networks without that history (e.g. mainnet).
+	HvmPrecompilesTime *uint64 `json:"hvmPrecompilesTime,omitempty"`
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -829,6 +834,9 @@ func (c *ChainConfig) Description() string {
 	if c.Hvm0Time != nil {
 		banner += fmt.Sprintf(" - HVM Phase 0:                 @%-10v\n", *c.Hvm0Time)
 	}
+	if c.HvmPrecompilesTime != nil {
+		banner += fmt.Sprintf(" - HVM legacy precompiles:      @%-10v\n", *c.HvmPrecompilesTime)
+	}
 	return banner
 }
 
@@ -1117,6 +1125,12 @@ func (c *ChainConfig) IsOptimismPreBedrock(num *big.Int) bool {
 
 func (c *ChainConfig) IsHvm0(time uint64) bool {
 	return isTimestampForked(c.Hvm0Time, time)
+}
+
+// IsHvmPrecompiles reports whether the hVM precompile set is exposed at time: always once hVM Phase 0 is
+// active, and additionally from HvmPrecompilesTime onward (the pre-phase0 legacy no-op window).
+func (c *ChainConfig) IsHvmPrecompiles(time uint64) bool {
+	return c.IsHvm0(time) || isTimestampForked(c.HvmPrecompilesTime, time)
 }
 
 // CheckCompatible checks whether scheduled fork transitions have been imported
@@ -1662,7 +1676,7 @@ type Rules struct {
 	IsMerge, IsShanghai, IsCancun, IsPrague, IsOsaka        bool
 	IsAmsterdam, IsVerkle                                   bool
 	IsOptimismBedrock, IsOptimismRegolith                   bool
-	IsHvm0                                                  bool
+	IsHvm0, IsHvmPrecompiles                                bool
 	IsOptimismCanyon, IsOptimismFjord                       bool
 	IsOptimismGranite, IsOptimismHolocene                   bool
 	IsOptimismIsthmus, IsOptimismJovian                     bool
@@ -1704,6 +1718,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsOptimismCanyon:   isMerge && c.IsOptimismCanyon(timestamp),
 		// Hemi
 		IsHvm0:             c.IsHvm0(timestamp), // TODO: Review HVM's compatibility with older upgrades and require minimum one here
+		IsHvmPrecompiles:   c.IsHvmPrecompiles(timestamp),
 		IsOptimismFjord:    isMerge && c.IsOptimismFjord(timestamp),
 		IsOptimismGranite:  isMerge && c.IsOptimismGranite(timestamp),
 		IsOptimismHolocene: isMerge && c.IsOptimismHolocene(timestamp),

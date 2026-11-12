@@ -355,7 +355,7 @@ func TestActivePrecompilesHvm0Inclusion(t *testing.T) {
 		return false
 	}
 
-	active := ActivePrecompiles(params.Rules{IsHvm0: true})
+	active := ActivePrecompiles(params.Rules{IsHvm0: true, IsHvmPrecompiles: true})
 	for _, a := range PrecompiledAddressesHvm0 {
 		require.Truef(t, contains(active, a), "hVM precompile %s must be active when IsHvm0", a)
 	}
@@ -424,10 +424,10 @@ func TestActivePrecompilesHvm0AppendsToUpstream(t *testing.T) {
 	// Every realistic Hemi window runs under an OP-stack fork; the warm set must be EXACTLY the hVM set, with the
 	// standard precompiles cold, matching mainnet.
 	for _, rules := range []params.Rules{
-		{IsHvm0: true, IsOptimismIsthmus: true, IsPrague: true}, // the live Hemi fork window
-		{IsHvm0: true, IsOptimismGranite: true},
-		{IsHvm0: true, IsOptimismFjord: true},
-		{IsHvm0: true, IsOptimismJovian: true, IsPrague: true},
+		{IsHvm0: true, IsHvmPrecompiles: true, IsOptimismIsthmus: true, IsPrague: true}, // the live Hemi fork window
+		{IsHvm0: true, IsHvmPrecompiles: true, IsOptimismGranite: true},
+		{IsHvm0: true, IsHvmPrecompiles: true, IsOptimismFjord: true},
+		{IsHvm0: true, IsHvmPrecompiles: true, IsOptimismJovian: true, IsPrague: true},
 	} {
 		active := ActivePrecompiles(rules)
 		require.Lenf(t, active, len(PrecompiledAddressesHvm0),
@@ -468,7 +468,7 @@ func TestHvmPrepareLeavesStandardPrecompilesCold(t *testing.T) {
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	require.NoError(t, err)
 
-	rules := params.Rules{IsHvm0: true, IsOptimismIsthmus: true, IsPrague: true, IsShanghai: true, IsBerlin: true, IsEIP2929: true}
+	rules := params.Rules{IsHvm0: true, IsHvmPrecompiles: true, IsOptimismIsthmus: true, IsPrague: true, IsShanghai: true, IsBerlin: true, IsEIP2929: true}
 	sender := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	coinbase := common.HexToAddress("0x2222222222222222222222222222222222222222")
 	dst := common.HexToAddress("0x3333333333333333333333333333333333333333")
