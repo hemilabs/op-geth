@@ -28,7 +28,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// These tests pin the pre-phase0 legacy window (params.ChainConfig.HvmPrecompilesTime): testnet history
+// These tests pin the pre-phase0 legacy window on Hemi testnet (params.HemiTestnetChainID): testnet history
 // produced while hVM Phase 0 was scheduled earlier called the hVM precompiles before the (current) Hvm0Time.
 // Inside the window the precompiles must exist (warm, RequiredGas charged) but return empty without ever
 // querying TBC, so re-execution reproduces the canonical gas, receipts and state root.
@@ -36,19 +36,19 @@ import (
 const (
 	prePhase0BlockTime = uint64(1)
 	prePhase0Hvm0Time  = uint64(1_000)
+	hemiMainnetChainID = uint64(43111)
 )
 
-// newPrePhase0EVM builds an EVM at prePhase0BlockTime (before Hvm0Time) with the legacy window either set
-// (activating at genesis) or unset.
+// newPrePhase0EVM builds an EVM at prePhase0BlockTime (before Hvm0Time) on Hemi testnet (window active) or
+// on Hemi mainnet (no window).
 func newPrePhase0EVM(t *testing.T, window bool) (*EVM, *state.StateDB) {
 	t.Helper()
 	cfg := *params.MergedTestChainConfig
 	hvm0 := prePhase0Hvm0Time
 	cfg.Hvm0Time = &hvm0
-	cfg.HvmPrecompilesTime = nil
+	cfg.ChainID = new(big.Int).SetUint64(hemiMainnetChainID)
 	if window {
-		zero := uint64(0)
-		cfg.HvmPrecompilesTime = &zero
+		cfg.ChainID = big.NewInt(params.HemiTestnetChainID)
 	}
 	statedb, err := state.New(types.EmptyRootHash, state.NewDatabaseForTesting())
 	require.NoError(t, err)
@@ -64,17 +64,26 @@ func newPrePhase0EVM(t *testing.T, window bool) (*EVM, *state.StateDB) {
 }
 
 func TestConfigIsHvmPrecompiles(t *testing.T) {
-	hvm0, win := uint64(100), uint64(50)
-	c := &params.ChainConfig{Hvm0Time: &hvm0, HvmPrecompilesTime: &win}
-	require.False(t, c.IsHvmPrecompiles(49), "before the window")
-	require.True(t, c.IsHvmPrecompiles(50), "window start")
-	require.False(t, c.IsHvm0(50), "window is pre-phase0")
+	hvm0 := uint64(100)
+	testnet := big.NewInt(params.HemiTestnetChainID)
+
+	c := &params.ChainConfig{ChainID: testnet, Hvm0Time: &hvm0}
+	require.True(t, c.IsHemiTestnet())
+	require.True(t, c.IsHvmPrecompiles(0), "testnet: window from genesis")
+	require.True(t, c.IsHvmPrecompiles(99), "testnet: window up to phase0")
+	require.False(t, c.IsHvm0(99), "window is pre-phase0")
 	require.True(t, c.IsHvmPrecompiles(100), "phase0 implies precompiles")
 
-	// No window configured (mainnet): precompiles follow Hvm0Time exactly, as before.
-	m := &params.ChainConfig{Hvm0Time: &hvm0}
-	require.False(t, m.IsHvmPrecompiles(99))
-	require.True(t, m.IsHvmPrecompiles(100))
+	// Testnet without a scheduled phase0: there is no "before phase0", so no window.
+	require.False(t, (&params.ChainConfig{ChainID: testnet}).IsHvmPrecompiles(0))
+
+	// Any other chain (mainnet, devnets, no chain ID): precompiles follow Hvm0Time exactly, as before.
+	for _, id := range []*big.Int{new(big.Int).SetUint64(hemiMainnetChainID), big.NewInt(1337), nil} {
+		m := &params.ChainConfig{ChainID: id, Hvm0Time: &hvm0}
+		require.False(t, m.IsHemiTestnet())
+		require.Falsef(t, m.IsHvmPrecompiles(99), "chain %v before phase0", id)
+		require.Truef(t, m.IsHvmPrecompiles(100), "chain %v at phase0", id)
+	}
 }
 
 // Without the window, pre-phase0 behavior is unchanged: 0x40 is not a precompile and not pre-warmed.

@@ -243,8 +243,7 @@ type Config struct {
 
 	OverrideOptimismInterop *uint64 `toml:",omitempty"`
 
-	OverrideHemiHvm0           *uint64 `toml:",omitempty"`
-	OverrideHemiHvmPrecompiles *uint64 `toml:",omitempty"`
+	OverrideHemiHvm0 *uint64 `toml:",omitempty"`
 
 	OverrideHvmEnabled       bool    `toml:",omitempty"`
 	OverrideHvmGenesisHeader string  `toml:",omitempty"`

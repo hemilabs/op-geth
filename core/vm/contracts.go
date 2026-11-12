@@ -106,8 +106,8 @@ var HvmNullBlockHash = make([]byte, 32)
 // no-op, which does NOT increment this counter.
 var hvmPrecompileInvalidDataCounter = metrics.NewRegisteredCounter("vm/hvm/precompile/invalid_data", nil)
 
-// hvmPrecompilePrePhase0Counter counts hVM precompile calls handled as empty no-ops inside the pre-phase0
-// legacy window (params.ChainConfig.HvmPrecompilesTime). Expected only while replaying testnet history.
+// hvmPrecompilePrePhase0Counter counts hVM precompile calls handled as empty no-ops before hVM Phase 0
+// on Hemi testnet (params.ChainConfig.IsHvmPrecompiles). Expected only while replaying testnet history.
 var hvmPrecompilePrePhase0Counter = metrics.NewRegisteredCounter("vm/hvm/precompile/pre_phase0_noop", nil)
 
 // utxoIndexHashForLastHeader is the seam btcLastHeader uses to read the UTXO indexer position. It defaults to the

@@ -184,7 +184,6 @@ var (
 		utils.OverrideHvmHeaderDataDir,
 		utils.OverrideHvmGenesisHeight,
 		utils.OverrideHvm0,
-		utils.OverrideHvmPrecompiles,
 		utils.TBCSeeds,
 		configFileFlag,
 		utils.LogDebugFlag,

@@ -43,11 +43,6 @@ func (c *ChainConfig) opCheckCompatible(newcfg *ChainConfig, headNumber *big.Int
 	if isForkTimestampIncompatible(c.Hvm0Time, newcfg.Hvm0Time, headTimestamp, genesisTimestamp) {
 		return newTimestampCompatError("hVM Phase 0 fork timestamp", c.Hvm0Time, newcfg.Hvm0Time)
 	}
-	// The legacy pre-phase0 precompile window changes gas and the warm-address set, so moving it across an
-	// already-processed head must force the same protective rewind as Hvm0Time.
-	if isForkTimestampIncompatible(c.HvmPrecompilesTime, newcfg.HvmPrecompilesTime, headTimestamp, genesisTimestamp) {
-		return newTimestampCompatError("hVM legacy precompiles timestamp", c.HvmPrecompilesTime, newcfg.HvmPrecompilesTime)
-	}
 	return nil
 }
 

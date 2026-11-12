@@ -79,7 +79,6 @@ func (c Config) MarshalTOML() (interface{}, error) {
 		OverrideOptimismJovian                    *uint64       `toml:",omitempty"`
 		OverrideOptimismInterop                   *uint64       `toml:",omitempty"`
 		OverrideHemiHvm0                          *uint64       `toml:",omitempty"`
-		OverrideHemiHvmPrecompiles                *uint64       `toml:",omitempty"`
 		OverrideHvmEnabled                        bool          `toml:",omitempty"`
 		OverrideHvmGenesisHeader                  string        `toml:",omitempty"`
 		OverrideHvmGenesisHeight                  *uint64       `toml:",omitempty"`
@@ -161,7 +160,6 @@ func (c Config) MarshalTOML() (interface{}, error) {
 	enc.OverrideOptimismJovian = c.OverrideOptimismJovian
 	enc.OverrideOptimismInterop = c.OverrideOptimismInterop
 	enc.OverrideHemiHvm0 = c.OverrideHemiHvm0
-	enc.OverrideHemiHvmPrecompiles = c.OverrideHemiHvmPrecompiles
 	enc.OverrideHvmEnabled = c.OverrideHvmEnabled
 	enc.OverrideHvmGenesisHeader = c.OverrideHvmGenesisHeader
 	enc.OverrideHvmGenesisHeight = c.OverrideHvmGenesisHeight
@@ -247,7 +245,6 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 		OverrideOptimismJovian                    *uint64        `toml:",omitempty"`
 		OverrideOptimismInterop                   *uint64        `toml:",omitempty"`
 		OverrideHemiHvm0                          *uint64        `toml:",omitempty"`
-		OverrideHemiHvmPrecompiles                *uint64        `toml:",omitempty"`
 		OverrideHvmEnabled                        *bool          `toml:",omitempty"`
 		OverrideHvmGenesisHeader                  *string        `toml:",omitempty"`
 		OverrideHvmGenesisHeight                  *uint64        `toml:",omitempty"`
@@ -455,9 +452,6 @@ func (c *Config) UnmarshalTOML(unmarshal func(interface{}) error) error {
 	}
 	if dec.OverrideHemiHvm0 != nil {
 		c.OverrideHemiHvm0 = dec.OverrideHemiHvm0
-	}
-	if dec.OverrideHemiHvmPrecompiles != nil {
-		c.OverrideHemiHvmPrecompiles = dec.OverrideHemiHvmPrecompiles
 	}
 	if dec.OverrideHvmEnabled != nil {
 		c.OverrideHvmEnabled = *dec.OverrideHvmEnabled

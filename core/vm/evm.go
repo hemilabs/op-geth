@@ -46,7 +46,7 @@ type (
 // var ContextBlockNotSet = common.BytesToHash([]byte{0xFF, 0xFF, 0xFF, 0xFF})
 
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
-	// IsHvmPrecompiles is true whenever IsHvm0 is, and additionally inside the pre-phase0 legacy window
+	// IsHvmPrecompiles is true whenever IsHvm0 is, and additionally before hVM Phase 0 on Hemi testnet,
 	// where runPrecompile turns every hVM precompile into an empty no-op.
 	if evm.chainRules.IsHvmPrecompiles {
 		for address, contract := range PrecompiledContractsHvm0 {

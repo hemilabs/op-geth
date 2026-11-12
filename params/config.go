@@ -519,11 +519,6 @@ type ChainConfig struct {
 
 	// Hemi-specific activations
 	Hvm0Time *uint64 `json:"hvm0Time,omitempty"` // HVM Phase 0 activation time
-	// HvmPrecompilesTime exposes the hVM precompile set (warm addresses, RequiredGas charged) before
-	// Hvm0Time. Between HvmPrecompilesTime and Hvm0Time every hVM precompile is an empty no-op that never
-	// queries TBC. It exists only to re-execute testnet history produced while hVM Phase 0 was scheduled
-	// earlier; leave it nil on networks without that history (e.g. mainnet).
-	HvmPrecompilesTime *uint64 `json:"hvmPrecompilesTime,omitempty"`
 
 	// TerminalTotalDifficulty is the amount of total difficulty reached by
 	// the network that triggers the consensus upgrade.
@@ -834,9 +829,6 @@ func (c *ChainConfig) Description() string {
 	if c.Hvm0Time != nil {
 		banner += fmt.Sprintf(" - HVM Phase 0:                 @%-10v\n", *c.Hvm0Time)
 	}
-	if c.HvmPrecompilesTime != nil {
-		banner += fmt.Sprintf(" - HVM legacy precompiles:      @%-10v\n", *c.HvmPrecompilesTime)
-	}
 	return banner
 }
 
@@ -1127,10 +1119,21 @@ func (c *ChainConfig) IsHvm0(time uint64) bool {
 	return isTimestampForked(c.Hvm0Time, time)
 }
 
+// HemiTestnetChainID is the chain ID of Hemi testnet. Its history was produced while hVM Phase 0 was
+// scheduled earlier than the current Hvm0Time, so blocks before Hvm0Time called the hVM precompiles while
+// they existed (warm, RequiredGas charged) but returned empty.
+const HemiTestnetChainID = 743111
+
+// IsHemiTestnet reports whether this config is for Hemi testnet.
+func (c *ChainConfig) IsHemiTestnet() bool {
+	return c.ChainID != nil && c.ChainID.IsUint64() && c.ChainID.Uint64() == HemiTestnetChainID
+}
+
 // IsHvmPrecompiles reports whether the hVM precompile set is exposed at time: always once hVM Phase 0 is
-// active, and additionally from HvmPrecompilesTime onward (the pre-phase0 legacy no-op window).
+// active, and additionally before hVM Phase 0 on Hemi testnet (the pre-phase0 legacy no-op window used to
+// replay testnet history). On every other chain it is identical to IsHvm0.
 func (c *ChainConfig) IsHvmPrecompiles(time uint64) bool {
-	return c.IsHvm0(time) || isTimestampForked(c.HvmPrecompilesTime, time)
+	return c.IsHvm0(time) || (c.Hvm0Time != nil && c.IsHemiTestnet())
 }
 
 // CheckCompatible checks whether scheduled fork transitions have been imported

@@ -372,10 +372,6 @@ func New(stack *node.Node, config *ethconfig.Config, ctx context.Context) (*Ethe
 	} else {
 		log.Info("Creating new blockchain, hVM0 override not set.")
 	}
-	if config.OverrideHemiHvmPrecompiles != nil {
-		overrides.OverrideHemiHvmPrecompiles = config.OverrideHemiHvmPrecompiles
-		log.Info("hVM legacy precompiles override set", "time", *overrides.OverrideHemiHvmPrecompiles)
-	}
 
 	overrides.ApplySuperchainUpgrades = config.ApplySuperchainUpgrades
 	options.Overrides = &overrides

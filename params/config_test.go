@@ -185,20 +185,6 @@ func TestCheckCompatible(t *testing.T) {
 				RewindToTime: 9,
 			},
 		},
-		// The pre-phase0 legacy precompile window changes gas/warm sets, so moving it across a processed head must
-		// rewind exactly like Hvm0Time.
-		{
-			stored:           &ChainConfig{HvmPrecompilesTime: newUint64(10)},
-			new:              &ChainConfig{HvmPrecompilesTime: newUint64(20)},
-			headTimestamp:    25,
-			genesisTimestamp: newUint64(15),
-			wantErr: &ConfigCompatError{
-				What:         "hVM legacy precompiles timestamp",
-				StoredTime:   newUint64(10),
-				NewTime:      newUint64(20),
-				RewindToTime: 9,
-			},
-		},
 		// Control: head before either Hvm0Time means no block has been processed under either schedule, so moving the
 		// fork is compatible (no rewind). Pins that the guard is head-gated, not a blanket "any Hvm0Time change rewinds".
 		{
