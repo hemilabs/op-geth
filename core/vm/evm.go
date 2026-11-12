@@ -46,7 +46,9 @@ type (
 // var ContextBlockNotSet = common.BytesToHash([]byte{0xFF, 0xFF, 0xFF, 0xFF})
 
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
-	if evm.chainRules.IsHvm0 {
+	// IsHvmPrecompiles is true whenever IsHvm0 is, and additionally before hVM Phase 0 on Hemi testnet,
+	// where runPrecompile turns every hVM precompile into an empty no-op.
+	if evm.chainRules.IsHvmPrecompiles {
 		for address, contract := range PrecompiledContractsHvm0 {
 			if address.Cmp(addr) == 0 {
 				return contract, true
@@ -162,11 +164,32 @@ type EVM struct {
 // historical no-op behavior. The offending transaction is included as a no-op,
 // identically on builders and validators.
 func (evm *EVM) runPrecompile(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
+	if evm.chainRules.IsHvmPrecompiles && !evm.chainRules.IsHvm0 && isHVMPrecompile(p) {
+		return evm.runHVMPrecompileLegacyNoop(p, input, gas)
+	}
 	ret, remainingGas, err := evm.runPrecompileGuarded(p, input, gas)
 	if errors.Is(err, ErrHVMInvalidPrecompileInput) {
 		return nil, remainingGas, nil
 	}
 	return ret, remainingGas, err
+}
+
+// runHVMPrecompileLegacyNoop handles an hVM precompile called inside the pre-phase0 legacy window
+// (rules.IsHvmPrecompiles && !rules.IsHvm0). Testnet history from that window was produced while the hVM
+// precompiles existed but TBC had no data, so each call charged its fixed RequiredGas and returned empty.
+// Replaying that exactly (without touching TBC, which has no data for these blocks) reproduces the
+// canonical gas, receipts and state root.
+func (evm *EVM) runHVMPrecompileLegacyNoop(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
+	gasCost := p.RequiredGas(input)
+	if gas < gasCost {
+		return nil, 0, ErrOutOfGas
+	}
+	if t := evm.Config.Tracer; t != nil && t.OnGasChange != nil {
+		t.OnGasChange(gas, gas-gasCost, tracing.GasChangeCallPrecompiledContract)
+	}
+	hvmPrecompilePrePhase0Counter.Inc(1)
+	log.Debug("hVM precompile called before hVM phase 0; treating as a no-op", "precompile", p.Name())
+	return nil, gas - gasCost, nil
 }
 
 // runPrecompileGuarded executes the precompile. For hVM (Bitcoin) precompiles it installs a

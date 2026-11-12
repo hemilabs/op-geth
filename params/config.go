@@ -1119,6 +1119,23 @@ func (c *ChainConfig) IsHvm0(time uint64) bool {
 	return isTimestampForked(c.Hvm0Time, time)
 }
 
+// HemiTestnetChainID is the chain ID of Hemi testnet. Its history was produced while hVM Phase 0 was
+// scheduled earlier than the current Hvm0Time, so blocks before Hvm0Time called the hVM precompiles while
+// they existed (warm, RequiredGas charged) but returned empty.
+const HemiTestnetChainID = 743111
+
+// IsHemiTestnet reports whether this config is for Hemi testnet.
+func (c *ChainConfig) IsHemiTestnet() bool {
+	return c.ChainID != nil && c.ChainID.IsUint64() && c.ChainID.Uint64() == HemiTestnetChainID
+}
+
+// IsHvmPrecompiles reports whether the hVM precompile set is exposed at time: always once hVM Phase 0 is
+// active, and additionally before hVM Phase 0 on Hemi testnet (the pre-phase0 legacy no-op window used to
+// replay testnet history). On every other chain it is identical to IsHvm0.
+func (c *ChainConfig) IsHvmPrecompiles(time uint64) bool {
+	return c.IsHvm0(time) || (c.Hvm0Time != nil && c.IsHemiTestnet())
+}
+
 // CheckCompatible checks whether scheduled fork transitions have been imported
 // with a mismatching chain configuration.
 func (c *ChainConfig) CheckCompatible(newcfg *ChainConfig, height, time uint64, genesisTimestamp *uint64) *ConfigCompatError {
@@ -1662,7 +1679,7 @@ type Rules struct {
 	IsMerge, IsShanghai, IsCancun, IsPrague, IsOsaka        bool
 	IsAmsterdam, IsVerkle                                   bool
 	IsOptimismBedrock, IsOptimismRegolith                   bool
-	IsHvm0                                                  bool
+	IsHvm0, IsHvmPrecompiles                                bool
 	IsOptimismCanyon, IsOptimismFjord                       bool
 	IsOptimismGranite, IsOptimismHolocene                   bool
 	IsOptimismIsthmus, IsOptimismJovian                     bool
@@ -1704,6 +1721,7 @@ func (c *ChainConfig) Rules(num *big.Int, isMerge bool, timestamp uint64) Rules 
 		IsOptimismCanyon:   isMerge && c.IsOptimismCanyon(timestamp),
 		// Hemi
 		IsHvm0:             c.IsHvm0(timestamp), // TODO: Review HVM's compatibility with older upgrades and require minimum one here
+		IsHvmPrecompiles:   c.IsHvmPrecompiles(timestamp),
 		IsOptimismFjord:    isMerge && c.IsOptimismFjord(timestamp),
 		IsOptimismGranite:  isMerge && c.IsOptimismGranite(timestamp),
 		IsOptimismHolocene: isMerge && c.IsOptimismHolocene(timestamp),

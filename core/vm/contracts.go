@@ -106,6 +106,10 @@ var HvmNullBlockHash = make([]byte, 32)
 // no-op, which does NOT increment this counter.
 var hvmPrecompileInvalidDataCounter = metrics.NewRegisteredCounter("vm/hvm/precompile/invalid_data", nil)
 
+// hvmPrecompilePrePhase0Counter counts hVM precompile calls handled as empty no-ops before hVM Phase 0
+// on Hemi testnet (params.ChainConfig.IsHvmPrecompiles). Expected only while replaying testnet history.
+var hvmPrecompilePrePhase0Counter = metrics.NewRegisteredCounter("vm/hvm/precompile/pre_phase0_noop", nil)
+
 // utxoIndexHashForLastHeader is the seam btcLastHeader uses to read the UTXO indexer position. It defaults to the
 // live TBCFullNode.UtxoIndexHash and is NEVER reassigned in production — it exists ONLY so a test can drive the
 // NON-panic UtxoIndexHash-error sub-case of btcLastHeader's guard. That sub-case is otherwise unreachable from a
@@ -1078,7 +1082,7 @@ func ActivePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 	precompiles := maps.Clone(activePrecompiledContracts(rules))
 
 	switch {
-	case rules.IsHvm0:
+	case rules.IsHvmPrecompiles:
 		for k, v := range PrecompiledContractsHvm0 {
 			precompiles[k] = v
 		}
@@ -1124,7 +1128,7 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 	nonHvmPrecompiles := activePrecompiles(rules)
 
 	switch {
-	case rules.IsHvm0:
+	case rules.IsHvmPrecompiles:
 		// Append the hVM precompiles to the active upstream set. The active upstream set is whatever
 		// activePrecompiles selects for the chain's current fork (an OP L2 returns its OP-fork set, e.g.
 		// Isthmus, before any L1-only fork). This must match the deployed binary's behavior exactly so a
