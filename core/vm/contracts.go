@@ -106,6 +106,10 @@ var HvmNullBlockHash = make([]byte, 32)
 // no-op, which does NOT increment this counter.
 var hvmPrecompileInvalidDataCounter = metrics.NewRegisteredCounter("vm/hvm/precompile/invalid_data", nil)
 
+// hvmPrecompilePrePhase0Counter counts hVM precompile calls replayed with the legacy v1.14.2 semantics before
+// hVM Phase 0 on Hemi testnet (params.ChainConfig.IsHvmPrecompiles). Expected only while replaying testnet history.
+var hvmPrecompilePrePhase0Counter = metrics.NewRegisteredCounter("vm/hvm/precompile/pre_phase0_noop", nil)
+
 // utxoIndexHashForLastHeader is the seam btcLastHeader uses to read the UTXO indexer position. It defaults to the
 // live TBCFullNode.UtxoIndexHash and is NEVER reassigned in production — it exists ONLY so a test can drive the
 // NON-panic UtxoIndexHash-error sub-case of btcLastHeader's guard. That sub-case is otherwise unreachable from a
@@ -1023,6 +1027,9 @@ func init() {
 	for k := range PrecompiledContractsHvm0 {
 		PrecompiledAddressesHvm0 = append(PrecompiledAddressesHvm0, k)
 	}
+	for k := range PrecompiledContractsHvmLegacy {
+		PrecompiledAddressesHvmLegacy = append(PrecompiledAddressesHvmLegacy, k)
+	}
 	// Pure-Ethereum fork precompile-address lists (Prague, Osaka) ARE populated, so the standard
 	// EIP-2929 warm-precompile behavior applies on the non-OP execution path (the one upstream
 	// state tests exercise). The OP-stack fork lists (Fjord/Granite/Isthmus/Jovian) are
@@ -1077,15 +1084,10 @@ func activePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 func ActivePrecompiledContracts(rules params.Rules) PrecompiledContracts {
 	precompiles := maps.Clone(activePrecompiledContracts(rules))
 
-	switch {
-	case rules.IsHvm0:
-		for k, v := range PrecompiledContractsHvm0 {
-			precompiles[k] = v
-		}
-		return precompiles
-	default:
-		return precompiles
+	for k, v := range hvmPrecompiles(rules) {
+		precompiles[k] = v
 	}
+	return precompiles
 }
 
 // ActivePrecompiles returns the precompiles enabled with the current configuration.
@@ -1131,6 +1133,9 @@ func ActivePrecompiles(rules params.Rules) []common.Address {
 		// node re-executing live history produces the same EIP-2929 warm-address set and thus the same gas
 		// and state root.
 		return append(nonHvmPrecompiles, PrecompiledAddressesHvm0...)
+	case rules.IsHvmPrecompiles:
+		// Hemi testnet before hVM Phase 0: only the v1.14.2 set (0x40..0x46) existed and was pre-warmed.
+		return append(nonHvmPrecompiles, PrecompiledAddressesHvmLegacy...)
 	default:
 		return nonHvmPrecompiles
 	}

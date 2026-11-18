@@ -45,6 +45,12 @@ var (
 	// successful return, so the transaction is included as a no-op identically on builders and validators.
 	ErrHVMInvalidPrecompileInput = errors.New("hVM precompile called with invalid input")
 
+	// ErrHVMLegacyPrecompileFailed is returned by an hVM precompile replayed inside the Hemi testnet
+	// pre-phase0 legacy window wherever Hemi op-geth v1.14.2 returned an error (e.g. btcBalAddr given an
+	// undecodable address). Unlike ErrHVMInvalidPrecompileInput it is NOT normalized to success: like any
+	// precompile error it consumes all gas forwarded to the call, matching the canonical receipts.
+	ErrHVMLegacyPrecompileFailed = errors.New("hVM precompile failed (pre-phase0 legacy replay)")
+
 	// ErrTBCMissingHeader is returned by TBCIndexToHashHeight when the full TBC node is missing a BTC
 	// header required to move its indexers to the requested target. It is transient and recoverable: the
 	// full TBC node is a P2P crawler that never prunes headers (not in ExternalHeaderMode), so the missing
