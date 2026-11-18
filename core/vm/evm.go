@@ -46,14 +46,10 @@ type (
 // var ContextBlockNotSet = common.BytesToHash([]byte{0xFF, 0xFF, 0xFF, 0xFF})
 
 func (evm *EVM) precompile(addr common.Address) (PrecompiledContract, bool) {
-	// IsHvmPrecompiles is true whenever IsHvm0 is, and additionally before hVM Phase 0 on Hemi testnet,
-	// where runPrecompile turns every hVM precompile into an empty no-op.
-	if evm.chainRules.IsHvmPrecompiles {
-		for address, contract := range PrecompiledContractsHvm0 {
-			if address.Cmp(addr) == 0 {
-				return contract, true
-			}
-		}
+	// hvmPrecompiles is the full Phase 0 set once IsHvm0 is active, and before hVM Phase 0 on Hemi testnet
+	// the smaller legacy set (0x40..0x46), which runPrecompile replays with the legacy v1.14.2 semantics.
+	if contract, ok := hvmPrecompiles(evm.chainRules)[addr]; ok {
+		return contract, true
 	}
 
 	p, ok := evm.precompiles[addr]
@@ -165,7 +161,9 @@ type EVM struct {
 // identically on builders and validators.
 func (evm *EVM) runPrecompile(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
 	if evm.chainRules.IsHvmPrecompiles && !evm.chainRules.IsHvm0 && isHVMPrecompile(p) {
-		return evm.runHVMPrecompileLegacyNoop(p, input, gas)
+		// Returns early on purpose: the legacy window must NOT normalize errors to success below. A legacy
+		// failure (ErrHVMLegacyPrecompileFailed) burns all forwarded gas, as it did when that history was made.
+		return evm.runHVMPrecompileLegacy(p, input, gas)
 	}
 	ret, remainingGas, err := evm.runPrecompileGuarded(p, input, gas)
 	if errors.Is(err, ErrHVMInvalidPrecompileInput) {
@@ -174,12 +172,12 @@ func (evm *EVM) runPrecompile(p PrecompiledContract, input []byte, gas uint64) (
 	return ret, remainingGas, err
 }
 
-// runHVMPrecompileLegacyNoop handles an hVM precompile called inside the pre-phase0 legacy window
-// (rules.IsHvmPrecompiles && !rules.IsHvm0). Testnet history from that window was produced while the hVM
-// precompiles existed but TBC had no data, so each call charged its fixed RequiredGas and returned empty.
-// Replaying that exactly (without touching TBC, which has no data for these blocks) reproduces the
-// canonical gas, receipts and state root.
-func (evm *EVM) runHVMPrecompileLegacyNoop(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
+// runHVMPrecompileLegacy handles an hVM precompile called inside the pre-phase0 legacy window
+// (rules.IsHvmPrecompiles && !rules.IsHvm0). Hemi testnet history from that window was produced by Hemi
+// op-geth v1.14.2 while hVM Phase 0 was scheduled earlier. Each call charges its fixed RequiredGas and then
+// replays that version's result without querying TBC (see legacyHVMPrecompileResult). A legacy error is
+// returned as-is, so evm.Call burns all gas forwarded to the precompile, exactly as v1.14.2 did.
+func (evm *EVM) runHVMPrecompileLegacy(p PrecompiledContract, input []byte, gas uint64) ([]byte, uint64, error) {
 	gasCost := p.RequiredGas(input)
 	if gas < gasCost {
 		return nil, 0, ErrOutOfGas
@@ -188,8 +186,14 @@ func (evm *EVM) runHVMPrecompileLegacyNoop(p PrecompiledContract, input []byte, 
 		t.OnGasChange(gas, gas-gasCost, tracing.GasChangeCallPrecompiledContract)
 	}
 	hvmPrecompilePrePhase0Counter.Inc(1)
-	log.Debug("hVM precompile called before hVM phase 0; treating as a no-op", "precompile", p.Name())
-	return nil, gas - gasCost, nil
+	var block uint64
+	if evm.Context.BlockNumber != nil {
+		block = evm.Context.BlockNumber.Uint64()
+	}
+	ret, err := legacyHVMPrecompileResult(p, input, block)
+	log.Debug("hVM precompile called before hVM phase 0; replaying legacy result",
+		"precompile", p.Name(), "retLen", len(ret), "err", err)
+	return ret, gas - gasCost, err
 }
 
 // runPrecompileGuarded executes the precompile. For hVM (Bitcoin) precompiles it installs a

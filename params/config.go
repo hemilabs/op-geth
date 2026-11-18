@@ -1120,8 +1120,8 @@ func (c *ChainConfig) IsHvm0(time uint64) bool {
 }
 
 // HemiTestnetChainID is the chain ID of Hemi testnet. Its history was produced while hVM Phase 0 was
-// scheduled earlier than the current Hvm0Time, so blocks before Hvm0Time called the hVM precompiles while
-// they existed (warm, RequiredGas charged) but returned empty.
+// scheduled earlier than the current Hvm0Time (by Hemi op-geth v1.14.2), so blocks before Hvm0Time called
+// the v1.14.2 hVM precompiles (0x40..0x46, warm, RequiredGas charged); see core/vm/contracts_hvm_prephase0.go.
 const HemiTestnetChainID = 743111
 
 // IsHemiTestnet reports whether this config is for Hemi testnet.
@@ -1130,8 +1130,8 @@ func (c *ChainConfig) IsHemiTestnet() bool {
 }
 
 // IsHvmPrecompiles reports whether the hVM precompile set is exposed at time: always once hVM Phase 0 is
-// active, and additionally before hVM Phase 0 on Hemi testnet (the pre-phase0 legacy no-op window used to
-// replay testnet history). On every other chain it is identical to IsHvm0.
+// active, and additionally before hVM Phase 0 on Hemi testnet (the pre-phase0 legacy window used to replay
+// testnet history with the v1.14.2 precompile semantics). On every other chain it is identical to IsHvm0.
 func (c *ChainConfig) IsHvmPrecompiles(time uint64) bool {
 	return c.IsHvm0(time) || (c.Hvm0Time != nil && c.IsHemiTestnet())
 }
